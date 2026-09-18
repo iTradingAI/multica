@@ -24,6 +24,12 @@ import type {
   DaemonStatus,
   LocalRuntimeProbe,
 } from "../shared/daemon-types";
+import type {
+  TerminalDataEvent,
+  TerminalExitEvent,
+  TerminalSpawnRequest,
+  TerminalSpawnResult,
+} from "../shared/terminal-types";
 import {
   MAIN_RENDERER_CHANNEL_STATE_CHANNEL,
   parseTabSelectionShortcutKey,
@@ -329,11 +335,37 @@ const updaterAPI = {
     ipcRenderer.invoke("updater:check"),
 };
 
+const terminalAPI = {
+  spawn: (
+    request: TerminalSpawnRequest,
+  ): Promise<TerminalSpawnResult> => ipcRenderer.invoke("terminal:spawn", request),
+  write: (sessionId: string, data: string): void => {
+    ipcRenderer.send("terminal:write", { sessionId, data });
+  },
+  resize: (sessionId: string, cols: number, rows: number): void => {
+    ipcRenderer.send("terminal:resize", { sessionId, cols, rows });
+  },
+  kill: (sessionId: string): void => {
+    ipcRenderer.send("terminal:kill", { sessionId });
+  },
+  onData: (callback: (event: TerminalDataEvent) => void): (() => void) => {
+    const handler = (_: unknown, event: TerminalDataEvent) => callback(event);
+    ipcRenderer.on("terminal:data", handler);
+    return () => ipcRenderer.removeListener("terminal:data", handler);
+  },
+  onExit: (callback: (event: TerminalExitEvent) => void): (() => void) => {
+    const handler = (_: unknown, event: TerminalExitEvent) => callback(event);
+    ipcRenderer.on("terminal:exit", handler);
+    return () => ipcRenderer.removeListener("terminal:exit", handler);
+  },
+};
+
 if (process.contextIsolated) {
   contextBridge.exposeInMainWorld("electron", electronAPI);
   contextBridge.exposeInMainWorld("desktopAPI", desktopAPI);
   contextBridge.exposeInMainWorld("daemonAPI", daemonAPI);
   contextBridge.exposeInMainWorld("updater", updaterAPI);
+  contextBridge.exposeInMainWorld("terminalAPI", terminalAPI);
 } else {
   // @ts-expect-error - fallback for non-isolated context
   window.electron = electronAPI;
@@ -343,4 +375,6 @@ if (process.contextIsolated) {
   window.daemonAPI = daemonAPI;
   // @ts-expect-error - fallback for non-isolated context
   window.updater = updaterAPI;
+  // @ts-expect-error - fallback for non-isolated context
+  window.terminal = terminalAPI;
 }

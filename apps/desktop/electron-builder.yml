@@ -35,6 +35,10 @@ protocols:
       - multica
 asarUnpack:
   - resources/**
+  # node-pty ships a native .node addon (plus a setuid spawn helper on
+  # macOS); ASAR-packed native modules cannot be dlopen'ed by the main
+  # process, so the whole package must land on disk next to the app.
+  - node-pty/**
 mac:
   entitlementsInherit: build/entitlements.mac.plist
   target:

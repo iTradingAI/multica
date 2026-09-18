@@ -17,6 +17,12 @@ import type {
   LocalRuntimeProbe,
 } from "../shared/daemon-types";
 import type { TabSelectionShortcutKey } from "../shared/main-renderer-messages";
+import type {
+  TerminalDataEvent,
+  TerminalExitEvent,
+  TerminalSpawnRequest,
+  TerminalSpawnResult,
+} from "../shared/terminal-types";
 
 interface DesktopAPI {
   /** App version + normalized OS, captured synchronously at preload time. */
@@ -166,12 +172,22 @@ interface UpdaterAPI {
   checkForUpdates: () => Promise<ManualUpdateCheckResult>;
 }
 
+interface TerminalAPI {
+  spawn: (request: TerminalSpawnRequest) => Promise<TerminalSpawnResult>;
+  write: (sessionId: string, data: string) => void;
+  resize: (sessionId: string, cols: number, rows: number) => void;
+  kill: (sessionId: string) => void;
+  onData: (callback: (event: TerminalDataEvent) => void) => () => void;
+  onExit: (callback: (event: TerminalExitEvent) => void) => () => void;
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI;
     desktopAPI: DesktopAPI;
     daemonAPI: DaemonAPI;
     updater: UpdaterAPI;
+    terminalAPI: TerminalAPI;
   }
 }
 
