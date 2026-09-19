@@ -97,7 +97,7 @@ jobs:
             exit 1
           fi
           gh release view "$TAG" --json name >/dev/null 2>&1 \
-            || gh release create "$TAG" --title "$TAG" --generate-notes --draft
+            || gh release create "$TAG" --title "$TAG" --generate-notes
           gh release upload "$TAG" "${files[@]}" --clobber
           echo "Uploaded:"; printf '  %s\n' "${files[@]}"
 
@@ -122,6 +122,6 @@ jobs:
             sleep 60
           done
           gh release view "$TAG" --json name >/dev/null 2>&1 \
-            || gh release create "$TAG" --title "$TAG" --generate-notes --draft
+            || gh release create "$TAG" --title "$TAG" --generate-notes
           gh release upload "$TAG" "${files[@]}" --clobber
           echo "Uploaded:"; printf '  %s\n' "${files[@]}"
