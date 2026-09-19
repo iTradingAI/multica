@@ -1,0 +1,60 @@
+# Downstream-only: keep this fork's main tracking the upstream repository.
+#
+# Design constraints (do not weaken):
+# - main carries downstream features, so this MUST be a merge (never
+#   fast-forward-only, never rebase) — gh's "Sync fork" cannot do this.
+# - Never force-push: release tags point into main's history.
+# - On conflict, abort and fail loudly for manual resolution. Silent
+#   partial automation is worse than a red workflow.
+#
+# The schedule only fires on the default branch while this file exists
+# there; nothing runs from feature branches.
+
+name: Fork sync (upstream → main)
+
+on:
+  schedule:
+    # Daily at 03:17 UTC — off the whole-hour GitHub cron congestion.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-sync
+  cancel-in-progress: false
+
+jobs:
+  merge-upstream:
+    # Guard so a fork-of-the-fork doesn't try to sync from us.
+    if: github.repository == 'iTradingAI/multica'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main (full history)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge upstream/main
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/multica-ai/multica.git
+          git fetch upstream main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "main already contains upstream/main — nothing to do."
+            exit 0
+          fi
+
+          git config user.name "fork-sync[bot]"
+          git config user.email "actions@github.com"
+
+          if ! git merge upstream/main --no-edit; then
+            git merge --abort
+            echo "::error::Conflict merging upstream/main into main. Resolve locally: git fetch upstream && git merge upstream/main, then push."
+            exit 1
+          fi
+
+          git push origin main

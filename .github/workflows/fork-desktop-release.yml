@@ -1,0 +1,112 @@
+# Downstream-only: build Desktop installers for this fork's releases.
+#
+# The upstream release.yml gates its `desktop` job behind the upstream
+# `release` job (owner-check), so forks get no installers from it. This
+# workflow fills that gap: on a version tag it packages unsigned Linux and
+# Windows installers and attaches them to the tag's GitHub Release.
+#
+# macOS stays a local build — the official pipeline signs + notarizes with
+# Apple credentials we deliberately do not hold in CI; self-built users run
+# `CSC_IDENTITY_AUTO_DISCOVERY=false pnpm package` on their Mac.
+
+name: Desktop release (fork)
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "!v*-dirty*"
+
+permissions:
+  contents: write
+
+jobs:
+  desktop:
+    if: github.repository == 'iTradingAI/multica'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+          - os: windows-latest
+            target: win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout (full history for git describe versioning)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install rpmbuild (Linux)
+        if: matrix.target == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          check-latest: true
+          cache-dependency-path: server/go.sum
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Package Desktop installers
+        working-directory: apps/desktop
+        env:
+          # Same unsigned-build posture as upstream's CI desktop job.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: node scripts/package.mjs --${{ matrix.target }} --x64
+
+      - name: Upload installers to the GitHub Release
+        if: matrix.target == 'linux'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/multica-desktop-*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::No installer artifacts found in dist/"
+            exit 1
+          fi
+          gh release view "$TAG" --json name >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "$TAG" --generate-notes --draft
+          gh release upload "$TAG" "${files[@]}" --clobber
+          echo "Uploaded:"; printf '  %s\n' "${files[@]}"
+
+      - name: Upload installers (Windows)
+        if: matrix.target == 'win'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/multica-desktop-*)
+          # The linux job creates the release; wait briefly so both jobs
+          # never race release creation. On a rare race the check below
+          # retries.
+          for i in 1 2 3 4 5 6; do
+            if gh release view "$TAG" --json name >/dev/null 2>&1; then
+              break
+            fi
+            sleep 60
+          done
+          gh release view "$TAG" --json name >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "$TAG" --generate-notes --draft
+          gh release upload "$TAG" "${files[@]}" --clobber
+          echo "Uploaded:"; printf '  %s\n' "${files[@]}"
