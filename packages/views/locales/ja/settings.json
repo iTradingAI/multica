@@ -1196,7 +1196,16 @@
       "hide": "ターミナルを隠す",
       "restart": "シェルを再起動",
       "exited": "シェルが終了しました（コード {{code}}）",
-      "spawn_failed": "シェルを起動できませんでした。"
+      "spawn_failed": "シェルを起動できませんでした。",
+      "target_machine": "対象マシン",
+      "local_machine": "このマシン",
+      "connecting": "{{machine}} に接続中…",
+      "daemon_offline": "{{machine}} がオフラインになったため、ターミナルを閉じました。",
+      "err_in_use": "マシン使用中",
+      "err_forbidden": "権限がありません",
+      "err_unsupported": "ターミナル非対応",
+      "err_offline": "マシンがオフライン",
+      "err_generic": "ターミナルエラー"
     },
     "daemon": {
       "title": "デーモン",

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactNode } from "react";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { RESOURCES } from "@multica/views/locales";
 import { FloatingTerminal } from "./floating-terminal";
@@ -12,6 +12,18 @@ import {
   resolveTerminalRect,
   useTerminalStore,
 } from "@/stores/terminal-store";
+
+// The machine list is fetched from the cached runtime-list query; the panel
+// only renders what the hook returns, so the suite pins it to a fixed list.
+const machinesMock = vi.hoisted(() => ({
+  machines: [] as Array<{ id: string; label: string }>,
+}));
+vi.mock("@/terminal/machines", () => ({
+  useTerminalMachines: () => machinesMock.machines,
+}));
+
+vi.mock("sonner", () => ({ toast: vi.fn() }));
+import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
 // xterm is a heavy DOM/canvas dependency whose rendering has nothing to do with
@@ -248,6 +260,8 @@ beforeEach(() => {
   xtermMock.fitState.cols = 80;
   xtermMock.fitState.rows = 24;
   xtermMock.fitState.fits = 0;
+  machinesMock.machines = [];
+  vi.mocked(toast).mockClear();
   useTerminalStore.setState({
     visible: false,
     rect: defaultTerminalRect(),
@@ -447,5 +461,219 @@ describe("terminal geometry", () => {
       width: 640,
       height: 321,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Remote machine terminals (MAX-51 M4). The remote session source is a mock:
+// these tests cover the panel wiring — picker, tab lifecycle, error and
+// daemon_offline UX — not the relay protocol (unit-tested in
+// terminal/remote-session.test.ts).
+// ---------------------------------------------------------------------------
+
+interface MockRemoteExit {
+  code?: number;
+  reason?: string;
+}
+
+function makeRemoteSource(
+  openResult?:
+    | { ok: false; error: string }
+    | undefined,
+) {
+  const dataHandlers = new Set<(data: string) => void>();
+  const exitHandlers = new Set<(exit: MockRemoteExit) => void>();
+  const source = {
+    kind: "remote" as const,
+    open: vi.fn(async () => {
+      if (openResult) return openResult;
+      return {
+        ok: true as const,
+        handle: {
+          session: "remote-sess-1",
+          onData: (callback: (data: string) => void) => {
+            dataHandlers.add(callback);
+            return () => {
+              dataHandlers.delete(callback);
+            };
+          },
+          onExit: (callback: (exit: MockRemoteExit) => void) => {
+            exitHandlers.add(callback);
+            return () => {
+              exitHandlers.delete(callback);
+            };
+          },
+        },
+      };
+    }),
+    write: vi.fn(),
+    resize: vi.fn(),
+    kill: vi.fn(),
+  };
+  return {
+    source,
+    emitData: (data: string) => {
+      for (const handler of dataHandlers) handler(data);
+    },
+    emitExit: (exit: MockRemoteExit) => {
+      for (const handler of exitHandlers) handler(exit);
+    },
+  };
+}
+
+function remoteView(): HTMLElement {
+  const element = document.querySelector<HTMLElement>(
+    '[data-slot="floating-terminal-remote"]',
+  );
+  if (!element) throw new Error("remote terminal view is not rendered");
+  return element;
+}
+
+function targetSelect(): HTMLSelectElement {
+  const element = screen.getByLabelText<HTMLSelectElement>("Target machine");
+  return element;
+}
+
+describe("FloatingTerminal remote targets", () => {
+  it("renders the target picker with the local machine and remote runtimes", () => {
+    machinesMock.machines = [
+      { id: "rt-1", label: "Mac mini" },
+      { id: "rt-2", label: "linux-box" },
+    ];
+    installTerminalAPI();
+    installDesktopAPI();
+    renderPanel(<FloatingTerminal remoteSource={null} />);
+
+    expect(targetSelect()).toBeInTheDocument();
+    const options = Array.from(targetSelect().options).map((o) => o.textContent);
+    expect(options).toEqual(["This machine", "Mac mini", "linux-box"]);
+    expect(targetSelect().value).toBe("local");
+  });
+
+  it("opens a remote tab on selection, hides the local body, and streams data", async () => {
+    machinesMock.machines = [{ id: "rt-1", label: "Mac mini" }];
+    installTerminalAPI();
+    installDesktopAPI();
+    const { source, emitData } = makeRemoteSource();
+    renderPanel(<FloatingTerminal remoteSource={source} />);
+    act(() => useTerminalStore.getState().setVisible(true));
+    await waitFor(() =>
+      expect(useTerminalStore.getState().activeSession).toBe(SESSION_ID),
+    );
+    const localTerminal = xtermMock.instances[0];
+    if (!localTerminal) throw new Error("local xterm missing");
+
+    fireEvent.change(targetSelect(), { target: { value: "rt-1" } });
+
+    await waitFor(() => expect(source.open).toHaveBeenCalledTimes(1));
+    expect(source.open).toHaveBeenCalledWith("rt-1", {
+      cols: 80,
+      rows: 24,
+    });
+    expect(remoteView()).toHaveAttribute("data-runtime-id", "rt-1");
+    await waitFor(() =>
+      expect(remoteView().style.display).toBe("flex"),
+    );
+    // The local xterm stays mounted but hidden, so the shell survives.
+    expect(localTerminal.openedWith).toHaveStyle({ display: "none" });
+    expect(useTerminalStore.getState().activeSession).toBe(SESSION_ID);
+
+    const remoteTerminal = xtermMock.instances.at(-1);
+    if (!remoteTerminal) throw new Error("remote xterm missing");
+    act(() => emitData("remote\r\n"));
+    expect(remoteTerminal.written).toEqual(["remote\r\n"]);
+
+    act(() => remoteTerminal.emitInput("top\r"));
+    expect(source.write).toHaveBeenCalledWith("remote-sess-1", "top\r");
+  });
+
+  it("shows an inline error when the machine refuses the subscription", async () => {
+    machinesMock.machines = [{ id: "rt-1", label: "Mac mini" }];
+    installTerminalAPI();
+    installDesktopAPI();
+    const { source } = makeRemoteSource({ ok: false, error: "in use" });
+    renderPanel(<FloatingTerminal remoteSource={source} />);
+    act(() => useTerminalStore.getState().setVisible(true));
+
+    fireEvent.change(targetSelect(), { target: { value: "rt-1" } });
+
+    expect(await screen.findByText("Machine in use")).toBeInTheDocument();
+    expect(source.kill).not.toHaveBeenCalled();
+  });
+
+  it("shows the unsupported/offline error variants", async () => {
+    machinesMock.machines = [
+      { id: "rt-1", label: "Mac mini" },
+      { id: "rt-2", label: "linux-box" },
+    ];
+    installTerminalAPI();
+    installDesktopAPI();
+    let call = 0;
+    const source = {
+      kind: "remote" as const,
+      open: vi.fn(async () =>
+        call++ === 0
+          ? ({ ok: false, error: "capability_missing" } as const)
+          : ({ ok: false, error: "runtime_offline" } as const),
+      ),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+    };
+    renderPanel(<FloatingTerminal remoteSource={source} />);
+    act(() => useTerminalStore.getState().setVisible(true));
+
+    fireEvent.change(targetSelect(), { target: { value: "rt-1" } });
+    expect(await screen.findByText("Terminal not supported")).toBeInTheDocument();
+
+    fireEvent.change(targetSelect(), { target: { value: "rt-2" } });
+    expect(await screen.findByText("Machine offline")).toBeInTheDocument();
+  });
+
+  it("notifies and closes the tab when the daemon goes offline", async () => {
+    machinesMock.machines = [{ id: "rt-1", label: "Mac mini" }];
+    installTerminalAPI();
+    installDesktopAPI();
+    const { source, emitExit } = makeRemoteSource();
+    renderPanel(<FloatingTerminal remoteSource={source} />);
+    act(() => useTerminalStore.getState().setVisible(true));
+
+    fireEvent.change(targetSelect(), { target: { value: "rt-1" } });
+    await waitFor(() => expect(source.open).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(xtermMock.instances.length).toBe(2));
+
+    act(() => emitExit({ reason: "daemon_offline" }));
+
+    expect(toast).toHaveBeenCalledWith(
+      "Mac mini went offline. The terminal was closed.",
+    );
+    // The tab closes: the view unmounts and the picker falls back to the
+    // local machine. The session already ended, so no kill frame is sent.
+    expect(document.querySelector('[data-slot="floating-terminal-remote"]')).toBeNull();
+    expect(source.kill).not.toHaveBeenCalled();
+    expect(targetSelect().value).toBe("local");
+  });
+
+  it("keeps the local session when the picker returns to the local machine", async () => {
+    machinesMock.machines = [{ id: "rt-1", label: "Mac mini" }];
+    const { api } = installTerminalAPI();
+    installDesktopAPI();
+    const { source } = makeRemoteSource();
+    renderPanel(<FloatingTerminal remoteSource={source} />);
+    act(() => useTerminalStore.getState().setVisible(true));
+    await waitFor(() =>
+      expect(useTerminalStore.getState().activeSession).toBe(SESSION_ID),
+    );
+
+    fireEvent.change(targetSelect(), { target: { value: "rt-1" } });
+    await waitFor(() => expect(source.open).toHaveBeenCalledTimes(1));
+    fireEvent.change(targetSelect(), { target: { value: "local" } });
+
+    // The remote tab stays alive in the background; the local shell is still
+    // the active session.
+    expect(document.querySelector('[data-slot="floating-terminal-remote"]')).not.toBeNull();
+    expect(source.kill).not.toHaveBeenCalled();
+    expect(api.kill).not.toHaveBeenCalled();
+    expect(useTerminalStore.getState().activeSession).toBe(SESSION_ID);
   });
 });

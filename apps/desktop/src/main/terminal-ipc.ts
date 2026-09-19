@@ -4,7 +4,7 @@ import { TerminalManager, type PtyProcess } from "./terminal-manager";
 import {
   fsIsDirectory,
   fsIsExecutableFile,
-  resolveDefaultShell,
+  resolveLocalDefaultShell,
   shellEnv,
 } from "./terminal-shell";
 import {
@@ -37,7 +37,7 @@ export function setupTerminalIpc(): void {
         env: shellEnv(),
       }) as unknown as PtyProcess;
     },
-    resolveShell: () => resolveDefaultShell(),
+    resolveShell: () => resolveLocalDefaultShell(),
     isDirectory: fsIsDirectory,
     isExecutableFile: fsIsExecutableFile,
   });
@@ -58,6 +58,14 @@ export function setupTerminalIpc(): void {
       return manager.createSession(parsed, ownerFrom(event.sender));
     },
   );
+
+  // The remote `terminal.open` payload needs the same default shell the
+  // local pty host would pick; the renderer has no filesystem access, so it
+  // asks main once per remote open.
+  ipcMain.handle("terminal:default-shell", () => {
+    const shell = resolveLocalDefaultShell();
+    return { file: shell.file, args: shell.args };
+  });
 
   // Fire-and-forget channels: the renderer already holds the session, so a
   // dropped message (window mid-teardown, unknown id) needs no reply.

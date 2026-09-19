@@ -23,6 +23,7 @@ import type {
   TerminalSpawnRequest,
   TerminalSpawnResult,
 } from "../shared/terminal-types";
+import type { DefaultShell } from "../shared/default-shell";
 
 interface DesktopAPI {
   /** App version + normalized OS, captured synchronously at preload time. */
@@ -183,6 +184,9 @@ interface TerminalAPI {
   kill: (sessionId: string) => void;
   onData: (callback: (event: TerminalDataEvent) => void) => () => void;
   onExit: (callback: (event: TerminalExitEvent) => void) => () => void;
+  /** The local default shell (Git Bash when installed on Windows), for
+   *  seeding remote `terminal.open` payloads. */
+  defaultShell: () => Promise<DefaultShell>;
 }
 
 declare global {
