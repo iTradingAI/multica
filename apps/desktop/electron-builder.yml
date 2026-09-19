@@ -127,7 +127,11 @@ win:
   artifactName: multica-desktop-${version}-windows-${arch}.${ext}
 publish:
   provider: github
-  owner: multica-ai
+  # Downstream: this feed is baked into app-update.yml at build time and
+  # decides which repository installed clients auto-update FROM. Pointing
+  # at upstream would silently replace downstream builds with official
+  # releases (losing fork features) as soon as upstream versions pass ours.
+  owner: iTradingAI
   repo: multica
   # Align with our CLI release flow which pre-creates a *published* GitHub
   # Release via `gh release create`. The electron-builder default of

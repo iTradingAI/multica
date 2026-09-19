@@ -91,7 +91,10 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(dist/multica-desktop-*)
+          # Include electron-updater metadata (latest.yml / latest-linux.yml)
+          # alongside the installers — without them installed clients cannot
+          # discover or verify new versions from this release.
+          files=(dist/multica-desktop-* dist/latest*.yml)
           if [ ${#files[@]} -eq 0 ]; then
             echo "::error::No installer artifacts found in dist/"
             exit 1
@@ -111,7 +114,8 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(dist/multica-desktop-*)
+          # latest.yml + blockmap feed electron-updater's Windows flow.
+          files=(dist/multica-desktop-* dist/latest*.yml)
           # The linux job creates the release; wait briefly so both jobs
           # never race release creation. On a rare race the check below
           # retries.
