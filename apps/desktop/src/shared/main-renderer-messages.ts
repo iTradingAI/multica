@@ -8,6 +8,9 @@ export const MAIN_RENDERER_CHANNEL_STATE_CHANNEL =
 
 export const TAB_SELECTION_SHORTCUT_CHANNEL = "tab:select-by-shortcut";
 
+/** Ctrl+` — main matches the chord, the tabbed main window toggles the panel. */
+export const TERMINAL_TOGGLE_CHANNEL = "terminal:toggle";
+
 export const TAB_SELECTION_SHORTCUT_KEYS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
 export type TabSelectionShortcutKey =
@@ -28,6 +31,7 @@ export const MAIN_RENDERER_MESSAGE_CHANNELS = [
   "inbox:open",
   "settings:open",
   TAB_SELECTION_SHORTCUT_CHANNEL,
+  TERMINAL_TOGGLE_CHANNEL,
 ] as const;
 
 export type MainRendererMessageChannel =

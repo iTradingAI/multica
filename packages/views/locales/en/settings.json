@@ -1194,6 +1194,13 @@
       "check_now": "Check now",
       "checking": "Checking…"
     },
+    "terminal": {
+      "title": "Terminal",
+      "hide": "Hide terminal",
+      "restart": "Restart shell",
+      "exited": "Shell exited (code {{code}})",
+      "spawn_failed": "Could not start a shell."
+    },
     "daemon": {
       "title": "Daemon",
       "settings_saved": "Daemon settings saved",

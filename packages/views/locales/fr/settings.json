@@ -1194,6 +1194,13 @@
       "check_now": "Vérifier maintenant",
       "checking": "Vérification…"
     },
+    "terminal": {
+      "title": "Terminal",
+      "hide": "Masquer le terminal",
+      "restart": "Redémarrer le shell",
+      "exited": "Shell arrêté (code {{code}})",
+      "spawn_failed": "Impossible de démarrer un shell."
+    },
     "daemon": {
       "title": "Démon",
       "settings_saved": "Paramètres du démon enregistrés",

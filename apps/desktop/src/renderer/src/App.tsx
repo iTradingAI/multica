@@ -21,6 +21,7 @@ import { useTabStore } from "./stores/tab-store";
 import { useWindowOverlayStore } from "./stores/window-overlay-store";
 import { useOpenSettingsShortcut } from "./hooks/use-open-settings-shortcut";
 import { useTabSelectionShortcut } from "./hooks/use-tab-selection-shortcut";
+import { useTerminalShortcut } from "./hooks/use-terminal-shortcut";
 import { useDaemonIPCBridge } from "./platform/daemon-ipc-bridge";
 import { syncDaemonOnLogin } from "./platform/daemon-login-sync";
 import { createDesktopLocaleAdapter } from "./platform/i18n-adapter";
@@ -392,6 +393,9 @@ export default function App() {
   // Fixed browser-style tab selection is also owned by main so it remains
   // available while focus sits inside editors, inputs, menus, or dialogs.
   useTabSelectionShortcut();
+  // Ctrl+` toggles the floating terminal. Owned by main for the same reason:
+  // the chord must work from any focus context, including inside the pty.
+  useTerminalShortcut();
 
   // Flush a freeze/crash breadcrumb the main process parked from a previous
   // session. A true hang or process death can't report itself when it happens
