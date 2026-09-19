@@ -32,6 +32,7 @@ import {
 } from "@/platform/navigation";
 import { TabBar } from "./tab-bar";
 import { TabContent } from "./tab-content";
+import { FloatingTerminal } from "./floating-terminal";
 import { WindowOverlay } from "./window-overlay";
 import { WindowToolbar, WINDOW_TOOLBAR_CLEARANCE } from "./window-toolbar";
 
@@ -260,7 +261,11 @@ export function DesktopShell() {
                     froze until the destination committed (MUL-6404). */}
                 <NavigationProgress />
                 <TabContent />
+                {/* Both float above tab content inside the canvas; the terminal
+                    sits higher in z-order because it is the element the user
+                    just summoned with a chord. */}
                 {slug && <FloatingChat />}
+                {slug && <FloatingTerminal />}
               </MainCanvas>
             </div>
           </SidebarProvider>

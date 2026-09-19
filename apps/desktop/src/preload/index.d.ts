@@ -115,6 +115,10 @@ interface DesktopAPI {
   /** Listen for Cmd/Ctrl+, requests to open Settings, delivered to the main
    *  window whichever window had focus. Returns an unsubscribe function. */
   onOpenSettings: (callback: () => void) => () => void;
+  /** Listen for Ctrl+` requests to toggle the floating terminal, delivered to
+   *  the main window whichever window had focus. Returns an unsubscribe
+   *  function. */
+  onToggleTerminal: (callback: () => void) => () => void;
   /** Listen for Cmd/Ctrl+1..9 tab-selection requests, delivered to the main
    *  window whichever window had focus. Returns an unsubscribe function. */
   onSelectTabShortcut: (

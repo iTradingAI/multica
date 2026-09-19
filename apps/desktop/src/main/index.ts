@@ -56,6 +56,7 @@ import {
   MainRendererMessageQueue,
   parseMainRendererChannelState,
   TAB_SELECTION_SHORTCUT_CHANNEL,
+  TERMINAL_TOGGLE_CHANNEL,
   type MainRendererMessageChannel,
 } from "../shared/main-renderer-messages";
 import { AuthSessionCoordinator } from "./auth-session-coordinator";
@@ -273,6 +274,12 @@ function installWindowShortcutHandler(window: BrowserWindow): void {
       // dedicated issue window — and from one that outlived the main window,
       // which is recreated and only then handed the request.
       dispatchToMainRenderer("settings:open", null);
+    } else if (result === "toggle-terminal") {
+      event.preventDefault();
+      // The terminal panel is part of the tabbed window's shell, so it is
+      // routed there like Settings — the chord keeps working while focus is
+      // inside a dedicated issue window.
+      dispatchToMainRenderer(TERMINAL_TOGGLE_CHANNEL, null);
     } else if (typeof result === "object" && result.action === "select-tab") {
       event.preventDefault();
       // Product tabs only exist in the main window. Route there even when the

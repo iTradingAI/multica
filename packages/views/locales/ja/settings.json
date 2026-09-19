@@ -1191,6 +1191,13 @@
       "check_now": "今すぐ確認",
       "checking": "確認中…"
     },
+    "terminal": {
+      "title": "ターミナル",
+      "hide": "ターミナルを隠す",
+      "restart": "シェルを再起動",
+      "exited": "シェルが終了しました（コード {{code}}）",
+      "spawn_failed": "シェルを起動できませんでした。"
+    },
     "daemon": {
       "title": "デーモン",
       "settings_saved": "デーモン設定を保存しました",

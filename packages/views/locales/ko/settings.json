@@ -932,6 +932,13 @@
       "check_now": "지금 확인",
       "checking": "확인 중..."
     },
+    "terminal": {
+      "title": "터미널",
+      "hide": "터미널 숨기기",
+      "restart": "셸 다시 시작",
+      "exited": "셸이 종료되었습니다(코드 {{code}})",
+      "spawn_failed": "셸을 시작할 수 없습니다."
+    },
     "daemon": {
       "title": "데몬",
       "settings_saved": "데몬 설정을 저장했습니다",

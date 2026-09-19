@@ -46,6 +46,8 @@ const ZOOM_MAX = 4.5;
  * - `"close-tab"`: Cmd/Ctrl+W intercepted — caller should send IPC to renderer
  * - `"open-settings"`: Cmd/Ctrl+, intercepted — caller should route the
  *   request to the tabbed main window
+ * - `"toggle-terminal"`: Ctrl+` intercepted — caller should route the
+ *   request to the tabbed main window
  * - `{ action: "select-tab", key }`: Cmd/Ctrl+1..9 intercepted — caller
  *   should route the requested browser-style tab position to the main window
  */
@@ -53,6 +55,7 @@ export type ShortcutResult =
   | boolean
   | "close-tab"
   | "open-settings"
+  | "toggle-terminal"
   | { action: "select-tab"; key: TabSelectionShortcutKey };
 
 export function handleAppShortcut(
@@ -69,6 +72,30 @@ export function handleAppShortcut(
   // (tabs, drafts, WS connections) with no URL bar to recover from.
   if ((primary && input.key.toLowerCase() === "r") || input.key === "F5") {
     return true;
+  }
+
+  // Ctrl+` (Backquote) → toggle the floating terminal, on every platform.
+  //
+  // Deliberately checked before the `noSecondaryModifiers` gate below: on
+  // macOS Control is the *secondary* modifier, so routing this through the
+  // primary-modifier path would make the chord macOS-only-Cmd+` and collide
+  // with the system's cycle-windows shortcut. One physical chord works
+  // everywhere instead, matching VS Code.
+  //
+  // Matched on `code` as well as `key`: layouts that do not produce a
+  // backtick from that physical key (AZERTY, several European layouts) still
+  // toggle the panel from the same key position. Settings has no remap entry
+  // for this chord, so physical position is the stable contract.
+  if (
+    input.control &&
+    !input.meta &&
+    !input.alt &&
+    !input.shift &&
+    (input.code === "Backquote" || input.key === "`")
+  ) {
+    // Holding the chord must not queue one toggle per repeat.
+    if (input.isAutoRepeat) return true;
+    return "toggle-terminal";
   }
 
   if (!primary || !noSecondaryModifiers) return false;

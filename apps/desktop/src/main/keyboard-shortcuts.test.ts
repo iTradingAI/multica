@@ -401,3 +401,52 @@ describe("handleAppShortcut — close tab (Cmd/Ctrl+W)", () => {
     ).toBe(true);
   });
 });
+
+describe("handleAppShortcut — toggle terminal (Ctrl+`)", () => {
+  it('returns "toggle-terminal" on Ctrl+` on every platform', () => {
+    const wc = makeWc();
+    expect(
+      handleAppShortcut(key("`", { control: true }, "Backquote"), wc, "darwin"),
+    ).toBe("toggle-terminal");
+    expect(
+      handleAppShortcut(key("`", { control: true }, "Backquote"), wc, "linux"),
+    ).toBe("toggle-terminal");
+    expect(
+      handleAppShortcut(key("`", { control: true }, "Backquote"), wc, "win32"),
+    ).toBe("toggle-terminal");
+  });
+
+  // Control is the secondary modifier on macOS; without the explicit bypass
+  // before the noSecondaryModifiers gate the chord would only work as Cmd+`,
+  // colliding with the system's cycle-windows shortcut.
+  it('matches the physical key on layouts that do not produce a backtick', () => {
+    const wc = makeWc();
+    expect(
+      handleAppShortcut(key("²", { control: true }, "Backquote"), wc, "linux"),
+    ).toBe("toggle-terminal");
+  });
+
+  it("does not trigger on Cmd+` or with extra modifiers", () => {
+    const wc = makeWc();
+    expect(
+      handleAppShortcut(key("`", { meta: true }, "Backquote"), wc, "darwin"),
+    ).toBe(false);
+    expect(
+      handleAppShortcut(key("`", { control: true, alt: true }, "Backquote"), wc, "linux"),
+    ).toBe(false);
+    expect(
+      handleAppShortcut(key("`", { control: true, shift: true }, "Backquote"), wc, "linux"),
+    ).toBe(false);
+  });
+
+  it("swallows auto-repeat without toggling repeatedly", () => {
+    const wc = makeWc();
+    expect(
+      handleAppShortcut(
+        { ...key("`", { control: true }, "Backquote"), isAutoRepeat: true },
+        wc,
+        "linux",
+      ),
+    ).toBe(true);
+  });
+});

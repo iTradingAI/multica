@@ -34,6 +34,7 @@ import {
   MAIN_RENDERER_CHANNEL_STATE_CHANNEL,
   parseTabSelectionShortcutKey,
   TAB_SELECTION_SHORTCUT_CHANNEL,
+  TERMINAL_TOGGLE_CHANNEL,
   type MainRendererMessageChannel,
   type TabSelectionShortcutKey,
 } from "../shared/main-renderer-messages";
@@ -232,6 +233,11 @@ const desktopAPI = {
    *  an issue window, because Settings is a tab. Returns an unsubscribe fn. */
   onOpenSettings: (callback: () => void) =>
     subscribeToMainRendererChannel("settings:open", () => callback()),
+  /** Listen for Ctrl+` requests to toggle the floating terminal panel. Only
+   *  the tabbed main window subscribes — the panel belongs to its shell, and
+   *  main routes the chord there from any focused window. */
+  onToggleTerminal: (callback: () => void) =>
+    subscribeToMainRendererChannel(TERMINAL_TOGGLE_CHANNEL, () => callback()),
   /** Listen for fixed Cmd/Ctrl+1..9 tab-selection requests. Only the main
    *  window subscribes; main routes requests there from any focused window. */
   onSelectTabShortcut: (
