@@ -1294,6 +1294,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// WS-first claim (MUL-4257): route daemon:rpc_request frames (e.g.
 	// tasks.claim) through the same handlers as the HTTP endpoints.
 	daemonHub.SetRPCHandler(h.DaemonRPCHandler)
+	// Terminal relay (MAX-51 M2/M3): the realtime hub authorizes the
+	// owner-only {scope: "terminal", id: <runtime_id>} subscription through
+	// the handler, and terminal frames flow point-to-point between that hub
+	// and the daemon hub in-process (not through the Redis broadcast relay).
+	hub.SetTerminalAuthorizer(h)
+	hub.SetTerminalRelay(daemonHub)
+	daemonHub.SetTerminalBridge(hub)
 	health := newServerHealth(pool)
 
 	r := chi.NewRouter()

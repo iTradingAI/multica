@@ -330,6 +330,12 @@ type Hub struct {
 
 	kindMu       sync.RWMutex
 	kindRecorder MessageKindRecorder
+
+	termMu                  sync.RWMutex
+	terminalBridge          TerminalBridge
+	terminalPending         map[string]string
+	terminalSessions        map[string]string
+	terminalRuntimeSessions map[string]map[string]bool
 }
 
 func NewHub() *Hub {
@@ -342,11 +348,14 @@ func NewHub() *Hub {
 			// grows cookie fallback.
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
-		clients:            make(map[*client]bool),
-		byRuntime:          make(map[string]map[*client]bool),
-		byWorkspace:        make(map[string]map[*client]bool),
-		byUser:             make(map[string]map[*client]bool),
-		runtimeGoneSeenIDs: make(map[string]struct{}, runtimeGoneDedupCapacity),
+		clients:                 make(map[*client]bool),
+		byRuntime:               make(map[string]map[*client]bool),
+		byWorkspace:             make(map[string]map[*client]bool),
+		byUser:                  make(map[string]map[*client]bool),
+		runtimeGoneSeenIDs:      make(map[string]struct{}, runtimeGoneDedupCapacity),
+		terminalPending:         make(map[string]string),
+		terminalSessions:        make(map[string]string),
+		terminalRuntimeSessions: make(map[string]map[string]bool),
 	}
 }
 
@@ -920,6 +929,13 @@ func (h *Hub) unregister(c *client) {
 
 	M.DisconnectsTotal.Add(1)
 	M.ActiveConnections.Add(-1)
+	runtimeIDs := make([]string, 0, len(c.runtimes))
+	c.runtimeMu.RLock()
+	for runtimeID := range c.runtimes {
+		runtimeIDs = append(runtimeIDs, runtimeID)
+	}
+	c.runtimeMu.RUnlock()
+	h.terminalHandleDisconnect(runtimeIDs)
 	slog.Info("daemon websocket disconnected",
 		"daemon_id", c.identity.DaemonID,
 		"user_id", c.identity.UserID,
@@ -981,6 +997,11 @@ func (c *client) handleFrame(raw []byte) {
 		c.handleHeartbeatFrame(msg.Payload)
 	case protocol.EventDaemonRPCRequest:
 		c.handleRPCFrame(msg.Payload)
+	case protocol.EventTerminalOpenResult,
+		protocol.EventTerminalData,
+		protocol.EventTerminalExit,
+		protocol.EventTerminalError:
+		c.hub.handleTerminalFromDaemon(msg.Type, msg.Payload, raw)
 	default:
 		// Unknown app messages are intentionally ignored for forward
 		// compatibility with future daemon → server message types.

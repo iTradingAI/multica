@@ -186,9 +186,16 @@ func (c *Client) setIdentityHeaders(req *http.Request) {
 // capability gating plus WS-only scheduling metadata. rpc-v1 advertises WS
 // request/response support (MUL-4257).
 func daemonClientCapabilities() string {
-	return strings.Join(append(daemonCommonCapabilities(),
+	caps := append(daemonCommonCapabilities(),
 		protocol.DaemonCapabilityClaimPollHintsV1,
-	), ",")
+	)
+	// terminal-v1 is platform-conditional: a daemon on a platform without a
+	// pty implementation must not advertise it, because the realtime relay
+	// gates terminal subscriptions on the runtime's stored capability set.
+	if terminalCapabilityEnabled {
+		caps = append(caps, protocol.DaemonCapabilityTerminalV1)
+	}
+	return strings.Join(caps, ",")
 }
 
 // daemonHTTPClientCapabilities omits claim-poll-hints-v1 because HTTP fallback
