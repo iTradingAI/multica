@@ -29,7 +29,12 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux
-          - os: windows-latest
+          # NOT windows-latest: the windows-2025 image no longer exposes a
+          # Visual Studio instance node-gyp can find, so the node-pty
+          # rebuild during install-app-deps fails with "Could not find any
+          # Visual Studio installation". windows-2022 ships a full VS 2022
+          # C++ toolchain that node-gyp detects.
+          - os: windows-2022
             target: win
     runs-on: ${{ matrix.os }}
     steps:
@@ -58,6 +63,10 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Set up MSVC environment (Windows)
+        if: matrix.target == 'win'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -66,7 +75,11 @@ jobs:
         env:
           # Same unsigned-build posture as upstream's CI desktop job.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: node scripts/package.mjs --${{ matrix.target }} --x64
+        # --publish never is load-bearing: on tag-triggered CI runs
+        # electron-builder's default publish policy attempts a GitHub
+        # Release upload, which fails without GH_TOKEN. The explicit
+        # upload steps below handle publishing instead.
+        run: node scripts/package.mjs --${{ matrix.target }} --x64 --publish never
 
       - name: Upload installers to the GitHub Release
         if: matrix.target == 'linux'
