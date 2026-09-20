@@ -2,25 +2,26 @@ import { statSync } from "node:fs";
 import type { PtySpawnOptions } from "./terminal-manager";
 
 /**
- * Default shell selection for the floating terminal. Kept as a pure
- * function (platform + env in, command out) so the matrix is unit-testable
- * without touching Electron or the real environment.
- *
- * Priority: $SHELL (set by every sane login manager on unix-likes),
- * platform fallback (zsh on macOS, bash elsewhere), then COMSPEC on
- * Windows (points at cmd.exe; fall back to PowerShell when unset).
+ * Default shell selection for the local pty host. The pure logic lives in
+ * shared/default-shell.ts so the renderer can resolve the same default for
+ * remote `terminal.open` payloads; this module adds the real filesystem
+ * probe and re-exports for main-process callers.
  */
-export function resolveDefaultShell(
-  platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
-): { file: string; args?: string[] } {
-  if (platform === "win32") {
-    return { file: env.COMSPEC || "powershell.exe" };
-  }
-  if (env.SHELL) {
-    return { file: env.SHELL };
-  }
-  return { file: platform === "darwin" ? "/bin/zsh" : "/bin/bash" };
+export {
+  gitBashCandidatePaths,
+  resolveDefaultShell,
+  resolveGitBash,
+} from "../shared/default-shell";
+import type { DefaultShell } from "../shared/default-shell";
+import { resolveDefaultShell as resolveDefaultShellPure } from "../shared/default-shell";
+
+/** Local default shell, resolved against the real filesystem. */
+export function resolveLocalDefaultShell(): DefaultShell {
+  return resolveDefaultShellPure(
+    process.platform,
+    process.env,
+    fsIsExecutableFile,
+  );
 }
 
 export function fsIsDirectory(path: string): boolean {

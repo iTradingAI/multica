@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { WSClient } from "../api/ws-client";
-import type { WSEventType, StorageAdapter } from "../types";
+import type { WSEventType, WSMessage, StorageAdapter } from "../types";
 import type { ClientIdentity } from "../platform/types";
 import type { StoreApi, UseBoundStore } from "zustand";
 import type { AuthState } from "../auth/store";
@@ -26,6 +26,11 @@ type EventHandler = (payload: unknown, actorId?: string, actorType?: string) => 
 interface WSContextValue {
   subscribe: (event: WSEventType, handler: EventHandler) => () => void;
   onReconnect: (callback: () => void) => () => void;
+  /**
+   * Send a client frame (e.g. `{type:"subscribe",...}` or a terminal.* frame)
+   * on the shared connection. No-op while the socket is not open.
+   */
+  send: (message: WSMessage) => void;
 }
 
 const WSContext = createContext<WSContextValue | null>(null);
@@ -140,8 +145,15 @@ export function WSProvider({
     [wsClient],
   );
 
+  const send = useCallback(
+    (message: WSMessage) => {
+      wsClient?.send(message);
+    },
+    [wsClient],
+  );
+
   return (
-    <WSContext.Provider value={{ subscribe, onReconnect: onReconnectCb }}>
+    <WSContext.Provider value={{ subscribe, onReconnect: onReconnectCb, send }}>
       {children}
     </WSContext.Provider>
   );

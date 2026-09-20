@@ -200,6 +200,24 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 	// route rather than staying on the legacy fallback forever (MUL-4257).
 	d.batchClaimUnsupported.Store(false)
 
+	// Attach the terminal channel (MAX-51 M2) to this connection's write
+	// channel, guarded like the RPC sender above. Terminal frames are
+	// best-effort: a full queue drops the frame rather than blocking the
+	// heartbeat path.
+	d.termChannel.attach(func(frame []byte) bool {
+		sendMu.Lock()
+		defer sendMu.Unlock()
+		if sendClosed {
+			return false
+		}
+		select {
+		case writes <- &wsOutbound{data: frame}:
+			return true
+		default:
+			return false
+		}
+	})
+
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
 	hbDone := make(chan struct{})
 	go func() {
@@ -236,6 +254,9 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 		// frame will be dropped), and flip the send-closed flag under sendMu so
 		// any in-flight guarded send finishes before we close writes.
 		d.wsRPC.attach(nil)
+		// Detach the terminal channel: kills every session opened over this
+		// connection so no shell outlives the WS (MAX-51 M2).
+		d.termChannel.attach(nil)
 		// A healthy WS connection lets the claim poller use a longer fallback
 		// interval. Wake it as soon as the connection drops so it immediately
 		// observes the detach and resumes the configured HTTP cadence.
@@ -449,6 +470,14 @@ func (d *Daemon) readTaskWakeupMessagesForConnection(conn *websocket.Conn, taskW
 				continue
 			}
 			d.wsRPC.deliver(resp)
+		case protocol.EventTerminalOpen,
+			protocol.EventTerminalInput,
+			protocol.EventTerminalResize,
+			protocol.EventTerminalKill,
+			protocol.EventTerminalPause:
+			// Terminal frames (MAX-51 M2) are handled on their own goroutine:
+			// a spawn stats a filesystem, and the read pump must stay free.
+			go d.termChannel.HandleMessage(msg.Type, msg.Payload)
 		}
 	}
 }

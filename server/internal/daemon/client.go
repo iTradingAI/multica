@@ -186,9 +186,10 @@ func (c *Client) setIdentityHeaders(req *http.Request) {
 // capability gating plus WS-only scheduling metadata. rpc-v1 advertises WS
 // request/response support (MUL-4257).
 func daemonClientCapabilities() string {
-	return strings.Join(append(daemonCommonCapabilities(),
+	caps := append(daemonCommonCapabilities(),
 		protocol.DaemonCapabilityClaimPollHintsV1,
-	), ",")
+	)
+	return strings.Join(caps, ",")
 }
 
 // daemonHTTPClientCapabilities omits claim-poll-hints-v1 because HTTP fallback
@@ -200,7 +201,7 @@ func daemonHTTPClientCapabilities() string {
 }
 
 func daemonCommonCapabilities() []string {
-	return []string{
+	caps := []string{
 		protocol.DaemonCapabilitySkillBundlesV1,
 		protocol.DaemonCapabilityCoalescedCommentsV1,
 		protocol.DaemonCapabilityExecutionManifestV1,
@@ -212,6 +213,17 @@ func daemonCommonCapabilities() []string {
 		protocol.DaemonCapabilityPlatformSkillV1,
 		protocol.DaemonCapabilityCheckoutKeepsWorkV1,
 	}
+	// terminal-v1 is platform-conditional: a daemon on a platform without a
+	// pty implementation must not advertise it. It must be in the COMMON set,
+	// not just the WS handshake: the server stores per-runtime capabilities
+	// from the HTTP registration header (X-Client-Capabilities), and the
+	// realtime relay gates terminal subscriptions on that stored set — a
+	// WS-only advertisement never reaches the runtime row and the gate fails
+	// closed (MAX-51).
+	if terminalCapabilityEnabled {
+		caps = append(caps, protocol.DaemonCapabilityTerminalV1)
+	}
+	return caps
 }
 
 // SetToken sets the auth token for authenticated requests.

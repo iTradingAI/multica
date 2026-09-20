@@ -1199,7 +1199,16 @@
       "hide": "Hide terminal",
       "restart": "Restart shell",
       "exited": "Shell exited (code {{code}})",
-      "spawn_failed": "Could not start a shell."
+      "spawn_failed": "Could not start a shell.",
+      "target_machine": "Target machine",
+      "local_machine": "This machine",
+      "connecting": "Connecting to {{machine}}…",
+      "daemon_offline": "{{machine}} went offline. The terminal was closed.",
+      "err_in_use": "Machine in use",
+      "err_forbidden": "No permission",
+      "err_unsupported": "Terminal not supported",
+      "err_offline": "Machine offline",
+      "err_generic": "Terminal error"
     },
     "daemon": {
       "title": "Daemon",

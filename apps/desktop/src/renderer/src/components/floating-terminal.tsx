@@ -6,6 +6,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
+  type ReactNode,
 } from "react";
 import {
   DndContext,
@@ -18,11 +19,13 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal, type ITheme } from "@xterm/xterm";
-import { RotateCcw, SquareTerminal, X } from "lucide-react";
+import { Loader2, RotateCcw, SquareTerminal, X } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
 import { useTheme } from "@multica/ui/components/common/theme-provider";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "@multica/views/i18n";
+import { useWS } from "@multica/core/realtime";
 // The renderer owns xterm's stylesheet; the package ships the same file for
 // bundlers that do not auto-inject it.
 import "@xterm/xterm/css/xterm.css";
@@ -38,6 +41,17 @@ import {
   type ResolvedTerminalRect,
   type TerminalCanvasBounds,
 } from "@/stores/terminal-store";
+import {
+  useTerminalMachines,
+  type TerminalMachine,
+} from "@/terminal/machines";
+import { RemoteSessionSource } from "@/terminal/remote-session";
+import {
+  terminalErrorKey,
+  type TerminalExitInfo,
+  type TerminalSessionSource,
+  type TerminalTarget,
+} from "@/terminal/session-source";
 
 const PANEL_DRAG_ID = "floating-terminal-panel";
 
@@ -111,8 +125,13 @@ interface TerminalPanelProps {
   exitCode: number | null;
   spawnFailed: boolean;
   canRestart: boolean;
+  machines: TerminalMachine[];
+  target: TerminalTarget;
+  localHidden: boolean;
+  onTargetChange: (target: TerminalTarget) => void;
   onHide: () => void;
   onRestart: () => void;
+  children?: ReactNode;
   onResizeStart: (
     event: ReactPointerEvent<HTMLDivElement>,
     direction: ResizeDirection,
@@ -133,8 +152,13 @@ function TerminalPanel({
   exitCode,
   spawnFailed,
   canRestart,
+  machines,
+  target,
+  localHidden,
+  onTargetChange,
   onHide,
   onRestart,
+  children,
   onResizeStart,
 }: TerminalPanelProps) {
   const { t } = useT("settings");
@@ -188,6 +212,25 @@ function TerminalPanel({
         <span className="truncate text-xs font-medium">
           {t(($) => $.desktop.terminal.title)}
         </span>
+        {/* Target picker: the local machine plus every runtime advertising
+            the terminal capability. The list is plain <select> so it stays
+            keyboard-accessible without dragging in a popover into a
+            drag-handle header. */}
+        <select
+          data-slot="floating-terminal-target"
+          aria-label={t(($) => $.desktop.terminal.target_machine)}
+          className="h-5 max-w-40 rounded border border-surface-border bg-background px-1 text-xs text-foreground"
+          onChange={(event) => onTargetChange(event.target.value)}
+          onPointerDown={(event) => event.stopPropagation()}
+          value={target}
+        >
+          <option value="local">{t(($) => $.desktop.terminal.local_machine)}</option>
+          {machines.map((machine) => (
+            <option key={machine.id} value={machine.id}>
+              {machine.label}
+            </option>
+          ))}
+        </select>
         <span className="flex-1" />
         {canRestart && (
           <Button
@@ -217,14 +260,16 @@ function TerminalPanel({
       </header>
 
       {/* xterm mounts here. Its own background stays transparent so the theme
-          set on the Terminal instance is what paints. */}
+          set on the Terminal instance is what paints. Kept mounted while a
+          remote tab is active so the local shell's scrollback survives. */}
       <div
         ref={hostRef}
         data-slot="floating-terminal-body"
         className="min-h-0 flex-1 overflow-hidden bg-background"
+        style={localHidden ? { display: "none" } : undefined}
       />
 
-      {(exitCode !== null || spawnFailed) && (
+      {(exitCode !== null || spawnFailed) && !localHidden && (
         <p
           data-slot="floating-terminal-status"
           className="shrink-0 border-t border-surface-border px-2 py-1 text-[11px] text-muted-foreground"
@@ -234,6 +279,10 @@ function TerminalPanel({
             : t(($) => $.desktop.terminal.exited, { code: exitCode })}
         </p>
       )}
+
+      {/* Remote tabs coexist with the local shell; each manages its own
+          visibility so a background tab keeps its scrollback and session. */}
+      {children}
 
       {/* Edge targets grow the panel right/down; it is anchored top-left. */}
       <div
@@ -256,6 +305,166 @@ function TerminalPanel({
 }
 
 /**
+ * One remote tab: an xterm wired to a session on `runtimeId` through the
+ * realtime-hub terminal relay. Lives for as long as the tab is open (hidden,
+ * not unmounted, while another tab is active) so scrollback and the remote
+ * shell survive tab switches.
+ */
+function RemoteTerminalView({
+  runtimeId,
+  label,
+  source,
+  active,
+  onDaemonOffline,
+}: {
+  runtimeId: string;
+  label: string;
+  source: TerminalSessionSource;
+  active: boolean;
+  onDaemonOffline: (runtimeId: string) => void;
+}) {
+  const { t } = useT("settings");
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const handleRef = useRef<{ session: string } | null>(null);
+  const [status, setStatus] = useState<
+    | { state: "connecting" }
+    | { state: "ready" }
+    | { state: "error"; errorKey: string }
+    | { state: "exited"; code?: number }
+  >({ state: "connecting" });
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return undefined;
+    const terminal = new Terminal({
+      fontSize: TERMINAL_FONT_SIZE,
+      fontFamily: readToken(host, TERMINAL_FONT_TOKEN) || undefined,
+      scrollback: TERMINAL_SCROLLBACK,
+      cursorBlink: true,
+      theme: readTerminalTheme(host),
+    });
+    const fit = new FitAddon();
+    terminal.loadAddon(fit);
+    terminal.open(host);
+    const grid = clampGrid(terminal.cols, terminal.rows);
+    let disposed = false;
+    let offs: Array<() => void> = [];
+
+    void source.open(runtimeId, { cols: grid.cols, rows: grid.rows }).then(
+      (result) => {
+        if (!result.ok) {
+          setStatus({ state: "error", errorKey: terminalErrorKey(result.error) });
+          return;
+        }
+        if (disposed) {
+          // The tab went away while the relay was opening; the remote pty
+          // must not be left running behind a dead view.
+          source.kill(result.handle.session);
+          return;
+        }
+        handleRef.current = result.handle;
+        offs.push(result.handle.onData((data) => terminal.write(data)));
+        offs.push(
+          result.handle.onExit((exit: TerminalExitInfo) => {
+            handleRef.current = null;
+            if (exit.reason === "daemon_offline") {
+              setStatus({ state: "error", errorKey: "err_offline" });
+              toast(t(($) => $.desktop.terminal.daemon_offline, { machine: label }));
+              onDaemonOffline(runtimeId);
+              return;
+            }
+            setStatus({ state: "exited", code: exit.code });
+          }),
+        );
+        setStatus({ state: "ready" });
+        terminal.focus();
+      },
+    );
+
+    const offInput = terminal.onData((data) => {
+      const handle = handleRef.current;
+      if (handle) source.write(handle.session, data);
+    });
+
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            if (host.clientWidth === 0 || host.clientHeight === 0) return;
+            fit.fit();
+            const handle = handleRef.current;
+            if (!handle) return;
+            const next = clampGrid(terminal.cols, terminal.rows);
+            source.resize(handle.session, next.cols, next.rows);
+          });
+    observer?.observe(host);
+
+    return () => {
+      disposed = true;
+      for (const off of offs) off();
+      offs = [];
+      offInput.dispose();
+      observer?.disconnect();
+      const handle = handleRef.current;
+      if (handle) source.kill(handle.session);
+      handleRef.current = null;
+      terminal.dispose();
+    };
+    // The remote source and target are stable for a tab's lifetime; the tab
+    // is keyed by runtime id, so this effect must run exactly once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runtimeId, source]);
+
+  return (
+    <div
+      data-slot="floating-terminal-remote"
+      data-runtime-id={runtimeId}
+      className="min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      style={{ display: active ? "flex" : "none" }}
+    >
+      <div
+        ref={hostRef}
+        data-slot="floating-terminal-remote-body"
+        className="min-h-0 flex-1 overflow-hidden"
+      />
+      {status.state === "connecting" && (
+        <p
+          data-slot="floating-terminal-remote-status"
+          className="flex shrink-0 items-center gap-1.5 border-t border-surface-border px-2 py-1 text-[11px] text-muted-foreground"
+        >
+          <Loader2 aria-hidden className="size-3 animate-spin" />
+          {t(($) => $.desktop.terminal.connecting, { machine: label })}
+        </p>
+      )}
+      {status.state === "error" && (
+        <p
+          data-slot="floating-terminal-remote-status"
+          className="shrink-0 border-t border-surface-border px-2 py-1 text-[11px] text-destructive"
+        >
+          {status.errorKey === "err_in_use"
+            ? t(($) => $.desktop.terminal.err_in_use)
+            : status.errorKey === "err_forbidden"
+              ? t(($) => $.desktop.terminal.err_forbidden)
+              : status.errorKey === "err_unsupported"
+                ? t(($) => $.desktop.terminal.err_unsupported)
+                : status.errorKey === "err_offline"
+                  ? t(($) => $.desktop.terminal.err_offline)
+                  : t(($) => $.desktop.terminal.err_generic)}
+        </p>
+      )}
+      {status.state === "exited" && (
+        <p
+          data-slot="floating-terminal-remote-status"
+          className="shrink-0 border-t border-surface-border px-2 py-1 text-[11px] text-muted-foreground"
+        >
+          {t(($) => $.desktop.terminal.exited, { code: status.code ?? 0 })}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
  * Floating terminal panel: an xterm instance wired to a main-process pty,
  * toggled with Ctrl+` from anywhere and draggable/resizable inside the tab
  * canvas.
@@ -268,13 +477,68 @@ function TerminalPanel({
  * closed, so toggling keeps both the scrollback and the shell process. It dies
  * with the window, which is also what kills the pty on main's side.
  */
-export function FloatingTerminal() {
+/**
+ * useWS that degrades to null outside a WSProvider (dedicated issue windows,
+ * tests). The context-missing throw surfaces after `use` consumed the hook,
+ * so hook order stays stable across renders.
+ */
+function useOptionalWS(): ReturnType<typeof useWS> | null {
+  try {
+    return useWS();
+  } catch {
+    return null;
+  }
+}
+
+export function FloatingTerminal({
+  remoteSource: injectedRemoteSource,
+}: {
+  /** Test injection point; defaults to the realtime-hub transport. */
+  remoteSource?: TerminalSessionSource | null;
+} = {}) {
   const resolvedTheme = useTheme().resolvedTheme;
   const visible = useTerminalStore((state) => state.visible);
   const rect = useTerminalStore((state) => state.rect);
   const activeSession = useTerminalStore((state) => state.activeSession);
   const setVisible = useTerminalStore((state) => state.setVisible);
   const setRect = useTerminalStore((state) => state.setRect);
+  const machines = useTerminalMachines();
+
+  // The realtime WS context is only present under CoreProvider (main window
+  // with an authenticated session); a bare mount — dedicated issue windows,
+  // tests — degrades remote tabs to unavailable rather than throwing.
+  const ws = useOptionalWS();
+  const remoteSource = useMemo<TerminalSessionSource | null>(() => {
+    if (injectedRemoteSource !== undefined) return injectedRemoteSource;
+    if (!ws) return null;
+    const context = ws;
+    return new RemoteSessionSource({
+      subscribe: (type, handler) => context.subscribe(type as never, handler),
+      send: (message) => context.send(message as never),
+    });
+  }, [injectedRemoteSource, ws]);
+
+  // Active target ("local" or a runtime id) and the remote tabs already opened.
+  const [target, setTarget] = useState<TerminalTarget>("local");
+  const [remoteTabs, setRemoteTabs] = useState<TerminalMachine[]>([]);
+
+  const handleTargetChange = useCallback(
+    (next: TerminalTarget) => {
+      setTarget(next);
+      if (next === "local" || !remoteSource) return;
+      setRemoteTabs((tabs) => {
+        if (tabs.some((tab) => tab.id === next)) return tabs;
+        const machine = machines.find((candidate) => candidate.id === next);
+        return machine ? [...tabs, machine] : tabs;
+      });
+    },
+    [machines, remoteSource],
+  );
+
+  const closeRemoteTab = useCallback((runtimeId: string) => {
+    setRemoteTabs((tabs) => tabs.filter((tab) => tab.id !== runtimeId));
+    setTarget((current) => (current === runtimeId ? "local" : current));
+  }, []);
 
   const panelRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -436,12 +700,13 @@ export function FloatingTerminal() {
 
   // Opening the panel starts a shell if there is none. A shell that exited (or
   // failed to start) waits for an explicit restart — auto-respawning would spin
-  // on a broken environment.
+  // on a broken environment. Only the local tab owns this lifecycle.
   useEffect(() => {
+    if (target !== "local") return;
     if (!visible || activeSession || sessionRef.current) return;
     if (exitCode !== null || spawnFailed) return;
     spawnSession();
-  }, [visible, activeSession, exitCode, spawnFailed, spawnSession]);
+  }, [target, visible, activeSession, exitCode, spawnFailed, spawnSession]);
 
   const handleDragEnd = (event: DragEndEvent) => {
     setRect(
@@ -499,8 +764,12 @@ export function FloatingTerminal() {
         canRestart={!activeSession && (exitCode !== null || spawnFailed)}
         exitCode={exitCode}
         hostRef={hostRef}
-        onHide={() => setVisible(false)}
+        localHidden={target !== "local"}
+        machines={machines}
         onResizeStart={handleResizeStart}
+        onTargetChange={handleTargetChange}
+        target={target}
+        onHide={() => setVisible(false)}
         onRestart={() => {
           // Clearing both is what re-arms the spawn effect; spawning here as
           // well would start a second pty.
@@ -511,7 +780,18 @@ export function FloatingTerminal() {
         resolved={resolved}
         spawnFailed={spawnFailed}
         visible={visible}
-      />
+      >
+        {remoteTabs.map((tab) => (
+          <RemoteTerminalView
+            active={target === tab.id}
+            key={tab.id}
+            label={tab.label}
+            onDaemonOffline={closeRemoteTab}
+            runtimeId={tab.id}
+            source={remoteSource as TerminalSessionSource}
+          />
+        ))}
+      </TerminalPanel>
     </DndContext>
   );
 }

@@ -937,7 +937,16 @@
       "hide": "터미널 숨기기",
       "restart": "셸 다시 시작",
       "exited": "셸이 종료되었습니다(코드 {{code}})",
-      "spawn_failed": "셸을 시작할 수 없습니다."
+      "spawn_failed": "셸을 시작할 수 없습니다.",
+      "target_machine": "대상 머신",
+      "local_machine": "이 머신",
+      "connecting": "{{machine}} 에 연결 중…",
+      "daemon_offline": "{{machine}} 이(가) 오프라인이 되어 터미널을 닫았습니다.",
+      "err_in_use": "머신 사용 중",
+      "err_forbidden": "권한 없음",
+      "err_unsupported": "터미널 미지원",
+      "err_offline": "머신 오프라인",
+      "err_generic": "터미널 오류"
     },
     "daemon": {
       "title": "데몬",

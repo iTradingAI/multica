@@ -1196,7 +1196,16 @@
       "hide": "隐藏终端",
       "restart": "重启 shell",
       "exited": "shell 已退出（代码 {{code}}）",
-      "spawn_failed": "无法启动 shell。"
+      "spawn_failed": "无法启动 shell。",
+      "target_machine": "目标机器",
+      "local_machine": "本机",
+      "connecting": "正在连接 {{machine}}…",
+      "daemon_offline": "{{machine}} 已离线，终端已关闭。",
+      "err_in_use": "机器使用中",
+      "err_forbidden": "无权限",
+      "err_unsupported": "不支持终端",
+      "err_offline": "离线",
+      "err_generic": "终端错误"
     },
     "daemon": {
       "title": "守护进程",

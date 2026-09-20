@@ -18,6 +18,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // MembershipChecker verifies a user belongs to a workspace.
@@ -231,6 +232,15 @@ type Client struct {
 	// currently in. Used to clean up rooms on disconnect.
 	subscriptions map[scopeKey]bool
 
+	// evictedTerminal guards the one-shot terminal cleanup after a slow-evict
+	// (removeClient and evictSlow can both observe the same client).
+	evictedTerminal bool
+
+	// terminalSessions tracks, per terminal scope this client holds, the
+	// session ids it opened — the kill-on-unsubscribe/disconnect ledger.
+	// Guarded by hub.mu.
+	terminalSessions map[string]map[string]bool
+
 	// lastSeenEventIDs is used by the dual-write broadcaster (and any
 	// future deliverer) to dedup messages that arrived first via the local
 	// fast path and are then re-played from Redis. Bounded LRU semantics
@@ -275,14 +285,24 @@ type SubscriptionCallback func(scopeType, scopeID string)
 
 // Hub manages WebSocket connections organized into scope-based rooms.
 type Hub struct {
-	rooms      map[scopeKey]map[*Client]bool
-	clients    map[*Client]bool // every connected client (used by global Broadcast and snapshots)
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
-	mu         sync.RWMutex
+	rooms          map[scopeKey]map[*Client]bool
+	clients        map[*Client]bool // every connected client (used by global Broadcast and snapshots)
+	broadcast      chan []byte
+	register       chan *Client
+	unregister     chan *Client
+	mu             sync.RWMutex
+	terminalSubs   map[string]*Client
+	terminalPaused map[string]bool
 
 	authorizer ScopeAuthorizer
+
+	// Terminal relay state (MAX-51 M3). terminalSubs holds the single
+	// subscriber per runtime; terminalPaused marks scopes whose daemon pty
+	// drain is paused by the send-buffer watermark. terminalOpMu serializes
+	// occupancy/teardown transitions. All guarded state is under mu.
+	terminalAuthorizer TerminalScopeAuthorizer
+	terminalRelay      TerminalRelay
+	terminalOpMu       sync.Mutex
 
 	// Subscription lifecycle hooks. Both can be nil.
 	onFirstSubscriber SubscriptionCallback
@@ -292,11 +312,13 @@ type Hub struct {
 // NewHub creates a new Hub instance.
 func NewHub() *Hub {
 	return &Hub{
-		rooms:      make(map[scopeKey]map[*Client]bool),
-		clients:    make(map[*Client]bool),
-		broadcast:  make(chan []byte),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		rooms:          make(map[scopeKey]map[*Client]bool),
+		clients:        make(map[*Client]bool),
+		broadcast:      make(chan []byte),
+		register:       make(chan *Client),
+		unregister:     make(chan *Client),
+		terminalSubs:   make(map[string]*Client),
+		terminalPaused: make(map[string]bool),
 	}
 }
 
@@ -376,6 +398,9 @@ func (h *Hub) removeClient(client *Client) {
 			cb(key.Type, key.ID)
 		}
 	}
+	// Terminal scopes die with the connection: kill every session the client
+	// opened so none leak (MAX-51 M3).
+	h.terminalClientGone(client)
 	for _, key := range emptied {
 		M.DecRoom(key.Type)
 	}
@@ -650,6 +675,13 @@ func (h *Hub) evictSlow(slow []*Client) {
 	if evicted > 0 {
 		M.ActiveConnections.Add(int64(-evicted))
 		M.DisconnectsTotal.Add(int64(evicted))
+	}
+	for _, c := range slow {
+		if c.evictedTerminal {
+			continue
+		}
+		c.evictedTerminal = true
+		go h.terminalClientGone(c)
 	}
 	for _, r := range drainedRooms {
 		M.DecRoom(r.Type)
@@ -954,6 +986,11 @@ func (c *Client) handleFrame(raw []byte) {
 		} else {
 			c.handleUnsubscribe(p.Scope, p.ID)
 		}
+	case protocol.EventTerminalOpen,
+		protocol.EventTerminalInput,
+		protocol.EventTerminalResize,
+		protocol.EventTerminalKill:
+		c.handleTerminalClientFrame(f.Type, f.Payload)
 	case "ping":
 		c.sendJSON(map[string]string{"type": "pong"})
 	default:
@@ -980,6 +1017,19 @@ func (c *Client) handleSubscribe(scope, id string) {
 		}
 		// Already auto-subscribed at connect time; reply ack idempotently.
 		c.hub.subscribe(c, scope, id)
+	case ScopeTerminal:
+		if reason := c.hub.subscribeTerminal(c, id); reason != "" {
+			M.SubscribeDeniedTotal(scope).Add(1)
+			c.sendJSON(map[string]any{
+				"type": "subscribe_error",
+				"payload": map[string]string{
+					"scope": scope,
+					"id":    id,
+					"error": reason,
+				},
+			})
+			return
+		}
 	case ScopeTask, ScopeChat:
 		auth := c.hub.authorizer
 		if auth != nil {
@@ -1021,6 +1071,14 @@ func (c *Client) handleSubscribe(scope, id string) {
 }
 
 func (c *Client) handleUnsubscribe(scope, id string) {
+	if scope == ScopeTerminal {
+		c.hub.unsubscribeTerminal(c, id)
+		c.sendJSON(map[string]any{
+			"type":    "unsubscribe_ack",
+			"payload": map[string]string{"scope": scope, "id": id},
+		})
+		return
+	}
 	c.hub.unsubscribe(c, scope, id)
 	c.sendJSON(map[string]any{
 		"type":    "unsubscribe_ack",

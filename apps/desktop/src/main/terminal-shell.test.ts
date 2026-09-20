@@ -25,15 +25,22 @@ describe("resolveDefaultShell", () => {
     expect(resolveDefaultShell("linux", {})).toEqual({ file: "/bin/bash" });
   });
 
-  it("uses COMSPEC on Windows with a PowerShell fallback", () => {
+  it("uses COMSPEC on Windows when Git Bash is absent", () => {
     expect(
       resolveDefaultShell("win32", {
         COMSPEC: "C:\\Windows\\system32\\cmd.exe",
-      }),
+      }, () => false),
     ).toEqual({ file: "C:\\Windows\\system32\\cmd.exe" });
-    expect(resolveDefaultShell("win32", {})).toEqual({
+    expect(resolveDefaultShell("win32", {}, () => false)).toEqual({
       file: "powershell.exe",
     });
+  });
+
+  it("prefers Git Bash over COMSPEC on Windows when installed", () => {
+    const bash = "C:\\Program Files\\Git\\bin\\bash.exe";
+    expect(
+      resolveDefaultShell("win32", { COMSPEC: "C:\\Windows\\cmd.exe" }, (p) => p === bash),
+    ).toEqual({ file: bash });
   });
 });
 

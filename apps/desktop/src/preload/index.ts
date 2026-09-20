@@ -30,6 +30,7 @@ import type {
   TerminalSpawnRequest,
   TerminalSpawnResult,
 } from "../shared/terminal-types";
+import type { DefaultShell } from "../shared/default-shell";
 import {
   MAIN_RENDERER_CHANNEL_STATE_CHANNEL,
   parseTabSelectionShortcutKey,
@@ -354,6 +355,8 @@ const terminalAPI = {
   kill: (sessionId: string): void => {
     ipcRenderer.send("terminal:kill", { sessionId });
   },
+  defaultShell: (): Promise<DefaultShell> =>
+    ipcRenderer.invoke("terminal:default-shell"),
   onData: (callback: (event: TerminalDataEvent) => void): (() => void) => {
     const handler = (_: unknown, event: TerminalDataEvent) => callback(event);
     ipcRenderer.on("terminal:data", handler);

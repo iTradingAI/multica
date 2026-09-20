@@ -1199,7 +1199,16 @@
       "hide": "Masquer le terminal",
       "restart": "Redémarrer le shell",
       "exited": "Shell arrêté (code {{code}})",
-      "spawn_failed": "Impossible de démarrer un shell."
+      "spawn_failed": "Impossible de démarrer un shell.",
+      "target_machine": "Machine cible",
+      "local_machine": "Cette machine",
+      "connecting": "Connexion à {{machine}}…",
+      "daemon_offline": "{{machine}} est passée hors ligne. Le terminal a été fermé.",
+      "err_in_use": "Machine occupée",
+      "err_forbidden": "Accès refusé",
+      "err_unsupported": "Terminal non pris en charge",
+      "err_offline": "Machine hors ligne",
+      "err_generic": "Erreur de terminal"
     },
     "daemon": {
       "title": "Démon",

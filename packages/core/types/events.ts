@@ -90,7 +90,17 @@ export type WSEventType =
   | "github_installation:deleted"
   | "pull_request:linked"
   | "pull_request:updated"
-  | "pull_request:unlinked";
+  | "pull_request:unlinked"
+  // Terminal frames (MAX-51): the realtime hub relays these verbatim between
+  // the terminal-scope subscriber and the target machine's daemon. Payload
+  // shapes are owned by the desktop client (apps/desktop) and stay untyped
+  // here on purpose.
+  | "subscribe_ack"
+  | "subscribe_error"
+  | "terminal.open_result"
+  | "terminal.data"
+  | "terminal.exit"
+  | "terminal.error";
 
 export interface WSMessage<T = unknown> {
   type: WSEventType;
@@ -647,6 +657,12 @@ export interface WSEventPayloadMap {
   "pull_request:linked": unknown;
   "pull_request:updated": unknown;
   "pull_request:unlinked": unknown;
+  "subscribe_ack": unknown;
+  "subscribe_error": unknown;
+  "terminal.open_result": unknown;
+  "terminal.data": unknown;
+  "terminal.exit": unknown;
+  "terminal.error": unknown;
 }
 
 /**

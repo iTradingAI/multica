@@ -8,6 +8,11 @@ const (
 	ScopeUser      = "user"
 	ScopeTask      = "task"
 	ScopeChat      = "chat"
+	// ScopeTerminal is the relay scope for interactive terminal sessions
+	// (MAX-51 M3). Subscribers are owner-only and exclusive: one client per
+	// runtime. Terminal frames are forwarded point-to-point in-process and
+	// never published through the Redis relay.
+	ScopeTerminal = "terminal"
 	// ScopeDaemonRuntime routes daemon wakeup frames through the Redis relay.
 	// It is consumed by the daemon WebSocket hub, not by browser clients.
 	ScopeDaemonRuntime = "daemon_runtime"
