@@ -512,14 +512,10 @@ export function FloatingTerminal({
     if (injectedRemoteSource !== undefined) return injectedRemoteSource;
     if (!ws) return null;
     const context = ws;
-    return new RemoteSessionSource(
-      {
-        subscribe: (type, handler) =>
-          context.subscribe(type as never, handler),
-        send: (message) => context.send(message as never),
-      },
-      () => window.terminalAPI?.defaultShell?.() ?? Promise.resolve(null),
-    );
+    return new RemoteSessionSource({
+      subscribe: (type, handler) => context.subscribe(type as never, handler),
+      send: (message) => context.send(message as never),
+    });
   }, [injectedRemoteSource, ws]);
 
   // Active target ("local" or a runtime id) and the remote tabs already opened.

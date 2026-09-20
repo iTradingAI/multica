@@ -197,12 +197,9 @@ describe("RemoteSessionSource", () => {
     expect(exits).toEqual([{ code: undefined, reason: "daemon_offline" }]);
   });
 
-  it("uses the default-shell provider for the open payload", async () => {
+  it("leaves the remote shell unset so the daemon picks its platform default", async () => {
     const { transport, frames, emit } = makeTransport();
-    const defaultShell = vi.fn(async () => ({
-      file: "C:\\Program Files\\Git\\bin\\bash.exe",
-    }));
-    const source = new RemoteSessionSource(transport, defaultShell);
+    const source = new RemoteSessionSource(transport);
     const openPromise = source.open("runtime-1", { cols: 80, rows: 24 });
     emit("subscribe_ack", { scope: "terminal", id: "runtime-1" });
     await vi.waitFor(() => expect(frames).toHaveLength(2));
@@ -211,9 +208,27 @@ describe("RemoteSessionSource", () => {
       session_id: "sess-1",
     });
     await openPromise;
-    expect(frames[1]!.payload.shell).toBe(
-      "C:\\Program Files\\Git\\bin\\bash.exe",
-    );
+    // The LOCAL default shell (e.g. Git Bash on Windows) must not leak into a
+    // remote open: that path does not exist on the target machine.
+    expect(frames[1]!.payload.shell).toBeUndefined();
+  });
+
+  it("passes an explicitly chosen shell through to the open payload", async () => {
+    const { transport, frames, emit } = makeTransport();
+    const source = new RemoteSessionSource(transport);
+    const openPromise = source.open("runtime-1", {
+      cols: 80,
+      rows: 24,
+      shell: "/usr/bin/fish",
+    });
+    emit("subscribe_ack", { scope: "terminal", id: "runtime-1" });
+    await vi.waitFor(() => expect(frames).toHaveLength(2));
+    emit("terminal.open_result", {
+      req_id: frames[1]!.payload.req_id,
+      session_id: "sess-1",
+    });
+    await openPromise;
+    expect(frames[1]!.payload.shell).toBe("/usr/bin/fish");
   });
 
   it("resolves open with a timeout when the relay never answers", async () => {

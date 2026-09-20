@@ -17,12 +17,6 @@ export interface RealtimeTransport {
   send(message: { type: string; payload: unknown }): void;
 }
 
-/** Default shell provider — main resolves Git Bash / $SHELL / COMSPEC. */
-export type DefaultShellProvider = () => Promise<{
-  file: string;
-  args?: string[];
-} | null>;
-
 const OPEN_TIMEOUT_MS = 10_000;
 const SUBSCRIBE_TIMEOUT_MS = 10_000;
 
@@ -74,10 +68,7 @@ export class RemoteSessionSource implements TerminalSessionSource {
   private subscribeWaiters = new Map<string, SubscribeWaiter>();
   private sessions = new Map<string, LiveSession>();
 
-  constructor(
-    private transport: RealtimeTransport,
-    private defaultShell: DefaultShellProvider | null = null,
-  ) {}
+  constructor(private transport: RealtimeTransport) {}
 
   private ensureSubscribed(): void {
     if (this.subscribed) return;
@@ -206,11 +197,11 @@ export class RemoteSessionSource implements TerminalSessionSource {
     const subscribeError = await this.subscribe(target);
     if (subscribeError) return { ok: false, error: subscribeError };
 
-    let shell = options.shell;
-    if (!shell && this.defaultShell) {
-      const resolved = await this.defaultShell().catch(() => null);
-      shell = resolved?.file;
-    }
+    // The shell stays unset unless the caller explicitly chose one: the LOCAL
+    // default shell (Git Bash on Windows) is meaningless on the target
+    // machine. Unset lets the daemon pick its platform default (bash/zsh),
+    // which is what a remote tab wants.
+    const shell = options.shell;
 
     const reqId = randomReqId();
     const openResult = await new Promise<TerminalOpenResult>((resolve) => {
