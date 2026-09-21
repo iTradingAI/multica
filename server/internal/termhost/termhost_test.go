@@ -347,7 +347,9 @@ func TestNaturalExitDeliversExitCodeAndReleases(t *testing.T) {
 	pty.emit("hello\r\n")
 	pty.exit(7)
 
-	waitFor(t, func() bool { return len(h.sink.exits) > 0 }, "exit event")
+	// Read through the locking accessor: exits is written by the pump
+	// goroutine under sink.mu, so a bare len() here is a data race.
+	waitFor(t, func() bool { return len(h.sink.exitCodes()) > 0 }, "exit event")
 	if code := h.sink.exitCodes(); len(code) != 1 || code[0] != 7 {
 		t.Fatalf("exit codes = %v, want [7]", code)
 	}

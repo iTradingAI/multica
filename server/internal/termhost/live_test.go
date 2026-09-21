@@ -4,6 +4,7 @@ package termhost
 
 import (
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -124,22 +125,14 @@ func TestLiveKillTerminatesProcess(t *testing.T) {
 	if !host.Write("conn-1", spawn.SessionID, []byte("echo SHELLPID=$$\n")) {
 		t.Fatal("write failed")
 	}
-	waitForCondition(t, func() bool { return strings.Contains(sink.text(), "SHELLPID=") }, "pid line")
-
-	// The echoed command also contains the marker, so parse the last one —
-	// that is the shell's actual output.
-	pidLine := sink.text()
-	idx := strings.LastIndex(pidLine, "SHELLPID=")
-	rest := pidLine[idx+len("SHELLPID="):]
-	digits := rest
-	for i := 0; i < len(digits); i++ {
-		if digits[i] < '0' || digits[i] > '9' {
-			digits = digits[:i]
-			break
-		}
-	}
-	if digits == "" {
-		t.Fatalf("could not parse shell pid from %q", pidLine)
+	// The echoed command also contains the marker with "$$" unexpanded, so
+	// waiting for a bare "SHELLPID=" can pass on the echo alone, before the
+	// shell has printed its pid. Only the real output has digits after the
+	// equals sign — wait for that form, then parse it.
+	pidRe := regexp.MustCompile(`SHELLPID=([0-9]+)`)
+	waitForCondition(t, func() bool { return pidRe.MatchString(sink.text()) }, "pid line")
+	if pidRe.FindStringSubmatch(sink.text()) == nil {
+		t.Fatalf("could not parse shell pid from %q", sink.text())
 	}
 
 	if !host.Kill("conn-1", spawn.SessionID) {

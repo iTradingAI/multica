@@ -33,7 +33,7 @@ func openUnixPty(req SpawnRequest) (PtyProcess, error) {
 		return nil, err
 	}
 
-	p := &unixPty{file: file, cmd: cmd, output: make(chan []byte, 8), exited: make(chan int, 1)}
+	p := &unixPty{file: file, cmd: cmd, output: make(chan []byte, 8), exited: make(chan struct{})}
 
 	// Reader: one chunk per send. Blocking on the channel is the only queue
 	// here, so a slow consumer naturally blocks this read and the kernel's
@@ -60,16 +60,24 @@ func openUnixPty(req SpawnRequest) (PtyProcess, error) {
 
 	// Reaper: collect the exit code once the child is gone, then release the
 	// pty file (creack/pty wants the child reaped before the master closes).
+	// The exit is broadcast by closing exited, never by sending: the reader's
+	// early-exit arm also receives from exited, and a send there would let it
+	// consume the only code — leaving Wait() blocked forever and the exit
+	// event undelivered.
 	go func() {
 		waitErr := cmd.Wait()
 		p.mu.Lock()
 		p.waitErr = waitErr
-		p.mu.Unlock()
-		code := 0
 		if cmd.ProcessState != nil {
-			code = cmd.ProcessState.ExitCode()
+			p.code = cmd.ProcessState.ExitCode()
 		}
-		p.exited <- code
+		p.mu.Unlock()
+		close(p.exited)
+		// Release the master here, after the child is reaped (creack/pty
+		// wants the child reaped before the master closes). Doing it in the
+		// reaper — not in Wait — guarantees the fd is released on every
+		// teardown path, including the ones that never call Wait.
+		_ = p.file.Close()
 	}()
 
 	return p, nil
@@ -81,8 +89,9 @@ type unixPty struct {
 	file    *os.File
 	cmd     *exec.Cmd
 	output  chan []byte
-	exited  chan int
+	exited  chan struct{}
 	waitErr error
+	code    int
 }
 
 func (p *unixPty) Write(data []byte) (int, error) {
@@ -108,11 +117,14 @@ func (p *unixPty) Kill() error {
 	return p.file.Close()
 }
 
-// Wait blocks for the child's exit code.
+// Wait blocks for the child's exit code. The reaper broadcasts the exit by
+// closing exited and stores the code, so Wait is safe to call after the
+// reader's early-exit arm has already observed the same close.
 func (p *unixPty) Wait() int {
-	code := <-p.exited
-	_ = p.file.Close()
-	return code
+	<-p.exited
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.code
 }
 
 func (p *unixPty) Output() <-chan []byte { return p.output }
