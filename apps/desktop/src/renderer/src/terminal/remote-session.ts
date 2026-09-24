@@ -67,6 +67,15 @@ export class RemoteSessionSource implements TerminalSessionSource {
   private pendingOpens = new Map<string, PendingOpen>();
   private subscribeWaiters = new Map<string, SubscribeWaiter>();
   private sessions = new Map<string, LiveSession>();
+  /**
+   * Session -> runtime. The hub routes client frames by payload runtime_id,
+   * falling back to the client's sole terminal scope when it is absent.
+   * That fallback breaks the moment one client holds scopes for two
+   * machines (two tabs open): every un-routed open/input/resize/kill is
+   * answered with terminal.error "not_subscribed", which the panel renders
+   * as a dead session. Frames therefore always carry runtime_id.
+   */
+  private sessionRuntimes = new Map<string, string>();
 
   constructor(private transport: RealtimeTransport) {}
 
@@ -106,7 +115,10 @@ export class RemoteSessionSource implements TerminalSessionSource {
       clearTimeout(pending.timer);
       this.pendingOpens.delete(p.req_id);
       if (p.session_id && !p.error) {
-        pending.resolve({ ok: true, handle: this.registerSession(p.session_id) });
+        pending.resolve({
+          ok: true,
+          handle: this.registerSession(p.session_id, pending.runtimeId),
+        });
       } else {
         pending.resolve({ ok: false, error: p.error ?? "spawn_failed" });
       }
@@ -148,12 +160,13 @@ export class RemoteSessionSource implements TerminalSessionSource {
     });
   }
 
-  private registerSession(sessionId: string): TerminalSessionHandle {
+  private registerSession(sessionId: string, runtimeId: string): TerminalSessionHandle {
     const live: LiveSession = {
       dataHandlers: new Set(),
       exitHandlers: new Set(),
     };
     this.sessions.set(sessionId, live);
+    this.sessionRuntimes.set(sessionId, runtimeId);
     return {
       session: sessionId,
       onData: (callback) => {
@@ -175,6 +188,7 @@ export class RemoteSessionSource implements TerminalSessionSource {
     const live = this.sessions.get(sessionId);
     if (!live) return;
     this.sessions.delete(sessionId);
+    this.sessionRuntimes.delete(sessionId);
     for (const handler of live.exitHandlers) handler(exit);
   }
 
@@ -186,6 +200,26 @@ export class RemoteSessionSource implements TerminalSessionSource {
         this.pendingOpens.delete(pending.reqId);
       }
     }
+  }
+
+  /**
+   * Release the runtime's exclusive terminal scope: fail anything still
+   * pending for it and unsubscribe, letting the hub kill its sessions and
+   * free the scope for other clients. Idempotent — the hub treats a
+   * redundant unsubscribe as a no-op, and a later open() re-subscribes.
+   */
+  release(target: TerminalTarget): void {
+    const waiter = this.subscribeWaiters.get(target);
+    if (waiter) {
+      clearTimeout(waiter.timer);
+      this.subscribeWaiters.delete(target);
+      waiter.resolve("released");
+    }
+    this.failOpensForRuntime(target, "released");
+    this.transport.send({
+      type: "unsubscribe",
+      payload: { scope: "terminal", id: target },
+    });
   }
 
   async open(
@@ -214,6 +248,7 @@ export class RemoteSessionSource implements TerminalSessionSource {
         type: "terminal.open",
         payload: {
           req_id: reqId,
+          runtime_id: target,
           shell,
           cwd: options.cwd,
           cols: options.cols,
@@ -242,22 +277,35 @@ export class RemoteSessionSource implements TerminalSessionSource {
   write(session: string, data: string): void {
     this.transport.send({
       type: "terminal.input",
-      payload: { session_id: session, data: encodeBase64(data) },
+      payload: {
+        session_id: session,
+        runtime_id: this.sessionRuntimes.get(session),
+        data: encodeBase64(data),
+      },
     });
   }
 
   resize(session: string, cols: number, rows: number): void {
     this.transport.send({
       type: "terminal.resize",
-      payload: { session_id: session, cols, rows },
+      payload: {
+        session_id: session,
+        runtime_id: this.sessionRuntimes.get(session),
+        cols,
+        rows,
+      },
     });
   }
 
   kill(session: string): void {
     this.transport.send({
       type: "terminal.kill",
-      payload: { session_id: session },
+      payload: {
+        session_id: session,
+        runtime_id: this.sessionRuntimes.get(session),
+      },
     });
     this.sessions.delete(session);
+    this.sessionRuntimes.delete(session);
   }
 }

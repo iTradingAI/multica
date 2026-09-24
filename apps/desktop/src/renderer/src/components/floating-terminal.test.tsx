@@ -509,6 +509,7 @@ function makeRemoteSource(
     write: vi.fn(),
     resize: vi.fn(),
     kill: vi.fn(),
+    release: vi.fn(),
   };
   return {
     source,
@@ -673,7 +674,61 @@ describe("FloatingTerminal remote targets", () => {
     // the active session.
     expect(document.querySelector('[data-slot="floating-terminal-remote"]')).not.toBeNull();
     expect(source.kill).not.toHaveBeenCalled();
+    expect(source.release).not.toHaveBeenCalled();
     expect(api.kill).not.toHaveBeenCalled();
     expect(useTerminalStore.getState().activeSession).toBe(SESSION_ID);
+  });
+
+  // The terminal scope is exclusive per runtime on the hub: a client that
+  // never releases it blocks every other client with "in use" until its
+  // WebSocket drops. Every path that leaves the tab without a live session
+  // must release the scope.
+  it("releases the terminal scope when the panel unmounts with a live remote tab", async () => {
+    machinesMock.machines = [{ id: "rt-1", label: "Mac mini" }];
+    installTerminalAPI();
+    installDesktopAPI();
+    const { source } = makeRemoteSource();
+    const { unmount } = renderPanel(<FloatingTerminal remoteSource={source} />);
+    act(() => useTerminalStore.getState().setVisible(true));
+
+    fireEvent.change(targetSelect(), { target: { value: "rt-1" } });
+    await waitFor(() => expect(source.open).toHaveBeenCalledTimes(1));
+
+    // Hidden tabs keep their scope; unmounting kills the session first and
+    // then releases the machine.
+    expect(source.release).not.toHaveBeenCalled();
+    unmount();
+    expect(source.kill).toHaveBeenCalledWith("remote-sess-1");
+    expect(source.release).toHaveBeenCalledWith("rt-1");
+  });
+
+  it("releases the terminal scope when the open fails", async () => {
+    machinesMock.machines = [{ id: "rt-1", label: "Mac mini" }];
+    installTerminalAPI();
+    installDesktopAPI();
+    const { source } = makeRemoteSource({ ok: false, error: "spawn_failed" });
+    renderPanel(<FloatingTerminal remoteSource={source} />);
+    act(() => useTerminalStore.getState().setVisible(true));
+
+    fireEvent.change(targetSelect(), { target: { value: "rt-1" } });
+
+    expect(await screen.findByText("Terminal error")).toBeInTheDocument();
+    expect(source.release).toHaveBeenCalledWith("rt-1");
+  });
+
+  it("releases the terminal scope when the remote shell exits", async () => {
+    machinesMock.machines = [{ id: "rt-1", label: "Mac mini" }];
+    installTerminalAPI();
+    installDesktopAPI();
+    const { source, emitExit } = makeRemoteSource();
+    renderPanel(<FloatingTerminal remoteSource={source} />);
+    act(() => useTerminalStore.getState().setVisible(true));
+
+    fireEvent.change(targetSelect(), { target: { value: "rt-1" } });
+    await waitFor(() => expect(source.open).toHaveBeenCalledTimes(1));
+
+    act(() => emitExit({ code: 0 }));
+    expect(await screen.findByText(/exited/)).toBeInTheDocument();
+    expect(source.release).toHaveBeenCalledWith("rt-1");
   });
 });
