@@ -354,6 +354,9 @@ function RemoteTerminalView({
       (result) => {
         if (!result.ok) {
           setStatus({ state: "error", errorKey: terminalErrorKey(result.error) });
+          // An errored tab holds no session; free the exclusive scope so the
+          // machine is not blocked for other clients until this app exits.
+          source.release?.(runtimeId);
           return;
         }
         if (disposed) {
@@ -367,6 +370,9 @@ function RemoteTerminalView({
         offs.push(
           result.handle.onExit((exit: TerminalExitInfo) => {
             handleRef.current = null;
+            // The session is gone; release the exclusive scope. Re-opening
+            // ("restart shell" or a new tab) re-subscribes on demand.
+            source.release?.(runtimeId);
             if (exit.reason === "daemon_offline") {
               setStatus({ state: "error", errorKey: "err_offline" });
               toast(t(($) => $.desktop.terminal.daemon_offline, { machine: label }));
@@ -408,6 +414,10 @@ function RemoteTerminalView({
       const handle = handleRef.current;
       if (handle) source.kill(handle.session);
       handleRef.current = null;
+      // Closing the tab must also release the machine's exclusive terminal
+      // scope; without this the hub keeps it booked to this client until the
+      // app's WebSocket drops, answering everyone else with "in use".
+      source.release?.(runtimeId);
       terminal.dispose();
     };
     // The remote source and target are stable for a tab's lifetime; the tab

@@ -243,4 +243,79 @@ describe("RemoteSessionSource", () => {
       vi.useRealTimers();
     }
   });
+
+  describe("release", () => {
+    it("unsubscribes the terminal scope once no session remains", async () => {
+      const { transport, frames, emit } = makeTransport();
+      const source = new RemoteSessionSource(transport);
+      const openPromise = source.open("runtime-1", { cols: 80, rows: 24 });
+      emit("subscribe_ack", { scope: "terminal", id: "runtime-1" });
+      await vi.waitFor(() => expect(frames).toHaveLength(2));
+      emit("terminal.open_result", {
+        req_id: frames[1]!.payload.req_id,
+        session_id: "sess-1",
+      });
+      await openPromise;
+
+      source.release("runtime-1");
+      expect(frames[2]).toEqual({
+        type: "unsubscribe",
+        payload: { scope: "terminal", id: "runtime-1" },
+      });
+    });
+
+    it("fails pending opens and subscribe waits for that runtime only", async () => {
+      const { transport, frames } = makeTransport();
+      const source = new RemoteSessionSource(transport);
+      const open1 = source.open("runtime-1", { cols: 80, rows: 24 });
+      const open2 = source.open("runtime-2", { cols: 80, rows: 24 });
+
+      source.release("runtime-1");
+      expect(await open1).toEqual({ ok: false, error: "released" });
+      expect(frames).toContainEqual({
+        type: "unsubscribe",
+        payload: { scope: "terminal", id: "runtime-1" },
+      });
+      // runtime-2 keeps waiting; its frames are untouched.
+      expect(frames).not.toContainEqual({
+        type: "unsubscribe",
+        payload: { scope: "terminal", id: "runtime-2" },
+      });
+      const open2Result = Promise.race([
+        open2,
+        new Promise((resolve) => setTimeout(() => resolve("still-pending"), 20)),
+      ]);
+      expect(await open2Result).toBe("still-pending");
+    });
+
+    it("is repeatable, and a later open re-subscribes", async () => {
+      const { transport, frames, emit } = makeTransport();
+      const source = new RemoteSessionSource(transport);
+      const openPromise = source.open("runtime-1", { cols: 80, rows: 24 });
+      emit("subscribe_ack", { scope: "terminal", id: "runtime-1" });
+      await vi.waitFor(() => expect(frames).toHaveLength(2));
+      emit("terminal.open_result", {
+        req_id: frames[1]!.payload.req_id,
+        session_id: "sess-1",
+      });
+      await openPromise;
+
+      source.release("runtime-1");
+      source.release("runtime-1");
+      expect(frames.filter((f) => f.type === "unsubscribe")).toHaveLength(2);
+
+      const reopen = source.open("runtime-1", { cols: 80, rows: 24 });
+      emit("subscribe_ack", { scope: "terminal", id: "runtime-1" });
+      await vi.waitFor(() =>
+        expect(frames.filter((f) => f.type === "subscribe")).toHaveLength(2),
+      );
+      await vi.waitFor(() => expect(frames.at(-1)!.type).toBe("terminal.open"));
+      emit("terminal.open_result", {
+        req_id: frames.at(-1)!.payload.req_id,
+        session_id: "sess-2",
+      });
+      const result = await reopen;
+      expect(result.ok).toBe(true);
+    });
+  });
 });

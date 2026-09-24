@@ -39,6 +39,14 @@ export interface TerminalSessionSource {
   write(session: string, data: string): void;
   resize(session: string, cols: number, rows: number): void;
   kill(session: string): void;
+  /**
+   * Drop the target's server-side scope state when no live session remains
+   * (tab closed, open failed, shell exited). The terminal scope is exclusive
+   * per runtime, so a client that never releases it keeps blocking every
+   * other client with "in use" until its WebSocket drops. Optional because
+   * local sources keep no server-side scope.
+   */
+  release?(target: TerminalTarget): void;
 }
 
 /**

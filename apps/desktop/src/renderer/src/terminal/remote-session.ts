@@ -188,6 +188,26 @@ export class RemoteSessionSource implements TerminalSessionSource {
     }
   }
 
+  /**
+   * Release the runtime's exclusive terminal scope: fail anything still
+   * pending for it and unsubscribe, letting the hub kill its sessions and
+   * free the scope for other clients. Idempotent — the hub treats a
+   * redundant unsubscribe as a no-op, and a later open() re-subscribes.
+   */
+  release(target: TerminalTarget): void {
+    const waiter = this.subscribeWaiters.get(target);
+    if (waiter) {
+      clearTimeout(waiter.timer);
+      this.subscribeWaiters.delete(target);
+      waiter.resolve("released");
+    }
+    this.failOpensForRuntime(target, "released");
+    this.transport.send({
+      type: "unsubscribe",
+      payload: { scope: "terminal", id: target },
+    });
+  }
+
   async open(
     target: TerminalTarget,
     options: TerminalOpenOptions,
