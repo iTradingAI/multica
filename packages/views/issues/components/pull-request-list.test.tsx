@@ -377,8 +377,9 @@ describe("PullRequestList sidebar rows", () => {
   });
 });
 
-// MUL-7429: the line under the list says what "every linked PR merged → Done"
-// will do, straight from the server's decision, and each row can be removed.
+// MUL-7429: the line under the list says what "every linked PR merged, one says
+// Closes → Done" will do, straight from the server's decision, and each row can
+// be removed.
 describe("PullRequestList auto-complete", () => {
   beforeEach(() => {
     mockAutoComplete = null;
@@ -416,6 +417,15 @@ describe("PullRequestList auto-complete", () => {
     // offers no undo.
     await waitFor(() =>
       expect(toastMock.success).toHaveBeenCalledWith("Removed #19. Every remaining PR is merged, so the issue is done."),
+    );
+  });
+
+  it("says merging won't complete the issue when no PR closes it", async () => {
+    mockPRs = [makePR({ id: "a", number: 12, link_source: "title" })];
+    mockAutoComplete = decision("no_close_intent");
+    renderList();
+    expect(await screen.findByTestId("pr-auto-complete-line")).toHaveTextContent(
+      "Won’t complete: no “Closes MUL-1”",
     );
   });
 

@@ -115,7 +115,7 @@ describe("PullRequestsSection (MUL-7429)", () => {
     apiMock.setIssuePRAutoComplete.mockResolvedValue({ pull_requests: [], auto_complete: { ...decision, issue_disabled: true } });
     renderSection();
     fireEvent.click(await screen.findByRole("button", { name: "Pull request automation" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Don’t auto-complete this issue" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Turn off auto-complete" }));
     await waitFor(() => expect(apiMock.setIssuePRAutoComplete).toHaveBeenCalledWith("issue-1", true));
   });
 

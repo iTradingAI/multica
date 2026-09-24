@@ -144,7 +144,7 @@ function resetFixtures() {
 describe("GitHubTab", () => {
   beforeEach(resetFixtures);
 
-  it.each([false, true])("states the title/branch linking rule beside auto-link when connected=%s", (connected) => {
+  it.each([false, true])("states the linking rule beside auto-link when connected=%s", (connected) => {
     installationsRef.current.installations = connected
       ? [{ id: "inst-1", account_login: "acme" }]
       : [];
@@ -152,9 +152,7 @@ describe("GitHubTab", () => {
 
     const toggle = screen.getByRole("switch", { name: /Auto-link issues and PRs/i });
     const row = within(toggle.parentElement!);
-    expect(row.getByText(/e\.g\. MUL-123, is in its title or branch name/)).toBeTruthy();
-    // Keywords no longer carry meaning (MUL-7429), so the old rule is gone.
-    expect(screen.queryByText(/Closes MUL-123/)).toBeNull();
+    expect(row.getByText(/e\.g\. MUL-123, is in its title or branch name, or follows “Closes” in its description/)).toBeTruthy();
   });
 
   // Completion is shared by every code host and lives with the statuses; the

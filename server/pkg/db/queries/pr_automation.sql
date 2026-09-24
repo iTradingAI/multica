@@ -44,12 +44,12 @@ WHERE issue_id = $1 AND pull_request_id = $2;
 -- name: ListIssueLinkedPullRequestStates :many
 -- Every PR linked to the issue across GitHub and self-hosted providers, for
 -- the auto-complete decision. Ordered by number so reasons read stably.
-SELECT pr.id, 'github'::text AS provider, pr.pr_number, pr.state
+SELECT pr.id, 'github'::text AS provider, pr.pr_number, pr.state, ipr.close_intent
 FROM github_pull_request pr
 JOIN issue_pull_request ipr ON ipr.pull_request_id = pr.id
 WHERE ipr.issue_id = $1
 UNION ALL
-SELECT pr.id, pr.provider AS provider, pr.pr_number, pr.state
+SELECT pr.id, pr.provider AS provider, pr.pr_number, pr.state, ipr.close_intent
 FROM vcs_pull_request pr
 JOIN issue_vcs_pull_request ipr ON ipr.pull_request_id = pr.id
 WHERE ipr.issue_id = $1
@@ -57,10 +57,10 @@ ORDER BY pr_number;
 
 -- name: CompleteIssueFromPullRequests :one
 -- Conditional status write for PR auto-complete. It lands only if the issue is
--- still in the status the decision saw (two merges racing complete it once) and
--- the linked PRs are still all merged when the write runs: a PR linked between
--- the decision and this statement keeps the issue open. Repositions like
--- UpdateIssueStatus does.
+-- still in the status the decision saw (two merges racing complete it once),
+-- the linked PRs are still all merged when the write runs (a PR linked between
+-- the decision and this statement keeps the issue open), and one of them still
+-- closes the issue with a keyword. Repositions like UpdateIssueStatus does.
 UPDATE issue AS i SET
     status = 'done',
     duplicate_of_issue_id = NULL,
@@ -91,5 +91,10 @@ WHERE i.id = $1
       SELECT 1 FROM issue_vcs_pull_request ipr
       JOIN vcs_pull_request pr ON pr.id = ipr.pull_request_id
       WHERE ipr.issue_id = i.id AND pr.state <> 'merged'
+  )
+  AND EXISTS (
+      SELECT 1 FROM issue_pull_request ipr WHERE ipr.issue_id = i.id AND ipr.close_intent
+      UNION ALL
+      SELECT 1 FROM issue_vcs_pull_request ipr WHERE ipr.issue_id = i.id AND ipr.close_intent
   )
 RETURNING i.*;

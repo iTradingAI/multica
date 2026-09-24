@@ -27,11 +27,13 @@ import (
 // The whole rule, as users see it:
 //
 //   - A PR whose title or branch name carries an issue identifier is linked to
-//     that issue. A member can also link or remove a PR by hand. Keywords such
-//     as "Closes" have no special meaning and the PR body is not scanned.
-//   - When every PR linked to an issue is merged, the issue moves to Done —
-//     unless the workspace turned the setting off or someone turned it off for
-//     that one issue.
+//     that issue, and so is one that closes it with a keyword ("Closes MUL-1")
+//     in its title or body. A member can also link or remove a PR by hand.
+//   - When every PR linked to an issue is merged and at least one of them
+//     closes it with a keyword, the issue moves to Done — unless the workspace
+//     turned the setting off or someone turned it off for that one issue. A
+//     PR linked only by its title or branch is related work: it has to merge
+//     too, but it never completes the issue by itself.
 //
 // The decision is evaluated only when a PR event touches the issue: a linked PR
 // merges, a PR is linked, or a link is removed. Changing a setting, reopening an
@@ -46,6 +48,7 @@ const (
 	prAutoCompleteIssueDisabled     = "issue_disabled"     // turned off for this issue
 	prAutoCompleteTerminal          = "terminal"           // already done / cancelled
 	prAutoCompleteTriage            = "triage"             // not accepted yet
+	prAutoCompleteNoCloseIntent     = "no_close_intent"    // no PR closes the issue with a keyword
 	prAutoCompleteWaiting           = "waiting"            // some PRs still open / draft
 	prAutoCompleteNotMerged         = "not_merged"         // some PRs closed without merging
 	prAutoCompleteAllMerged         = "all_merged"         // every linked PR merged
@@ -116,15 +119,21 @@ func (h *Handler) decidePRAutoComplete(ctx context.Context, ws db.Workspace, iss
 		return d, nil
 	}
 	var open, closed []db.ListIssueLinkedPullRequestStatesRow
+	closes := false
 	for _, pr := range prs {
 		switch pr.State {
 		case "open", "draft":
 			open = append(open, pr)
 		case "closed":
 			closed = append(closed, pr)
+			// A PR closed without merging never delivers, whatever it says.
+			continue
 		}
+		closes = closes || pr.CloseIntent
 	}
 	switch {
+	case !closes:
+		d.State = prAutoCompleteNoCloseIntent
 	case len(open) > 0:
 		d.State, d.PRs = prAutoCompleteWaiting, open
 	case len(closed) > 0:
@@ -136,10 +145,10 @@ func (h *Handler) decidePRAutoComplete(ctx context.Context, ws db.Workspace, iss
 }
 
 // maybeAutoCompleteIssue runs the decision for one issue after a PR event and
-// moves it to Done when every linked PR is merged. Safe to call for any issue:
-// every guard lives in decidePRAutoComplete, and the status write is
-// conditional on the status the decision saw, so concurrent merges complete the
-// issue once.
+// moves it to Done when every linked PR is merged and one of them closes it.
+// Safe to call for any issue: every guard lives in decidePRAutoComplete, and
+// the status write is conditional on the status the decision saw, so
+// concurrent merges complete the issue once.
 func (h *Handler) maybeAutoCompleteIssue(ctx context.Context, workspaceID, issueID pgtype.UUID, resolver *issuestatus.Resolver) {
 	issue, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issueID, WorkspaceID: workspaceID})
 	if err != nil {
@@ -245,8 +254,8 @@ func prAutoCompleteToResponse(ws db.Workspace, d prAutoCompleteDecision) prAutoC
 }
 
 // prLinkSource explains how a PR came to be linked: "manual", or the text the
-// webhook matched ("title" / "branch"). "auto" covers links made under older
-// rules (a body closing keyword) whose text no longer carries the identifier.
+// webhook matched ("title" / "branch"). "auto" covers the rest: a closing
+// keyword in the body (which is not stored) or a link whose text changed since.
 func prLinkSource(linkedByType, identifier, title, branch string) string {
 	if linkedByType == "member" {
 		return "manual"
@@ -350,7 +359,8 @@ func (h *Handler) findPullRequestByID(ctx context.Context, workspaceID, id pgtyp
 
 // LinkIssuePullRequest (POST /api/issues/{id}/pull-requests) links a PR the
 // workspace already mirrors. Linking is a PR event for the issue, so it can
-// complete the issue when every linked PR is merged.
+// complete the issue when every linked PR is merged and one of them closes it.
+// A manual link carries no close intent of its own; the PR text decides that.
 func (h *Handler) LinkIssuePullRequest(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {

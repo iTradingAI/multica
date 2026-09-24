@@ -145,9 +145,10 @@ func TestVCSWebhook_ForgejoMirrorsAndCloses(t *testing.T) {
 	}
 }
 
-// A body mention (not in title or branch) claims nothing, so it must not link
-// at all: it neither shows as a delivery PR nor blocks a title-linked sibling
-// from completing the issue. Mirrors the GitHub rule (MUL-7429).
+// A bare body mention ("Related MUL-X", no closing keyword, not in title or
+// branch) claims nothing, so it must not link at all: it neither shows as a
+// working PR nor blocks a genuine Closes sibling from completing the issue.
+// Mirrors the GitHub claim rule (MUL-3739, MUL-7072).
 func TestVCSWebhook_BareBodyMentionIsNotLinked(t *testing.T) {
 	ctx := context.Background()
 	box := withVCSBox(t)
@@ -193,8 +194,8 @@ func TestVCSWebhook_BareBodyMentionIsNotLinked(t *testing.T) {
 		t.Fatalf("unlinked PR must not appear in the list, got %d rows", len(rows))
 	}
 
-	// PR #8: MERGED with a title reference → linked. The still-open, unlinked
-	// PR #7 must NOT block completion.
+	// PR #8: MERGED with a title reference + Closes keyword → a real claim with
+	// close intent. The still-open, unlinked PR #7 must NOT block completion.
 	closeRaw, _ := json.Marshal(map[string]any{
 		"action": "closed",
 		"pull_request": map[string]any{
@@ -223,8 +224,8 @@ func TestVCSWebhook_BareBodyMentionIsNotLinked(t *testing.T) {
 }
 
 // Auto-complete must span providers: an issue with an OPEN GitHub PR and a
-// MERGED VCS merge request waits for the GitHub PR, and completes once it
-// merges too.
+// MERGED close-intent VCS merge request waits for the GitHub PR, and completes
+// once it merges too.
 func TestAutoCompleteSpansProviders(t *testing.T) {
 	ctx := context.Background()
 	box := withVCSBox(t)
@@ -273,6 +274,11 @@ func TestAutoCompleteSpansProviders(t *testing.T) {
 		IssueID: parseUUID(issue.ID), PullRequestID: vcsPR.ID,
 	}); err != nil {
 		t.Fatalf("LinkIssueToVCSPullRequest: %v", err)
+	}
+	if err := testHandler.Queries.SyncVCSPullRequestCloseIntent(ctx, db.SyncVCSPullRequestCloseIntentParams{
+		PullRequestID: vcsPR.ID, ClosingIssueIds: []pgtype.UUID{parseUUID(issue.ID)},
+	}); err != nil {
+		t.Fatalf("SyncVCSPullRequestCloseIntent: %v", err)
 	}
 
 	testHandler.maybeAutoCompleteIssue(ctx, parseUUID(testWorkspaceID), parseUUID(issue.ID), nil)
@@ -346,6 +352,52 @@ func TestDeleteIssue_VCSLinkCleanupIsWorkspaceScoped(t *testing.T) {
 	}
 }
 
+// A merge whose text no longer closes the issue clears the close intent an
+// earlier event recorded, even though the link itself is kept after merge
+// (PR #8794 review; mirrors TestWebhook_RemovedKeywordStopsCounting).
+func TestVCSWebhook_MergeWithoutKeywordDoesNotComplete(t *testing.T) {
+	ctx := context.Background()
+	box := withVCSBox(t)
+	connID := seedVCSConnection(t, ctx, box, "forgejo", "https://forgejo.test")
+	issue := newVCSIssue(t, "Keyword removed before merge")
+	t.Cleanup(func() { cleanupVCS(ctx, issue.ID) })
+
+	fire := func(action, state string, merged bool, body, updatedAt string) {
+		raw, _ := json.Marshal(map[string]any{
+			"action": action,
+			"pull_request": map[string]any{
+				"number": 9, "html_url": "https://forgejo.test/acme/widget/pulls/9",
+				"title": "Session refactor", "body": body, "state": state, "merged": merged,
+				"created_at": "2026-05-01T00:00:00Z", "updated_at": updatedAt,
+				"merged_at": "2026-05-02T00:00:00Z",
+				"head":      map[string]any{"ref": "refactor", "sha": "def"},
+				"user":      map[string]any{"username": "octo"},
+			},
+			"repository": map[string]any{"name": "widget", "owner": map[string]any{"username": "acme"}},
+		})
+		w := httptest.NewRecorder()
+		testHandler.HandleVCSWebhook(w, vcsWebhookReq(connID, map[string]string{
+			"X-Gitea-Event": "pull_request", "X-Gitea-Signature": giteaSig(raw),
+		}, raw))
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("%s event: %d %s", action, w.Code, w.Body.String())
+		}
+	}
+
+	fire("opened", "open", false, "Closes "+issue.Identifier, "2026-05-01T00:00:00Z")
+	fire("closed", "closed", true, "Related to "+issue.Identifier, "2026-05-02T00:00:00Z")
+
+	updated, _ := testHandler.Queries.GetIssue(ctx, parseUUID(issue.ID))
+	if updated.Status == "done" {
+		t.Errorf("merged without a closing keyword, but the issue moved to done")
+	}
+	var links int
+	testPool.QueryRow(ctx, `SELECT count(*) FROM issue_vcs_pull_request WHERE issue_id = $1`, issue.ID).Scan(&links)
+	if links != 1 {
+		t.Errorf("the merged PR must stay linked, got %d links", links)
+	}
+}
+
 // A redelivered older event must not rewrite the link a newer event already
 // set. The PR-upsert monotonic guard protects the PR row; this covers the link.
 func TestVCSWebhook_StaleEventDoesNotRewriteLink(t *testing.T) {
@@ -377,20 +429,20 @@ func TestVCSWebhook_StaleEventDoesNotRewriteLink(t *testing.T) {
 		}
 	}
 
-	// Newer terminal event: merged with the identifier in the title → linked.
-	fire("closed", "closed", true, "Fix "+issue.Identifier, "", "2026-05-02T00:00:00Z")
-	// Older redelivered "opened" event without the identifier. Without the
-	// guard this would drop the link the newer event wrote.
+	// Newer terminal event: merged with a real claim (Closes) → close_intent.
+	fire("closed", "closed", true, "Fix "+issue.Identifier, "Closes "+issue.Identifier, "2026-05-02T00:00:00Z")
+	// Older redelivered "opened" event: bare body mention, generic title/branch.
+	// Without the guard this clears close_intent and drops the link entirely.
 	fire("opened", "open", false, "WIP", "touches "+issue.Identifier, "2026-05-01T00:00:00Z")
 
-	var links int
+	var closeIntent bool
 	if err := testPool.QueryRow(ctx,
-		`SELECT count(*) FROM issue_vcs_pull_request WHERE issue_id = $1`,
-		issue.ID).Scan(&links); err != nil {
+		`SELECT close_intent FROM issue_vcs_pull_request WHERE issue_id = $1`,
+		issue.ID).Scan(&closeIntent); err != nil {
 		t.Fatalf("select link: %v", err)
 	}
-	if links != 1 {
-		t.Errorf("stale event rewrote the link set: %d links, want 1", links)
+	if !closeIntent {
+		t.Errorf("stale event rewrote link: close_intent=%v, want true", closeIntent)
 	}
 	// The PR row also stayed at the newer merged state.
 	rows, _ := testHandler.Queries.ListVCSPullRequestsByIssue(ctx, parseUUID(issue.ID))

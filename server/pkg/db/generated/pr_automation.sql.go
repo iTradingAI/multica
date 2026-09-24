@@ -43,6 +43,11 @@ WHERE i.id = $1
       JOIN vcs_pull_request pr ON pr.id = ipr.pull_request_id
       WHERE ipr.issue_id = i.id AND pr.state <> 'merged'
   )
+  AND EXISTS (
+      SELECT 1 FROM issue_pull_request ipr WHERE ipr.issue_id = i.id AND ipr.close_intent
+      UNION ALL
+      SELECT 1 FROM issue_vcs_pull_request ipr WHERE ipr.issue_id = i.id AND ipr.close_intent
+  )
 RETURNING i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.acceptance_criteria, i.context_refs, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.stage, i.properties, i.revision, i.last_activity_at, i.triage_state, i.duplicate_of_issue_id
 `
 
@@ -53,10 +58,10 @@ type CompleteIssueFromPullRequestsParams struct {
 }
 
 // Conditional status write for PR auto-complete. It lands only if the issue is
-// still in the status the decision saw (two merges racing complete it once) and
-// the linked PRs are still all merged when the write runs: a PR linked between
-// the decision and this statement keeps the issue open. Repositions like
-// UpdateIssueStatus does.
+// still in the status the decision saw (two merges racing complete it once),
+// the linked PRs are still all merged when the write runs (a PR linked between
+// the decision and this statement keeps the issue open), and one of them still
+// closes the issue with a keyword. Repositions like UpdateIssueStatus does.
 func (q *Queries) CompleteIssueFromPullRequests(ctx context.Context, arg CompleteIssueFromPullRequestsParams) (Issue, error) {
 	row := q.db.QueryRow(ctx, completeIssueFromPullRequests, arg.ID, arg.WorkspaceID, arg.ExpectedStatus)
 	var i Issue
@@ -179,12 +184,12 @@ func (q *Queries) IsPullRequestExcludedFromIssue(ctx context.Context, arg IsPull
 }
 
 const listIssueLinkedPullRequestStates = `-- name: ListIssueLinkedPullRequestStates :many
-SELECT pr.id, 'github'::text AS provider, pr.pr_number, pr.state
+SELECT pr.id, 'github'::text AS provider, pr.pr_number, pr.state, ipr.close_intent
 FROM github_pull_request pr
 JOIN issue_pull_request ipr ON ipr.pull_request_id = pr.id
 WHERE ipr.issue_id = $1
 UNION ALL
-SELECT pr.id, pr.provider AS provider, pr.pr_number, pr.state
+SELECT pr.id, pr.provider AS provider, pr.pr_number, pr.state, ipr.close_intent
 FROM vcs_pull_request pr
 JOIN issue_vcs_pull_request ipr ON ipr.pull_request_id = pr.id
 WHERE ipr.issue_id = $1
@@ -192,10 +197,11 @@ ORDER BY pr_number
 `
 
 type ListIssueLinkedPullRequestStatesRow struct {
-	ID       pgtype.UUID `json:"id"`
-	Provider string      `json:"provider"`
-	PrNumber int32       `json:"pr_number"`
-	State    string      `json:"state"`
+	ID          pgtype.UUID `json:"id"`
+	Provider    string      `json:"provider"`
+	PrNumber    int32       `json:"pr_number"`
+	State       string      `json:"state"`
+	CloseIntent bool        `json:"close_intent"`
 }
 
 // Every PR linked to the issue across GitHub and self-hosted providers, for
@@ -214,6 +220,7 @@ func (q *Queries) ListIssueLinkedPullRequestStates(ctx context.Context, issueID 
 			&i.Provider,
 			&i.PrNumber,
 			&i.State,
+			&i.CloseIntent,
 		); err != nil {
 			return nil, err
 		}

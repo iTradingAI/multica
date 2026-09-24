@@ -123,7 +123,7 @@ export function PullRequestList({
         </div>
       ) : null}
       {autoComplete ? (
-        <AutoCompleteLine issueId={issueId} prs={prs} autoComplete={autoComplete} />
+        <AutoCompleteLine issueId={issueId} identifier={identifier} prs={prs} autoComplete={autoComplete} />
       ) : null}
     </div>
   );
@@ -215,16 +215,18 @@ function PullRequestRowMenu({ pr, actions }: { pr: GitHubPullRequest; actions: R
 }
 
 /**
- * One line under the PR list saying what the "every linked PR merged → Done"
- * rule will do for this issue, straight from the server's decision. Terminal,
- * triage and unknown states render nothing.
+ * One line under the PR list saying what the "every linked PR merged, one says
+ * Closes → Done" rule will do for this issue, straight from the server's
+ * decision. Terminal, triage and unknown states render nothing.
  */
 function AutoCompleteLine({
   issueId,
+  identifier,
   prs,
   autoComplete,
 }: {
   issueId: string;
+  identifier: string;
   prs: GitHubPullRequest[];
   autoComplete: PRAutoComplete;
 }) {
@@ -266,6 +268,10 @@ function AutoCompleteLine({
       );
       break;
     }
+    case "no_close_intent":
+      icon = <CircleSlash className="text-muted-foreground" />;
+      body = t(($) => $.pr_automation.no_close_intent, { identifier });
+      break;
     case "all_merged":
       icon = <CheckCircle2 className="text-muted-foreground" />;
       body = t(($) => $.pr_automation.all_merged);

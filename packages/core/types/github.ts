@@ -58,17 +58,18 @@ export interface GitHubInstallation {
 }
 
 /** Why a PR is on an issue: linked by hand, or matched in its title / branch.
- * "auto" is a link made under an older rule. */
+ * "auto" is any other automatic link, such as "Closes MUL-1" in the body. */
 export type PullRequestLinkSource = "manual" | "title" | "branch" | "auto";
 
-/** What the "every linked PR merged → Done" rule will do for one issue. The
- * server computes it; the issue page only renders it. */
+/** What the "every linked PR merged, one says Closes → Done" rule will do for
+ * one issue. The server computes it; the issue page only renders it. */
 export type PRAutoCompleteState =
   | "none"
   | "workspace_disabled"
   | "issue_disabled"
   | "terminal"
   | "triage"
+  | "no_close_intent"
   | "waiting"
   | "not_merged"
   | "all_merged";

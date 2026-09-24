@@ -1105,6 +1105,7 @@
     "waiting_other": "等待 {{prs}} 合并后自动完成",
     "not_merged": "{{prs}} 已关闭，未合并",
     "not_merged_action": "移除",
+    "no_close_intent": "不会自动完成：缺少 \"Closes {{identifier}}\"",
     "all_merged": "PR 均已合并。之后有新 PR 合并时会自动完成。",
     "issue_disabled": "此任务不自动完成",
     "issue_disabled_action": "恢复",

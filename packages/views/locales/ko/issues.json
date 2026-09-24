@@ -1105,6 +1105,7 @@
     "waiting_other": "{{prs}} 병합 시 자동 완료",
     "not_merged": "{{prs}}이(가) 병합되지 않고 닫혔습니다",
     "not_merged_action": "제거",
+    "no_close_intent": "자동 완료되지 않음: \"Closes {{identifier}}\" 없음",
     "all_merged": "PR이 모두 병합되었습니다. 다음 PR이 병합되면 자동 완료됩니다.",
     "issue_disabled": "이 태스크는 자동 완료하지 않습니다",
     "issue_disabled_action": "다시 켜기",
