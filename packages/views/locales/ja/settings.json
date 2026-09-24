@@ -1204,6 +1204,8 @@
       "title": "ターミナル",
       "hide": "ターミナルを隠す",
       "restart": "シェルを再起動",
+      "retry": "再接続",
+      "close_tab": "タブを閉じる",
       "exited": "シェルが終了しました（コード {{code}}）",
       "spawn_failed": "シェルを起動できませんでした。",
       "target_machine": "対象マシン",

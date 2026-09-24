@@ -943,6 +943,8 @@
       "title": "터미널",
       "hide": "터미널 숨기기",
       "restart": "셸 다시 시작",
+      "retry": "다시 연결",
+      "close_tab": "탭 닫기",
       "exited": "셸이 종료되었습니다(코드 {{code}})",
       "spawn_failed": "셸을 시작할 수 없습니다.",
       "target_machine": "대상 머신",

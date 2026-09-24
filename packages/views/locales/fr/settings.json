@@ -1207,6 +1207,8 @@
       "title": "Terminal",
       "hide": "Masquer le terminal",
       "restart": "Redémarrer le shell",
+      "retry": "Reconnecter",
+      "close_tab": "Fermer l'onglet",
       "exited": "Shell arrêté (code {{code}})",
       "spawn_failed": "Impossible de démarrer un shell.",
       "target_machine": "Machine cible",
