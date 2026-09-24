@@ -86,7 +86,18 @@ DO UPDATE SET
     runtime_mode = EXCLUDED.runtime_mode,
     status = EXCLUDED.status,
     device_info = EXCLUDED.device_info,
-    metadata = EXCLUDED.metadata,
+    -- Capabilities merge, not replace (MAX-140). Daemon identity is
+    -- machine-scoped, so several daemon processes — a CLI daemon under one
+    -- profile and an old desktop-bundled daemon — can hold the same
+    -- daemon_id and re-register the same row. Whole-row metadata replace
+    -- let the weakest registrant erase capabilities another live daemon
+    -- still advertises (an old build re-registering wiped terminal-v1
+    -- while the machine still served terminals). Only the capabilities
+    -- array is unioned; every other metadata field stays
+    -- last-writer-wins, and rows whose stored or incoming capabilities
+    -- are missing or not an array (pre-capability rows) keep the plain
+    -- replace.
+    metadata = merge_runtime_capabilities(agent_runtime.metadata, EXCLUDED.metadata),
     owner_id = COALESCE(EXCLUDED.owner_id, agent_runtime.owner_id),
     last_seen_at = now(),
     updated_at = now()
@@ -120,7 +131,10 @@ DO UPDATE SET
     provider = EXCLUDED.provider,
     status = EXCLUDED.status,
     device_info = EXCLUDED.device_info,
-    metadata = EXCLUDED.metadata,
+    -- Same capability merge as UpsertAgentRuntime (MAX-140): custom-runtime
+    -- rows share the machine-scoped daemon_id, so the last registrant must
+    -- not erase capabilities a co-holding daemon still advertises.
+    metadata = merge_runtime_capabilities(agent_runtime.metadata, EXCLUDED.metadata),
     owner_id = COALESCE(EXCLUDED.owner_id, agent_runtime.owner_id),
     last_seen_at = now(),
     updated_at = now()
