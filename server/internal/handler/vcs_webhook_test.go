@@ -145,10 +145,9 @@ func TestVCSWebhook_ForgejoMirrorsAndCloses(t *testing.T) {
 	}
 }
 
-// A bare body mention ("Related MUL-X", no closing keyword, not in title or
-// branch) claims nothing, so it must not link at all: it neither shows as a
-// working PR nor blocks a genuine Closes sibling from advancing the issue.
-// Mirrors the GitHub claim rule (MUL-3739, MUL-7072).
+// A body mention (not in title or branch) claims nothing, so it must not link
+// at all: it neither shows as a delivery PR nor blocks a title-linked sibling
+// from completing the issue. Mirrors the GitHub rule (MUL-7429).
 func TestVCSWebhook_BareBodyMentionIsNotLinked(t *testing.T) {
 	ctx := context.Background()
 	box := withVCSBox(t)
@@ -194,8 +193,8 @@ func TestVCSWebhook_BareBodyMentionIsNotLinked(t *testing.T) {
 		t.Fatalf("unlinked PR must not appear in the list, got %d rows", len(rows))
 	}
 
-	// PR #8: MERGED with a title reference + Closes keyword → a real claim with
-	// close_intent. The still-open, unlinked PR #7 must NOT block advance.
+	// PR #8: MERGED with a title reference → linked. The still-open, unlinked
+	// PR #7 must NOT block completion.
 	closeRaw, _ := json.Marshal(map[string]any{
 		"action": "closed",
 		"pull_request": map[string]any{
@@ -223,40 +222,43 @@ func TestVCSWebhook_BareBodyMentionIsNotLinked(t *testing.T) {
 	}
 }
 
-// The close gate must span providers: an issue with an OPEN GitHub PR and a
-// MERGED close-intent VCS PR must report open_count > 0, so neither webhook
-// auto-advances it out from under the still-open GitHub work (and vice versa).
-func TestCombinedCloseAggregateSpansProviders(t *testing.T) {
+// Auto-complete must span providers: an issue with an OPEN GitHub PR and a
+// MERGED VCS merge request waits for the GitHub PR, and completes once it
+// merges too.
+func TestAutoCompleteSpansProviders(t *testing.T) {
 	ctx := context.Background()
 	box := withVCSBox(t)
 	connID := seedVCSConnection(t, ctx, box, "gitlab", "https://gitlab.test")
-	issue := newVCSIssue(t, "Cross-provider close gate")
+	issue := newVCSIssue(t, "Cross-provider auto-complete")
 	now := pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
 	t.Cleanup(func() {
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, issue.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, issue.ID)
 		cleanupVCS(ctx, issue.ID)
 	})
 
-	// OPEN GitHub PR linked to the issue (installation_id carries no FK).
-	ghPR, err := testHandler.Queries.UpsertGitHubPullRequest(ctx, db.UpsertGitHubPullRequestParams{
-		WorkspaceID: parseUUID(testWorkspaceID), InstallationID: 987654,
-		RepoOwner: "acme", RepoName: "gh", PrNumber: 3,
-		Title: "WIP " + issue.Identifier, State: "open",
-		HtmlUrl:     "https://github.com/acme/gh/pull/3",
-		PrCreatedAt: now, PrUpdatedAt: now, HeadSha: "ghsha",
-	})
-	if err != nil {
-		t.Fatalf("UpsertGitHubPullRequest: %v", err)
+	upsertGH := func(state string) db.GithubPullRequest {
+		t.Helper()
+		pr, err := testHandler.Queries.UpsertGitHubPullRequest(ctx, db.UpsertGitHubPullRequestParams{
+			WorkspaceID: parseUUID(testWorkspaceID), InstallationID: 987654,
+			RepoOwner: "acme", RepoName: "gh", PrNumber: 3,
+			Title: "WIP " + issue.Identifier, State: state,
+			HtmlUrl:     "https://github.com/acme/gh/pull/3",
+			PrCreatedAt: now, PrUpdatedAt: now, HeadSha: "ghsha",
+		})
+		if err != nil {
+			t.Fatalf("UpsertGitHubPullRequest: %v", err)
+		}
+		return pr
 	}
-	if err := testHandler.Queries.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{
-		IssueID: parseUUID(issue.ID), PullRequestID: ghPR.ID, CloseIntent: false,
-		LinkedByType: strToText("system"),
+	ghPR := upsertGH("open")
+	if _, err := testHandler.Queries.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{
+		IssueID: parseUUID(issue.ID), PullRequestID: ghPR.ID,
 	}); err != nil {
 		t.Fatalf("LinkIssueToPullRequest: %v", err)
 	}
 
-	// MERGED close-intent VCS PR linked to the same issue.
 	vcsPR, err := testHandler.Queries.UpsertVCSPullRequest(ctx, db.UpsertVCSPullRequestParams{
 		WorkspaceID: parseUUID(testWorkspaceID), ConnectionID: parseUUID(connID),
 		Provider: "gitlab", RepoOwner: "acme", RepoName: "gl", PrNumber: 4,
@@ -267,22 +269,21 @@ func TestCombinedCloseAggregateSpansProviders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertVCSPullRequest: %v", err)
 	}
-	if err := testHandler.Queries.LinkIssueToVCSPullRequest(ctx, db.LinkIssueToVCSPullRequestParams{
-		IssueID: parseUUID(issue.ID), PullRequestID: vcsPR.ID, CloseIntent: true,
-		LinkedByType: strToText("system"),
+	if _, err := testHandler.Queries.LinkIssueToVCSPullRequest(ctx, db.LinkIssueToVCSPullRequestParams{
+		IssueID: parseUUID(issue.ID), PullRequestID: vcsPR.ID,
 	}); err != nil {
 		t.Fatalf("LinkIssueToVCSPullRequest: %v", err)
 	}
 
-	counts, err := testHandler.Queries.GetIssueCombinedPullRequestCloseAggregate(ctx, parseUUID(issue.ID))
-	if err != nil {
-		t.Fatalf("GetIssueCombinedPullRequestCloseAggregate: %v", err)
+	testHandler.maybeAutoCompleteIssue(ctx, parseUUID(testWorkspaceID), parseUUID(issue.ID), nil)
+	if got, _ := testHandler.Queries.GetIssue(ctx, parseUUID(issue.ID)); got.Status == "done" {
+		t.Fatal("the open GitHub PR must hold the issue open")
 	}
-	if counts.OpenCount != 1 {
-		t.Errorf("open_count = %d, want 1 (the open GitHub PR must be seen)", counts.OpenCount)
-	}
-	if counts.MergedWithCloseIntentCount != 1 {
-		t.Errorf("merged_with_close_intent_count = %d, want 1 (the VCS MR)", counts.MergedWithCloseIntentCount)
+
+	upsertGH("merged")
+	testHandler.maybeAutoCompleteIssue(ctx, parseUUID(testWorkspaceID), parseUUID(issue.ID), nil)
+	if got, _ := testHandler.Queries.GetIssue(ctx, parseUUID(issue.ID)); got.Status != "done" {
+		t.Errorf("status = %q, want done once both providers' PRs merged", got.Status)
 	}
 }
 
@@ -346,8 +347,7 @@ func TestDeleteIssue_VCSLinkCleanupIsWorkspaceScoped(t *testing.T) {
 }
 
 // A redelivered older event must not rewrite the link a newer event already
-// set. The PR-upsert monotonic guard protects the PR row; this covers the link
-// (close_intent, and the link's existence at all).
+// set. The PR-upsert monotonic guard protects the PR row; this covers the link.
 func TestVCSWebhook_StaleEventDoesNotRewriteLink(t *testing.T) {
 	ctx := context.Background()
 	box := withVCSBox(t)
@@ -377,20 +377,20 @@ func TestVCSWebhook_StaleEventDoesNotRewriteLink(t *testing.T) {
 		}
 	}
 
-	// Newer terminal event: merged with a real claim (Closes) → close_intent.
-	fire("closed", "closed", true, "Fix "+issue.Identifier, "Closes "+issue.Identifier, "2026-05-02T00:00:00Z")
-	// Older redelivered "opened" event: bare body mention, generic title/branch.
-	// Without the guard this clears close_intent and drops the link entirely.
+	// Newer terminal event: merged with the identifier in the title → linked.
+	fire("closed", "closed", true, "Fix "+issue.Identifier, "", "2026-05-02T00:00:00Z")
+	// Older redelivered "opened" event without the identifier. Without the
+	// guard this would drop the link the newer event wrote.
 	fire("opened", "open", false, "WIP", "touches "+issue.Identifier, "2026-05-01T00:00:00Z")
 
-	var closeIntent bool
+	var links int
 	if err := testPool.QueryRow(ctx,
-		`SELECT close_intent FROM issue_vcs_pull_request WHERE issue_id = $1`,
-		issue.ID).Scan(&closeIntent); err != nil {
+		`SELECT count(*) FROM issue_vcs_pull_request WHERE issue_id = $1`,
+		issue.ID).Scan(&links); err != nil {
 		t.Fatalf("select link: %v", err)
 	}
-	if !closeIntent {
-		t.Errorf("stale event rewrote link: close_intent=%v, want true", closeIntent)
+	if links != 1 {
+		t.Errorf("stale event rewrote the link set: %d links, want 1", links)
 	}
 	// The PR row also stayed at the newer merged state.
 	rows, _ := testHandler.Queries.ListVCSPullRequestsByIssue(ctx, parseUUID(issue.ID))
