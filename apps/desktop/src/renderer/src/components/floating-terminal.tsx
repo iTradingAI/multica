@@ -219,7 +219,7 @@ function TerminalPanel({
         <select
           data-slot="floating-terminal-target"
           aria-label={t(($) => $.desktop.terminal.target_machine)}
-          className="h-5 max-w-40 rounded border border-surface-border bg-background px-1 text-xs text-foreground"
+          className="h-5 max-w-40 rounded-md border border-surface-border bg-background px-1 text-xs text-foreground"
           onChange={(event) => onTargetChange(event.target.value)}
           onPointerDown={(event) => event.stopPropagation()}
           value={target}
