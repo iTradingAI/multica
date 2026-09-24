@@ -1204,6 +1204,8 @@
       "title": "终端",
       "hide": "隐藏终端",
       "restart": "重启 shell",
+      "retry": "重连",
+      "close_tab": "关闭 tab",
       "exited": "shell 已退出（代码 {{code}}）",
       "spawn_failed": "无法启动 shell。",
       "target_machine": "目标机器",

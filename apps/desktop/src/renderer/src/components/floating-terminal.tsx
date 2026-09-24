@@ -129,6 +129,8 @@ interface TerminalPanelProps {
   target: TerminalTarget;
   localHidden: boolean;
   onTargetChange: (target: TerminalTarget) => void;
+  /** Closes the active remote tab; absent on the local target. */
+  onCloseTab?: () => void;
   onHide: () => void;
   onRestart: () => void;
   children?: ReactNode;
@@ -156,6 +158,7 @@ function TerminalPanel({
   target,
   localHidden,
   onTargetChange,
+  onCloseTab,
   onHide,
   onRestart,
   children,
@@ -246,6 +249,19 @@ function TerminalPanel({
             <RotateCcw className="size-3.5" />
           </Button>
         )}
+        {onCloseTab && (
+          <Button
+            aria-label={t(($) => $.desktop.terminal.close_tab)}
+            className="size-6"
+            onClick={onCloseTab}
+            onPointerDown={(event) => event.stopPropagation()}
+            size="icon"
+            type="button"
+            variant="ghost"
+          >
+            <X className="size-3.5" />
+          </Button>
+        )}
         <Button
           aria-label={t(($) => $.desktop.terminal.hide)}
           className="size-6"
@@ -316,16 +332,19 @@ function RemoteTerminalView({
   source,
   active,
   onDaemonOffline,
+  onClose,
 }: {
   runtimeId: string;
   label: string;
   source: TerminalSessionSource;
   active: boolean;
   onDaemonOffline: (runtimeId: string) => void;
+  onClose: (runtimeId: string) => void;
 }) {
   const { t } = useT("settings");
   const hostRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<{ session: string } | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState<
     | { state: "connecting" }
     | { state: "ready" }
@@ -421,9 +440,11 @@ function RemoteTerminalView({
       terminal.dispose();
     };
     // The remote source and target are stable for a tab's lifetime; the tab
-    // is keyed by runtime id, so this effect must run exactly once.
+    // is keyed by runtime id, so this effect must run exactly once per
+    // connect attempt — "retry" bumps the attempt counter to tear the dead
+    // session down (cleanup releases the exclusive scope) and reconnect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runtimeId, source]);
+  }, [attempt, runtimeId, source]);
 
   return (
     <div
@@ -449,25 +470,69 @@ function RemoteTerminalView({
       {status.state === "error" && (
         <p
           data-slot="floating-terminal-remote-status"
-          className="shrink-0 border-t border-surface-border px-2 py-1 text-[11px] text-destructive"
+          className="flex shrink-0 items-center gap-2 border-t border-surface-border px-2 py-1 text-[11px] text-destructive"
         >
-          {status.errorKey === "err_in_use"
-            ? t(($) => $.desktop.terminal.err_in_use)
-            : status.errorKey === "err_forbidden"
-              ? t(($) => $.desktop.terminal.err_forbidden)
-              : status.errorKey === "err_unsupported"
-                ? t(($) => $.desktop.terminal.err_unsupported)
-                : status.errorKey === "err_offline"
-                  ? t(($) => $.desktop.terminal.err_offline)
-                  : t(($) => $.desktop.terminal.err_generic)}
+          <span>
+            {status.errorKey === "err_in_use"
+              ? t(($) => $.desktop.terminal.err_in_use)
+              : status.errorKey === "err_forbidden"
+                ? t(($) => $.desktop.terminal.err_forbidden)
+                : status.errorKey === "err_unsupported"
+                  ? t(($) => $.desktop.terminal.err_unsupported)
+                  : status.errorKey === "err_offline"
+                    ? t(($) => $.desktop.terminal.err_offline)
+                    : t(($) => $.desktop.terminal.err_generic)}
+          </span>
+          <Button
+            className="h-5 gap-1 px-1.5 text-[11px]"
+            onClick={() => setAttempt((count) => count + 1)}
+            size="xs"
+            type="button"
+            variant="ghost"
+          >
+            <RotateCcw aria-hidden className="size-3" />
+            {t(($) => $.desktop.terminal.retry)}
+          </Button>
+          <Button
+            className="h-5 gap-1 px-1.5 text-[11px]"
+            onClick={() => onClose(runtimeId)}
+            size="xs"
+            type="button"
+            variant="ghost"
+          >
+            <X aria-hidden className="size-3" />
+            {t(($) => $.desktop.terminal.close_tab)}
+          </Button>
         </p>
       )}
       {status.state === "exited" && (
         <p
           data-slot="floating-terminal-remote-status"
-          className="shrink-0 border-t border-surface-border px-2 py-1 text-[11px] text-muted-foreground"
+          className="flex shrink-0 items-center gap-2 border-t border-surface-border px-2 py-1 text-[11px] text-muted-foreground"
         >
-          {t(($) => $.desktop.terminal.exited, { code: status.code ?? 0 })}
+          <span>
+            {t(($) => $.desktop.terminal.exited, { code: status.code ?? 0 })}
+          </span>
+          <Button
+            className="h-5 gap-1 px-1.5 text-[11px]"
+            onClick={() => setAttempt((count) => count + 1)}
+            size="xs"
+            type="button"
+            variant="ghost"
+          >
+            <RotateCcw aria-hidden className="size-3" />
+            {t(($) => $.desktop.terminal.retry)}
+          </Button>
+          <Button
+            className="h-5 gap-1 px-1.5 text-[11px]"
+            onClick={() => onClose(runtimeId)}
+            size="xs"
+            type="button"
+            variant="ghost"
+          >
+            <X aria-hidden className="size-3" />
+            {t(($) => $.desktop.terminal.close_tab)}
+          </Button>
         </p>
       )}
     </div>
@@ -778,6 +843,9 @@ export function FloatingTerminal({
         machines={machines}
         onResizeStart={handleResizeStart}
         onTargetChange={handleTargetChange}
+        onCloseTab={
+          target === "local" ? undefined : () => closeRemoteTab(target)
+        }
         target={target}
         onHide={() => setVisible(false)}
         onRestart={() => {
@@ -797,6 +865,7 @@ export function FloatingTerminal({
             key={tab.id}
             label={tab.label}
             onDaemonOffline={closeRemoteTab}
+            onClose={closeRemoteTab}
             runtimeId={tab.id}
             source={remoteSource as TerminalSessionSource}
           />

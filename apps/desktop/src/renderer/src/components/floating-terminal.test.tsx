@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactNode } from "react";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { RESOURCES } from "@multica/views/locales";
 import { FloatingTerminal } from "./floating-terminal";
@@ -730,5 +730,115 @@ describe("FloatingTerminal remote targets", () => {
     act(() => emitExit({ code: 0 }));
     expect(await screen.findByText(/exited/)).toBeInTheDocument();
     expect(source.release).toHaveBeenCalledWith("rt-1");
+  });
+
+  // A failed or exited remote tab used to be a dead end: the banner had no
+  // affordance, the connect effect never re-ran, and no UI path closed the
+  // tab — the only recovery was restarting the app (MAX-135).
+  it("reconnects from the error banner after a failed open", async () => {
+    machinesMock.machines = [{ id: "rt-1", label: "Mac mini" }];
+    installTerminalAPI();
+    installDesktopAPI();
+    let call = 0;
+    const source = {
+      kind: "remote" as const,
+      open: vi.fn(async () => {
+        call += 1;
+        if (call === 1) return { ok: false as const, error: "in use" };
+        return {
+          ok: true as const,
+          handle: {
+            session: "remote-sess-2",
+            onData: () => () => {},
+            onExit: () => () => {},
+          },
+        };
+      }),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      release: vi.fn(),
+    };
+    renderPanel(<FloatingTerminal remoteSource={source} />);
+    act(() => useTerminalStore.getState().setVisible(true));
+
+    fireEvent.change(targetSelect(), { target: { value: "rt-1" } });
+    expect(await screen.findByText("Machine in use")).toBeInTheDocument();
+
+    fireEvent.click(
+      within(remoteView()).getByRole("button", { name: "Reconnect" }),
+    );
+
+    await waitFor(() => expect(source.open).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.queryByText("Machine in use")).toBeNull(),
+    );
+  });
+
+  it("closes the dead tab from the error banner", async () => {
+    machinesMock.machines = [{ id: "rt-1", label: "Mac mini" }];
+    installTerminalAPI();
+    installDesktopAPI();
+    const { source } = makeRemoteSource({ ok: false, error: "in use" });
+    renderPanel(<FloatingTerminal remoteSource={source} />);
+    act(() => useTerminalStore.getState().setVisible(true));
+
+    fireEvent.change(targetSelect(), { target: { value: "rt-1" } });
+    expect(await screen.findByText("Machine in use")).toBeInTheDocument();
+
+    fireEvent.click(
+      within(remoteView()).getByRole("button", { name: "Close tab" }),
+    );
+
+    expect(
+      document.querySelector('[data-slot="floating-terminal-remote"]'),
+    ).toBeNull();
+    expect(source.release).toHaveBeenCalledWith("rt-1");
+    expect(targetSelect().value).toBe("local");
+  });
+
+  it("reconnects from the exited banner", async () => {
+    machinesMock.machines = [{ id: "rt-1", label: "Mac mini" }];
+    installTerminalAPI();
+    installDesktopAPI();
+    const { source, emitExit } = makeRemoteSource();
+    renderPanel(<FloatingTerminal remoteSource={source} />);
+    act(() => useTerminalStore.getState().setVisible(true));
+
+    fireEvent.change(targetSelect(), { target: { value: "rt-1" } });
+    await waitFor(() => expect(source.open).toHaveBeenCalledTimes(1));
+    act(() => emitExit({ code: 0 }));
+    expect(await screen.findByText(/exited/)).toBeInTheDocument();
+
+    fireEvent.click(
+      within(remoteView()).getByRole("button", { name: "Reconnect" }),
+    );
+
+    await waitFor(() => expect(source.open).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.queryByText(/exited/)).toBeNull(),
+    );
+  });
+
+  it("closes a live remote tab from the header", async () => {
+    machinesMock.machines = [{ id: "rt-1", label: "Mac mini" }];
+    installTerminalAPI();
+    installDesktopAPI();
+    const { source } = makeRemoteSource();
+    renderPanel(<FloatingTerminal remoteSource={source} />);
+    act(() => useTerminalStore.getState().setVisible(true));
+
+    fireEvent.change(targetSelect(), { target: { value: "rt-1" } });
+    await waitFor(() => expect(source.open).toHaveBeenCalledTimes(1));
+
+    // A live tab has no banner, so the header button is the only match.
+    fireEvent.click(screen.getByRole("button", { name: "Close tab" }));
+
+    expect(
+      document.querySelector('[data-slot="floating-terminal-remote"]'),
+    ).toBeNull();
+    expect(source.kill).toHaveBeenCalledWith("remote-sess-1");
+    expect(source.release).toHaveBeenCalledWith("rt-1");
+    expect(targetSelect().value).toBe("local");
   });
 });
