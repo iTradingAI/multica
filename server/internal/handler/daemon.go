@@ -457,6 +457,9 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := make([]AgentRuntimeResponse, 0, len(req.Runtimes))
+	// One parse of the advertised capability set serves both the stored
+	// metadata and the co-holding regression warning below.
+	advertised := requestClientCapabilities(r)
 	for _, runtime := range req.Runtimes {
 		provider := normalizeProvider(runtime.Type)
 		if provider == "" {
@@ -487,7 +490,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			"version":      runtime.Version,
 			"cli_version":  req.CLIVersion,
 			"launched_by":  req.LaunchedBy,
-			"capabilities": requestClientCapabilities(r),
+			"capabilities": advertised,
 		})
 
 		var registered db.AgentRuntime
@@ -615,6 +618,13 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		// and go (MUL-4217). Shared with the failed-profile path below.
 		registered = h.inheritMachineCustomName(r.Context(), registered, inserted)
 
+		// Capabilities merge rather than replace on this row (MAX-140), so a
+		// row that ends up advertising more than this registrant did means
+		// another daemon process on the same machine — a different profile or
+		// an old desktop build — holds the same daemon_id. Log it: the merge
+		// keeps the capable daemon working, this keeps the co-holding visible.
+		warnCapabilityRegression(req.DaemonID, provider, req.CLIVersion, registered.Metadata, advertised)
+
 		// Inserted is false for normal daemon reconnects/upserts, so
 		// runtime_ready is a first-ready-per-runtime-row signal.
 		if inserted {
@@ -693,7 +703,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 					"version":                            "",
 					"cli_version":                        req.CLIVersion,
 					"launched_by":                        req.LaunchedBy,
-					"capabilities":                       requestClientCapabilities(r),
+					"capabilities":                       advertised,
 					"runtime_profile_registration_error": true,
 					"runtime_profile_failure_reason":     reason,
 					"command_name":                       resolvedCommandName,
@@ -1617,6 +1627,53 @@ func requestHasClientCapability(r *http.Request, capability string) bool {
 		}
 	}
 	return false
+}
+
+// warnCapabilityRegression logs when a freshly registered row advertises
+// capabilities this registrant did not send (MAX-140). Registration merges
+// capabilities instead of replacing them, because daemon identity is
+// machine-scoped: several daemon processes — a CLI daemon under one profile
+// and an old desktop-bundled build — can hold the same daemon_id and
+// re-register the same row. Without the merge, the weakest registrant
+// silently erased what the live daemon still advertised (an old build wiped
+// terminal-v1 while the machine still served terminals). The merge keeps the
+// capable daemon working; this warning is what keeps the co-holding visible
+// in server logs. It also fires on a genuine single-daemon downgrade, which
+// is worth a log line too.
+func warnCapabilityRegression(daemonID, provider, cliVersion string, rowMetadata []byte, advertised []string) {
+	if len(rowMetadata) == 0 {
+		return
+	}
+	var m struct {
+		Capabilities []string `json:"capabilities"`
+	}
+	if err := json.Unmarshal(rowMetadata, &m); err != nil {
+		return
+	}
+	if len(m.Capabilities) == 0 {
+		return
+	}
+	have := make(map[string]struct{}, len(advertised))
+	for _, c := range advertised {
+		have[c] = struct{}{}
+	}
+	var kept []string
+	for _, c := range m.Capabilities {
+		if _, ok := have[c]; !ok {
+			kept = append(kept, c)
+		}
+	}
+	if len(kept) == 0 {
+		return
+	}
+	slices.Sort(kept)
+	slog.Warn("daemon registration kept capabilities this daemon does not advertise",
+		"daemon_id", daemonID,
+		"provider", provider,
+		"cli_version", cliVersion,
+		"kept_capabilities", strings.Join(kept, ","),
+		"hint", "another daemon process on this machine shares this daemon_id (different profile or old desktop build); capabilities are merged, not replaced",
+	)
 }
 
 func parseRuntimeConnectedAppsForClaim(raw []byte, taskID pgtype.UUID) []runtimeapps.ConnectedApp {

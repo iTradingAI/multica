@@ -779,6 +779,120 @@ func TestDaemonRegister_WithDaemonToken(t *testing.T) {
 	testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 }
 
+// registerWithCapabilities posts one daemon registration advertising exactly
+// the given capabilities, so a test can replay the same machine registering
+// under two different builds (MAX-140).
+func registerWithCapabilities(t *testing.T, daemonID, cliVersion, capabilities string, runtimes []map[string]any) {
+	t.Helper()
+	req := newDaemonTokenRequest("POST", "/api/daemon/register", map[string]any{
+		"workspace_id": testWorkspaceID,
+		"daemon_id":    daemonID,
+		"device_name":  "test-device",
+		"cli_version":  cliVersion,
+		"runtimes":     runtimes,
+	}, testWorkspaceID, daemonID)
+	if capabilities != "" {
+		req.Header.Set("X-Client-Capabilities", capabilities)
+	}
+	testutil.Call(t, testHandler.DaemonRegister, req).Want(http.StatusOK)
+}
+
+// runtimeCapabilities reads the stored capability set for one agent_runtime
+// row, keyed by (workspace, daemon, provider/profile).
+func runtimeCapabilities(t *testing.T, where string, args ...any) map[string]bool {
+	t.Helper()
+	var metadata []byte
+	dbfx.QueryRow(t, "SELECT metadata FROM agent_runtime WHERE "+where, args...).Scan(&metadata)
+	var meta struct {
+		Capabilities []string `json:"capabilities"`
+		CLIVersion   string   `json:"cli_version"`
+	}
+	if err := json.Unmarshal(metadata, &meta); err != nil {
+		t.Fatalf("unmarshal metadata %s: %v", metadata, err)
+	}
+	caps := make(map[string]bool, len(meta.Capabilities))
+	for _, c := range meta.Capabilities {
+		caps[c] = true
+	}
+	return caps
+}
+
+// TestDaemonRegister_OldDaemonReRegisterKeepsCapabilities covers the MAX-140
+// regression: daemon identity is machine-scoped, so an old desktop-bundled
+// daemon re-registering after a newer CLI daemon must not erase capabilities
+// the machine still advertises (terminal-v1 in the reported incident).
+func TestDaemonRegister_OldDaemonReRegisterKeepsCapabilities(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	const daemonID = "test-daemon-capmerge"
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND daemon_id = $2`, testWorkspaceID, daemonID)
+	})
+
+	// New build registers first and advertises terminal support.
+	registerWithCapabilities(t, daemonID, "0.5.7",
+		"local-worktree-v1,"+protocol.DaemonCapabilityTerminalV1,
+		[]map[string]any{{"name": "test-runtime", "type": "claude", "version": "2.0.0", "status": "online"}})
+
+	// The old build (no terminal fix) re-registers the same machine later —
+	// exactly the 16:30 registration from the incident.
+	registerWithCapabilities(t, daemonID, "0.5.2",
+		"local-worktree-v1",
+		[]map[string]any{{"name": "test-runtime", "type": "claude", "version": "2.0.0", "status": "online"}})
+
+	caps := runtimeCapabilities(t,
+		`workspace_id = $1 AND daemon_id = $2 AND provider = 'claude'`, testWorkspaceID, daemonID)
+	if !caps[protocol.DaemonCapabilityTerminalV1] {
+		t.Fatalf("re-registration by an old daemon erased terminal-v1: %#v", caps)
+	}
+	if !caps["local-worktree-v1"] {
+		t.Fatalf("re-registration lost a capability both builds advertise: %#v", caps)
+	}
+
+	// Everything outside the capability set stays last-writer-wins.
+	var meta struct {
+		CLIVersion string `json:"cli_version"`
+	}
+	var raw []byte
+	dbfx.QueryRow(t, `SELECT metadata FROM agent_runtime WHERE workspace_id = $1 AND daemon_id = $2 AND provider = 'claude'`,
+		testWorkspaceID, daemonID).Scan(&raw)
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta.CLIVersion != "0.5.2" {
+		t.Fatalf("cli_version = %q, want the latest registrant's 0.5.2", meta.CLIVersion)
+	}
+}
+
+// TestDaemonRegister_ProfileReRegisterKeepsCapabilities is the custom-runtime
+// twin of the merge regression: profile-keyed rows share the machine-scoped
+// daemon_id and must merge capabilities the same way.
+func TestDaemonRegister_ProfileReRegisterKeepsCapabilities(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	profileID := insertRuntimeProfileFixture(t, ctx, "Custom CapMerge", "codex", "capmerge-cli")
+	const daemonID = "test-daemon-capmerge-profile"
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE profile_id = $1`, profileID)
+	})
+
+	registerWithCapabilities(t, daemonID, "0.5.7",
+		"local-worktree-v1,"+protocol.DaemonCapabilityTerminalV1,
+		[]map[string]any{{"name": "Custom CapMerge", "type": "codex", "profile_id": profileID, "status": "online"}})
+	registerWithCapabilities(t, daemonID, "0.5.2",
+		"local-worktree-v1",
+		[]map[string]any{{"name": "Custom CapMerge", "type": "codex", "profile_id": profileID, "status": "online"}})
+
+	caps := runtimeCapabilities(t, `profile_id = $1`, profileID)
+	if !caps[protocol.DaemonCapabilityTerminalV1] {
+		t.Fatalf("profile re-registration by an old daemon erased terminal-v1: %#v", caps)
+	}
+}
+
 func TestDaemonRegister_RecordsRuntimeProfileRegistrationFailure(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
