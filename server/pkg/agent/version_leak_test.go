@@ -1,3 +1,7 @@
+//go:build unix
+
+// The shell fixture and the syscall.Kill liveness checks below are Unix-only;
+// Windows does not compile this file.
 package agent
 
 import (

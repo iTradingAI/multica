@@ -1,3 +1,9 @@
+//go:build unix
+
+// The shell fixture and the syscall.Kill liveness checks below are Unix-only;
+// Windows does not compile this file at all — its tree kill is exercised by the
+// job-object controller tests — so the runtime GOOS skip inside the test is
+// unreachable belt-and-braces.
 package daemon
 
 import (
