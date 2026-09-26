@@ -1321,3 +1321,30 @@ func TestBuildClaudeArgsManagedSkillSettingsWins(t *testing.T) {
 		t.Fatalf("unrelated custom arg was dropped: %v", args)
 	}
 }
+
+func TestClaudeStartupModelRejection(t *testing.T) {
+	t.Parallel()
+
+	const fatal = "claude input/control protocol failed: write |1: file already closed"
+	const marker = "[claude-code:unrecognized_model] {\"model\":\"glm-5.3\",\"query_source\":\"sdk\"}"
+
+	got := claudeStartupModelRejection("glm-5.3", fatal, 0, marker)
+	if got == "" {
+		t.Fatal("claudeStartupModelRejection(startup death) = empty, want rewritten copy")
+	}
+	for _, witness := range []string{"glm-5.3", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", fatal} {
+		if !strings.Contains(got, witness) {
+			t.Errorf("rewritten copy missing %q", witness)
+		}
+	}
+
+	// Stream events were produced: the marker is the benign warning healthy
+	// router/proxy runs print, not a rejection — no rewrite.
+	if got := claudeStartupModelRejection("glm-5.3", "API Error: Request rejected (429)", 12, marker); got != "" {
+		t.Errorf("claudeStartupModelRejection(with events) = %q, want empty", got)
+	}
+	// No marker at all: ordinary failure, untouched.
+	if got := claudeStartupModelRejection("glm-5.3", fatal, 0, "some unrelated stderr"); got != "" {
+		t.Errorf("claudeStartupModelRejection(no marker) = %q, want empty", got)
+	}
+}

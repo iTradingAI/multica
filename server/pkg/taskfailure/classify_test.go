@@ -154,7 +154,18 @@ func TestClassifyRules(t *testing.T) {
 		{"below the minimum supported version", "claude CLI 0.1.0 is below the minimum supported version 0.5.0", ReasonAgentRuntimeVersionUnsupported},
 		{"requires a newer version", "this protocol requires a newer version of the runtime", ReasonAgentRuntimeVersionUnsupported},
 
-		// 13. Process failure.
+		// 13. Provider CLI startup model rejection (Claude Code), verbatim
+		// from agent_task_queue.error 2026-09-26.
+		{"claude startup model rejection", "claude input/control protocol failed: write |1: file already closed; claude stderr: [claude-code:unrecognized_model] {\"model\":\"glm-5.3\",\"query_source\":\"sdk\"}", ReasonAgentProviderModelRejected},
+		// The marker alone also rides along on healthy router/proxy runs —
+		// here a quota 429 served by the custom endpoint — and must keep its
+		// own classification rather than becoming a rejection.
+		{"unrecognized_model warning on a 429", "API Error: Request rejected (429); claude stderr: [claude-code:unrecognized_model] {\"model\":\"glm-5.3\",\"query_source\":\"sdk\"}", ReasonAgentProviderCapacityOrRateLimit},
+		// Marker without the startup-death witness: not a rejection; the
+		// exit-status wrapper routes it to process_failure as before.
+		{"unrecognized_model warning without startup death", "claude stderr: [claude-code:unrecognized_model] {\"model\":\"glm-5.3\",\"query_source\":\"sdk\"}; claude exited with error: exit status 1", ReasonAgentProcessFailure},
+
+		// 14. Process failure.
 		{"exit status", "agent exit status 137", ReasonAgentProcessFailure},
 		{"signal", "agent terminated by signal: killed", ReasonAgentProcessFailure},
 		{"panic", "panic: runtime error: invalid memory address", ReasonAgentProcessFailure},
@@ -610,5 +621,36 @@ func TestClassifyKeepsDeadlineExceededAsProviderNetwork(t *testing.T) {
 
 	if got := Classify("post to provider: context deadline exceeded"); got != ReasonAgentProviderNetwork {
 		t.Errorf("Classify(provider deadline) = %q, want %q", got, ReasonAgentProviderNetwork)
+	}
+}
+
+// TestNormalizeDaemonReasonClaudeModelRejected pins the mixed-version
+// upgrade: a daemon predating the classifier rule reports
+// agent_error.process_failure for the startup-rejection shape, and the
+// server-side normalization must recover the retryable reason from the raw
+// text alone so the fix reaches every installed daemon.
+func TestNormalizeDaemonReasonClaudeModelRejected(t *testing.T) {
+	t.Parallel()
+
+	rejected := "claude input/control protocol failed: write |1: file already closed; claude stderr: [claude-code:unrecognized_model] {\"model\":\"glm-5.3\",\"query_source\":\"sdk\"}"
+
+	for _, reason := range []string{
+		string(ReasonAgentProcessFailure),
+		string(ReasonAgentUnknown),
+	} {
+		if got := NormalizeDaemonReason(reason, rejected); got != ReasonAgentProviderModelRejected {
+			t.Errorf("NormalizeDaemonReason(%q, rejected) = %q, want %q", reason, got, ReasonAgentProviderModelRejected)
+		}
+	}
+
+	// Same legacy reason with unrelated text stays untouched.
+	if got := NormalizeDaemonReason(string(ReasonAgentProcessFailure), "claude exited with error: exit status 3"); got != ReasonAgentProcessFailure {
+		t.Errorf("NormalizeDaemonReason(process_failure, unrelated) = %q, want unchanged", got)
+	}
+	// The benign-warning shape (marker present, no startup death) must not
+	// be upgraded away from a reason the daemon already classified by its
+	// real cause.
+	if got := NormalizeDaemonReason(string(ReasonAgentProviderCapacityOrRateLimit), "API Error: Request rejected (429); claude stderr: [claude-code:unrecognized_model] {}"); got != ReasonAgentProviderCapacityOrRateLimit {
+		t.Errorf("NormalizeDaemonReason(capacity, warning shape) = %q, want unchanged", got)
 	}
 }

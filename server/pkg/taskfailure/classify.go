@@ -43,8 +43,35 @@ var (
 // member-facing recovery guidance describe the actual failure.
 const concurrentRequestLimitWitness = "concurrent request limit"
 
+// claudeUnrecognizedModelWitness is Claude Code's startup-rejection marker:
+// `[claude-code:unrecognized_model] {"model":...,"query_source":"sdk"}`. The
+// CLI prints it on stderr for EVERY run whose --model is not an Anthropic id
+// — including healthy router/proxy runs, where the request is served by a
+// custom ANTHROPIC_BASE_URL that accepts the id (observed: quota-429
+// failures on a GLM endpoint carry the same line). It only names a model
+// rejection when the process also died at startup, which for the daemon's
+// stream-json wrapper surfaces as the input/control protocol write failure;
+// requiring both keeps the benign-warning shape out of this bucket.
+const (
+	claudeUnrecognizedModelWitness     = "claude-code:unrecognized_model"
+	claudeStartupProtocolFailedWitness = "input/control protocol failed"
+)
+
+// ClaudeStartupModelRejected reports whether an agent error is Claude Code
+// refusing the configured model at process startup — the unrecognized_model
+// stderr marker alongside the daemon's input/control protocol write failure
+// that follows the immediate exit. The claude backend uses it to rewrite the
+// cryptic pipe error into actionable copy, and Classify routes the same
+// shape to ReasonAgentProviderModelRejected. The marker alone is NOT enough:
+// healthy router/proxy runs print it too (see the witness consts above).
+func ClaudeStartupModelRejected(errText string) bool {
+	lower := strings.ToLower(errText)
+	return strings.Contains(lower, claudeUnrecognizedModelWitness) &&
+		strings.Contains(lower, claudeStartupProtocolFailedWitness)
+}
+
 // Classify maps a free-form error string from the agent runtime / CLI
-// to one of the 14 agent_error.* sub-reasons. Always returns a valid
+// to one of the 15 agent_error.* sub-reasons. Always returns a valid
 // Reason; falls back to ReasonAgentUnknown when no rule matches and for
 // empty input.
 //
@@ -279,7 +306,24 @@ func Classify(rawError string) Reason {
 	):
 		return ReasonAgentRuntimeVersionUnsupported
 
-	// 13. Agent / runner process-level failure. Checked last among
+	// 13. Provider CLI rejected the configured model at startup (Claude
+	//     Code's unrecognized_model exit; the "model … not found" rule
+	//     above is the provider API answering at request time — different
+	//     failure, different remedy). Requires the startup-death witness
+	//     (the daemon's input/control protocol write failure) alongside
+	//     the marker, because healthy router/proxy runs print the same
+	//     marker while their custom endpoint serves the id; their real
+	//     failures classify by their own cause above (a quota 429 stays
+	//     provider_capacity_or_rate_limit). Before this rule the shape
+	//     landed in process_failure via "file already closed", which is
+	//     terminal — yet the run produced no events and no tools, so the
+	//     auto-retry allowlist loses nothing by re-running it (field data
+	//     2026-09-26: 2 of 444 runs on one agent, each succeeded on its
+	//     next dispatch).
+	case ClaudeStartupModelRejected(lower):
+		return ReasonAgentProviderModelRejected
+
+	// 14. Agent / runner process-level failure. Checked last among
 	//     specific rules because "exit status" / "signal" can co-occur
 	//     with more specific upstream errors that SHOULD win (e.g. an
 	//     agent that crashed *because* the provider rate-limited it
@@ -510,6 +554,17 @@ var legacyConcurrentRequestLimitReasons = map[string]bool{
 // This is a boundary compatibility shim, not internal fallback logic: each rule
 // can be deleted once no daemon old enough to produce its wire shape is still
 // reporting.
+// legacyClaudeModelRejectedReasons are the reasons an installed daemon
+// predating the ClaudeStartupModelRejected classifier rule reports for the
+// startup-rejection shape: its own Classify maps "file already closed" to
+// process_failure, and a daemon that attached no reason persists the
+// catchall (the server-side empty-reason branch classifies correctly, but
+// normalizing both keeps the mixed-version paths identical).
+var legacyClaudeModelRejectedReasons = map[string]bool{
+	string(ReasonAgentProcessFailure): true,
+	string(ReasonAgentUnknown):        true,
+}
+
 func NormalizeDaemonReason(reason, rawError string) Reason {
 	if legacyConcurrentRequestLimitReasons[reason] &&
 		strings.Contains(strings.ToLower(rawError), concurrentRequestLimitWitness) {
@@ -565,6 +620,17 @@ func NormalizeDaemonReason(reason, rawError string) Reason {
 	// one names a specific cause inside this same phase and says strictly more.
 	if isAgentSideReason(reason) && hasAnyPrefix(lowerError, legacyEnvironmentPrepareWitnesses...) {
 		return ReasonEnvironmentPrepareFailed
+	}
+	// Claude Code startup model rejection, once more as a mixed-version gap:
+	// an installed daemon predating the rule reports agent_error.process_failure
+	// ("file already closed" claims the text), which is terminal — no retry, and
+	// the raw pipe error as user-facing copy. Upgrading here turns the server
+	// deploy alone into the fix for every installed daemon, which matters
+	// because the failure is transient in the field (the custom-endpoint env is
+	// normally present; a spawn racing a settings rewrite or an updater swap is
+	// the observed trigger).
+	if legacyClaudeModelRejectedReasons[reason] && ClaudeStartupModelRejected(rawError) {
+		return ReasonAgentProviderModelRejected
 	}
 	return Reason(reason)
 }
