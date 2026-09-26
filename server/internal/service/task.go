@@ -5213,13 +5213,25 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 // never started, so there is nothing to be idempotent about, and every bundle
 // that did download is already cached on disk — a retry resumes from there
 // instead of re-fetching the whole set (MUL-5370).
+// The second agent_error.* exception is provider_model_rejected: the
+// provider CLI (Claude Code) refused the configured model id at process
+// startup, before any stream event — zero events, zero tools, no session,
+// so a retry cannot duplicate a side effect (the same argument that admits
+// skill_bundle_unavailable's "the agent process never started"). The
+// custom-endpoint env pair that licenses non-Anthropic ids is normally
+// present via ~/.claude/settings.json; the field failures are spawns that
+// raced a rewrite of that file or an updater swap (2026-09-26: 2 of 444
+// runs on one agent, each succeeded on its next dispatch). A permanently
+// misconfigured host fails the retry the same way and surfaces the
+// actionable error once, bounded by the task's max_attempts.
 var retryableReasons = map[string]bool{
-	string(taskfailure.ReasonRuntimeOffline):         true,
-	string(taskfailure.ReasonRuntimeRecovery):        true,
-	string(taskfailure.ReasonTimeout):                true,
-	"codex_semantic_inactivity":                      true,
-	string(taskfailure.ReasonAgentProviderNetwork):   true,
-	string(taskfailure.ReasonSkillBundleUnavailable): true,
+	string(taskfailure.ReasonRuntimeOffline):             true,
+	string(taskfailure.ReasonRuntimeRecovery):            true,
+	string(taskfailure.ReasonTimeout):                    true,
+	"codex_semantic_inactivity":                          true,
+	string(taskfailure.ReasonAgentProviderNetwork):       true,
+	string(taskfailure.ReasonSkillBundleUnavailable):     true,
+	string(taskfailure.ReasonAgentProviderModelRejected): true,
 }
 
 // runtime_offline retries start deferred, not queued: their positive fire_at

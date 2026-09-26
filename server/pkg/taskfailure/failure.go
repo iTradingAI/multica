@@ -29,7 +29,7 @@
 //     runtime_cli_timeout, environment_prepare_failed,
 //     invalid_task_identity, runtime_access_denied
 //
-//   - 14 agent-side values (with `agent_error.` prefix) produced by
+//   - 15 agent-side values (with `agent_error.` prefix) produced by
 //     Classify(rawError) when the agent process surfaced an error string.
 //     IsAgentError reports membership in this set.
 //
@@ -48,7 +48,7 @@ import "strings"
 // taxonomy change can be made package-wide.
 type Reason string
 
-// agentErrorPrefix marks the 14 sub-reasons that originate inside the
+// agentErrorPrefix marks the 15 sub-reasons that originate inside the
 // agent process (provider error, runner crash, context overflow, etc.)
 // as opposed to the platform-side reasons (queue expiry, runtime
 // offline, sweeper timeout, etc.). IsAgentError uses this prefix so
@@ -220,6 +220,25 @@ const (
 	// failures, DNS failures, i/o timeout. Transient.
 	ReasonAgentProviderNetwork Reason = "agent_error.provider_network"
 
+	// ReasonAgentProviderModelRejected: the provider CLI refused the
+	// configured model id at process startup, before the first stream
+	// event. Claude Code exits 1 with
+	// `[claude-code:unrecognized_model] {"model":...,"query_source":"sdk"}`
+	// when --model names a non-Anthropic id and no custom endpoint is
+	// visible to the CLI; the ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN
+	// pair is what licenses unknown ids, and router/proxy setups normally
+	// supply it from the user's ~/.claude/settings.json env block — which
+	// is why the same agent and model usually runs fine and the marker
+	// also appears as a benign warning on healthy runs. Distinct from
+	// ReasonAgentModelNotFoundOrUnavailable (the provider API answering
+	// 404 at request time): this is the local CLI rejecting the launch
+	// itself. Zero stream events and zero tools means a retry is
+	// side-effect free, and observed failures are transient (a spawn
+	// racing a settings rewrite or an updater swap), so the reason sits
+	// on the auto-retry allowlist; a permanent misconfiguration burns one
+	// extra attempt before the actionable error surfaces.
+	ReasonAgentProviderModelRejected Reason = "agent_error.provider_model_rejected"
+
 	// ReasonAgentProcessFailure: agent subprocess exited non-zero,
 	// crashed, or returned an unexpected signal. Runner / backend
 	// quality issue.
@@ -267,7 +286,7 @@ const (
 	ReasonAgentUnknown Reason = "agent_error.unknown"
 )
 
-// allReasons is the canonical ordered list of the 27 reasons. Order is
+// allReasons is the canonical ordered list of the 28 reasons. Order is
 // stable so callers (e.g. Prometheus collectors that pre-warm series via
 // AllReasons) can build deterministic label sets across restarts.
 //
@@ -298,6 +317,7 @@ var allReasons = []Reason{
 	ReasonAgentProviderCapacityOrRateLimit,
 	ReasonAgentProviderServerError,
 	ReasonAgentProviderNetwork,
+	ReasonAgentProviderModelRejected,
 
 	// Agent process side: agent / runner errors.
 	ReasonAgentProcessFailure,
