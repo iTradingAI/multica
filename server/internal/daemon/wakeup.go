@@ -97,6 +97,9 @@ func jitterDuration(d time.Duration) time.Duration {
 }
 
 func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []string, taskWakeups chan<- taskWakeup, runtimeSetCh <-chan struct{}) (time.Duration, error) {
+	if d.workspaceFilesChannel == nil {
+		d.workspaceFilesChannel = newWorkspaceFilesChannel()
+	}
 	wsURL, err := taskWakeupURL(d.cfg.ServerBaseURL, runtimeIDs)
 	if err != nil {
 		return 0, err
@@ -169,6 +172,12 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 	// watched more than ~8 runtimes (typical when one machine connects to
 	// several workspaces), even when the network was healthy.
 	writeBufSize := 16
+	// Four in-flight 1 MiB reads produce at most 132 bounded workspace-files
+	// chunks. Keep a fixed upper bound of response headroom plus control frames
+	// while the single websocket writer drains them.
+	if writeBufSize < workspaceFilesOutboundQueueMin {
+		writeBufSize = workspaceFilesOutboundQueueMin
+	}
 	if 2*len(runtimeIDs) > writeBufSize {
 		writeBufSize = 2 * len(runtimeIDs)
 	}
@@ -217,6 +226,21 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 			return false
 		}
 	})
+	d.workspaceFilesChannel.attach(func(ctx context.Context, frame []byte) bool {
+		sendMu.Lock()
+		defer sendMu.Unlock()
+		if sendClosed {
+			return false
+		}
+		select {
+		case writes <- &wsOutbound{data: frame}:
+			return true
+		case <-ctx.Done():
+			return false
+		default:
+			return false
+		}
+	})
 
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
 	hbDone := make(chan struct{})
@@ -257,6 +281,9 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 		// Detach the terminal channel: kills every session opened over this
 		// connection so no shell outlives the WS (MAX-51 M2).
 		d.termChannel.attach(nil)
+		// Cancel reads and close file handles before sendMu is taken below, so a
+		// bounded response cannot hold teardown waiting on a full writer queue.
+		d.workspaceFilesChannel.attach(nil)
 		// A healthy WS connection lets the claim poller use a longer fallback
 		// interval. Wake it as soon as the connection drops so it immediately
 		// observes the detach and resumes the configured HTTP cadence.
@@ -489,6 +516,12 @@ func (d *Daemon) readTaskWakeupMessagesForConnection(conn *websocket.Conn, taskW
 			// Terminal frames (MAX-51 M2) are handled on their own goroutine:
 			// a spawn stats a filesystem, and the read pump must stay free.
 			go d.termChannel.HandleMessage(msg.Type, msg.Payload)
+		case protocol.EventWorkspaceFilesList, protocol.EventWorkspaceFilesRead, protocol.EventWorkspaceFilesCancel:
+			// HandleMessage only validates/enqueues; all filesystem work runs in
+			// its bounded worker pool and never blocks the websocket read pump.
+			if d.workspaceFilesChannel != nil {
+				d.workspaceFilesChannel.HandleMessage(msg.Type, msg.Payload)
+			}
 		}
 	}
 }
