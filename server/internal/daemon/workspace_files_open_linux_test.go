@@ -12,7 +12,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestWorkspaceFilesLinuxRejectsSymlinkAtRootAndLeaf(t *testing.T) {
+func TestWorkspaceFilesLinuxClassifiesSymlinksAndNonDirectories(t *testing.T) {
 	if !workspaceFilesCapabilityEnabled {
 		t.Skip("openat2 with required resolve flags is unavailable")
 	}
@@ -26,6 +26,9 @@ func TestWorkspaceFilesLinuxRejectsSymlinkAtRootAndLeaf(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(secret, filepath.Join(root, "file-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "plain-file"), []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	opener := newWorkspaceFilesOpener()
@@ -44,6 +47,9 @@ func TestWorkspaceFilesLinuxRejectsSymlinkAtRootAndLeaf(t *testing.T) {
 		if _, err := h.OpenChild(context.Background(), test.name, workspaceFilesOpenRequestFor(test.mode)); workspaceFilesErrorCode(err, "") != "symlink_denied" {
 			t.Fatalf("OpenChild(%q) error = %v, want symlink_denied", test.name, err)
 		}
+	}
+	if _, err := h.OpenChild(context.Background(), "plain-file", workspaceFilesOpenRequestFor(workspaceFilesDirectory)); workspaceFilesErrorCode(err, "") != "not_directory" {
+		t.Fatalf("OpenChild(%q) error = %v, want not_directory", "plain-file", err)
 	}
 	if _, err := opener.OpenRoot(context.Background(), filepath.Join(root, "dir-link")); workspaceFilesErrorCode(err, "") != "symlink_denied" {
 		t.Fatalf("symlink resource root error = %v, want symlink_denied", err)

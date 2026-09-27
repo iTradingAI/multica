@@ -111,7 +111,7 @@ func (h *linuxWorkspaceFilesHandle) OpenChild(ctx context.Context, name string, 
 		Resolve: unix.RESOLVE_BENEATH | unix.RESOLVE_NO_SYMLINKS | unix.RESOLVE_NO_MAGICLINKS,
 	})
 	if err != nil {
-		return nil, linuxWorkspaceFilesOpenChildError(err, request.mode)
+		return nil, linuxWorkspaceFilesOpenChildError(ctx, h, name, err, request.mode)
 	}
 	if err := ctx.Err(); err != nil {
 		_ = unix.Close(fd)
@@ -120,11 +120,35 @@ func (h *linuxWorkspaceFilesHandle) OpenChild(ctx context.Context, name string, 
 	return &linuxWorkspaceFilesHandle{file: os.NewFile(uintptr(fd), "workspace-entry")}, nil
 }
 
-func linuxWorkspaceFilesOpenChildError(err error, mode workspaceFilesOpenMode) error {
-	if mode == workspaceFilesDirectory && errors.Is(err, unix.ENOTDIR) {
+func linuxWorkspaceFilesOpenChildError(ctx context.Context, parent *linuxWorkspaceFilesHandle, name string, err error, mode workspaceFilesOpenMode) error {
+	if mode != workspaceFilesDirectory || !errors.Is(err, unix.ENOTDIR) {
+		return linuxWorkspaceFilesOpenError(err)
+	}
+
+	inspect, inspectErr := parent.OpenChild(ctx, name, workspaceFilesOpenRequestFor(workspaceFilesInspect))
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return workspaceFilesContextError(ctxErr)
+	}
+	if inspectErr != nil {
+		if isWorkspaceFilesLinkError(inspectErr) {
+			return inspectErr
+		}
+		return workspaceFilesError("not_directory")
+	}
+	defer inspect.Close()
+
+	inspectHandle, ok := inspect.(*linuxWorkspaceFilesHandle)
+	if !ok {
+		return workspaceFilesError("not_directory")
+	}
+	var stat unix.Stat_t
+	if err := unix.Fstatat(int(inspectHandle.file.Fd()), "", &stat, unix.AT_EMPTY_PATH|unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return workspaceFilesError("not_directory")
+	}
+	if stat.Mode&unix.S_IFMT == unix.S_IFLNK {
 		return workspaceFilesError("symlink_denied")
 	}
-	return linuxWorkspaceFilesOpenError(err)
+	return workspaceFilesError("not_directory")
 }
 
 func linuxWorkspaceFilesOpenError(err error) error {
