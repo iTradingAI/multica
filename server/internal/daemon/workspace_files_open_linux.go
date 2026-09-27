@@ -27,7 +27,7 @@ func workspaceFilesPlatformAvailable() bool {
 	}
 	defer unix.Close(fd)
 	child, err := unix.Openat2(fd, ".", &unix.OpenHow{
-		Flags:   uint64(unix.O_PATH | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC),
+		Flags:   uint64(unix.O_PATH | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC),
 		Resolve: unix.RESOLVE_BENEATH | unix.RESOLVE_NO_SYMLINKS | unix.RESOLVE_NO_MAGICLINKS,
 	})
 	if err != nil {
@@ -96,7 +96,7 @@ func (h *linuxWorkspaceFilesHandle) OpenChild(ctx context.Context, name string, 
 	if !request.nonBlocking || !request.closeOnExec || !request.noFollow {
 		return nil, workspaceFilesError("unsupported")
 	}
-	flags := unix.O_PATH | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
+	flags := unix.O_PATH | unix.O_NOFOLLOW | unix.O_CLOEXEC
 	switch request.mode {
 	case workspaceFilesDirectory:
 		flags = unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
@@ -111,13 +111,20 @@ func (h *linuxWorkspaceFilesHandle) OpenChild(ctx context.Context, name string, 
 		Resolve: unix.RESOLVE_BENEATH | unix.RESOLVE_NO_SYMLINKS | unix.RESOLVE_NO_MAGICLINKS,
 	})
 	if err != nil {
-		return nil, linuxWorkspaceFilesOpenError(err)
+		return nil, linuxWorkspaceFilesOpenChildError(err, request.mode)
 	}
 	if err := ctx.Err(); err != nil {
 		_ = unix.Close(fd)
 		return nil, workspaceFilesContextError(err)
 	}
 	return &linuxWorkspaceFilesHandle{file: os.NewFile(uintptr(fd), "workspace-entry")}, nil
+}
+
+func linuxWorkspaceFilesOpenChildError(err error, mode workspaceFilesOpenMode) error {
+	if mode == workspaceFilesDirectory && errors.Is(err, unix.ENOTDIR) {
+		return workspaceFilesError("symlink_denied")
+	}
+	return linuxWorkspaceFilesOpenError(err)
 }
 
 func linuxWorkspaceFilesOpenError(err error) error {
