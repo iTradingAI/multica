@@ -87,7 +87,7 @@ func (windowsWorkspaceFilesOpener) OpenRoot(ctx context.Context, root string) (w
 		return nil, workspaceFilesError("not_directory")
 	}
 	for _, component := range components {
-		next, openErr := current.OpenChild(ctx, component, workspaceFilesDirectory)
+		next, openErr := current.OpenChild(ctx, component, workspaceFilesOpenRequestFor(workspaceFilesDirectory))
 		if openErr != nil {
 			_ = current.Close()
 			return nil, openErr
@@ -128,12 +128,15 @@ func (h *windowsWorkspaceFilesHandle) Stat() (os.FileInfo, error) { return h.fil
 func (h *windowsWorkspaceFilesHandle) IsReparsePoint() bool       { return h.isReparse }
 func (h *windowsWorkspaceFilesHandle) Close() error               { return h.file.Close() }
 
-func (h *windowsWorkspaceFilesHandle) OpenChild(ctx context.Context, name string, mode workspaceFilesOpenMode) (workspaceFilesHandle, error) {
+func (h *windowsWorkspaceFilesHandle) OpenChild(ctx context.Context, name string, request workspaceFilesOpenRequest) (workspaceFilesHandle, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, workspaceFilesContextError(err)
 	}
 	if !validWorkspaceFilesEntryName(name) {
 		return nil, workspaceFilesError("invalid_path")
+	}
+	if !request.noFollow || !request.closeOnExec {
+		return nil, workspaceFilesError("unsupported")
 	}
 	objectName, err := windows.NewNTUnicodeString(name)
 	if err != nil {
@@ -147,7 +150,7 @@ func (h *windowsWorkspaceFilesHandle) OpenChild(ctx context.Context, name string
 	oa.Length = uint32(unsafe.Sizeof(*oa))
 	access := uint32(windows.FILE_READ_ATTRIBUTES | windows.SYNCHRONIZE)
 	options := uint32(windows.FILE_OPEN_REPARSE_POINT | windows.FILE_SYNCHRONOUS_IO_NONALERT)
-	switch mode {
+	switch request.mode {
 	case workspaceFilesInspect:
 	case workspaceFilesDirectory:
 		access |= windows.FILE_LIST_DIRECTORY
@@ -175,7 +178,7 @@ func (h *windowsWorkspaceFilesHandle) OpenChild(ctx context.Context, name string
 	)
 	if err != nil {
 		openErr := windowsWorkspaceFilesOpenError(err)
-		if mode == workspaceFilesReadOnly && workspaceFilesErrorCode(openErr, "") == "not_directory" {
+		if request.mode == workspaceFilesReadOnly && workspaceFilesErrorCode(openErr, "") == "not_directory" {
 			return nil, workspaceFilesError("not_regular")
 		}
 		return nil, openErr

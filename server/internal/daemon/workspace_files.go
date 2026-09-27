@@ -44,6 +44,22 @@ const (
 	workspaceFilesReadOnly
 )
 
+type workspaceFilesOpenRequest struct {
+	mode        workspaceFilesOpenMode
+	nonBlocking bool
+	closeOnExec bool
+	noFollow    bool
+}
+
+func workspaceFilesOpenRequestFor(mode workspaceFilesOpenMode) workspaceFilesOpenRequest {
+	return workspaceFilesOpenRequest{
+		mode:        mode,
+		nonBlocking: true,
+		closeOnExec: true,
+		noFollow:    true,
+	}
+}
+
 // The opener only follows already-open directory handles. Implementations must
 // open each child without following symlinks/reparse points and must never
 // create or modify filesystem objects.
@@ -52,7 +68,7 @@ type workspaceFilesHandle interface {
 	ReadDir(int) ([]os.DirEntry, error)
 	Stat() (os.FileInfo, error)
 	IsReparsePoint() bool
-	OpenChild(context.Context, string, workspaceFilesOpenMode) (workspaceFilesHandle, error)
+	OpenChild(context.Context, string, workspaceFilesOpenRequest) (workspaceFilesHandle, error)
 	Close() error
 }
 
@@ -446,7 +462,7 @@ func (c *workspaceFilesChannel) runList(p *workspaceFilesPending, payload protoc
 			skipped++
 			continue
 		}
-		child, openErr := dir.OpenChild(p.ctx, candidate, workspaceFilesInspect)
+		child, openErr := dir.OpenChild(p.ctx, candidate, workspaceFilesOpenRequestFor(workspaceFilesInspect))
 		if openErr != nil {
 			if isWorkspaceFilesLinkError(openErr) {
 				skipped++
@@ -565,7 +581,7 @@ func (c *workspaceFilesChannel) openResolved(p *workspaceFilesPending, root stri
 		} else {
 			mode = finalMode
 		}
-		next, openErr := h.OpenChild(p.ctx, component, mode)
+		next, openErr := h.OpenChild(p.ctx, component, workspaceFilesOpenRequestFor(mode))
 		if openErr != nil {
 			p.clearActive(h)
 			return nil, openErr

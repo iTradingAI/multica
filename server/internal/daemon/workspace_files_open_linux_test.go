@@ -41,7 +41,7 @@ func TestWorkspaceFilesLinuxRejectsSymlinkAtRootAndLeaf(t *testing.T) {
 		{name: "dir-link", mode: workspaceFilesDirectory},
 		{name: "file-link", mode: workspaceFilesReadOnly},
 	} {
-		if _, err := h.OpenChild(context.Background(), test.name, test.mode); workspaceFilesErrorCode(err, "") != "symlink_denied" {
+		if _, err := h.OpenChild(context.Background(), test.name, workspaceFilesOpenRequestFor(test.mode)); workspaceFilesErrorCode(err, "") != "symlink_denied" {
 			t.Fatalf("OpenChild(%q) error = %v, want symlink_denied", test.name, err)
 		}
 	}
@@ -66,7 +66,7 @@ func TestWorkspaceFilesLinuxFIFOLeafIsOpenedNonblockingAndRejected(t *testing.T)
 	defer h.Close()
 	result := make(chan error, 1)
 	go func() {
-		leaf, openErr := h.OpenChild(context.Background(), "pipe", workspaceFilesReadOnly)
+		leaf, openErr := h.OpenChild(context.Background(), "pipe", workspaceFilesOpenRequestFor(workspaceFilesReadOnly))
 		if openErr != nil {
 			result <- openErr
 			return

@@ -27,7 +27,7 @@ func TestWorkspaceFilesWindowsRejectsJunctionsAtRootIntermediateAndLeaf(t *testi
 		t.Fatal(err)
 	}
 	defer rootHandle.Close()
-	child, err := rootHandle.OpenChild(context.Background(), "jump", workspaceFilesInspect)
+	child, err := rootHandle.OpenChild(context.Background(), "jump", workspaceFilesOpenRequestFor(workspaceFilesInspect))
 	if err == nil {
 		_ = child.Close()
 		t.Fatal("leaf junction opened for inspection")

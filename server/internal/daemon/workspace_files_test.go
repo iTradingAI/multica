@@ -265,6 +265,31 @@ func TestWorkspaceFilesOnlyListsDirectoriesAndRegularFiles(t *testing.T) {
 	}
 }
 
+func TestWorkspaceFilesRequestsNonblockingNoFollowLeafOpen(t *testing.T) {
+	root := fakeWorkspaceFilesDirectory()
+	nested := fakeWorkspaceFilesDirectory()
+	nested.add("leaf.txt", fakeWorkspaceFilesRegular([]byte("contents")))
+	root.add("nested", nested)
+	ch, out := newWorkspaceFilesTestChannel(root)
+	result := runWorkspaceFilesRead(t, ch, out, "flags", "nested/leaf.txt")
+	if result.errCode != "" || string(result.data) != "contents" {
+		t.Fatalf("flag assertion read result = %+v", result)
+	}
+	root.trace.mu.Lock()
+	requests := append([]fakeWorkspaceFilesOpenRecord(nil), root.trace.requests...)
+	root.trace.mu.Unlock()
+	for _, record := range requests {
+		if record.name != "leaf.txt" || record.request.mode != workspaceFilesReadOnly {
+			continue
+		}
+		if !record.request.nonBlocking || !record.request.closeOnExec || !record.request.noFollow {
+			t.Fatalf("final leaf open request omitted a required flag: %+v", record.request)
+		}
+		return
+	}
+	t.Fatal("fake opener did not observe the final leaf open request")
+}
+
 func TestWorkspaceFilesTimeoutCancelDuplicateAndConcurrency(t *testing.T) {
 	newBlockingChannel := func() (*workspaceFilesChannel, <-chan []byte, *fakeWorkspaceFilesHandle) {
 		root := fakeWorkspaceFilesDirectory()
@@ -621,6 +646,16 @@ type fakeWorkspaceFilesOpener struct {
 	root *fakeWorkspaceFilesHandle
 }
 
+type fakeWorkspaceFilesOpenRecord struct {
+	name    string
+	request workspaceFilesOpenRequest
+}
+
+type fakeWorkspaceFilesTrace struct {
+	mu       sync.Mutex
+	requests []fakeWorkspaceFilesOpenRecord
+}
+
 func (o *fakeWorkspaceFilesOpener) OpenRoot(ctx context.Context, _ string) (workspaceFilesHandle, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, workspaceFilesContextError(err)
@@ -646,11 +681,12 @@ type fakeWorkspaceFilesHandle struct {
 	readStartOnce  *sync.Once
 	closedSignal   chan struct{}
 	closeOnce      *sync.Once
+	trace          *fakeWorkspaceFilesTrace
 	closed         bool
 }
 
 func fakeWorkspaceFilesDirectory() *fakeWorkspaceFilesHandle {
-	return &fakeWorkspaceFilesHandle{mode: fs.ModeDir | 0o755, children: make(map[string]*fakeWorkspaceFilesHandle), readStarted: make(chan struct{}), readStartOnce: &sync.Once{}, closedSignal: make(chan struct{}), closeOnce: &sync.Once{}}
+	return &fakeWorkspaceFilesHandle{mode: fs.ModeDir | 0o755, children: make(map[string]*fakeWorkspaceFilesHandle), readStarted: make(chan struct{}), readStartOnce: &sync.Once{}, closedSignal: make(chan struct{}), closeOnce: &sync.Once{}, trace: &fakeWorkspaceFilesTrace{}}
 }
 
 func fakeWorkspaceFilesRegular(data []byte) *fakeWorkspaceFilesHandle {
@@ -668,8 +704,16 @@ func (h *fakeWorkspaceFilesHandle) add(name string, child *fakeWorkspaceFilesHan
 	defer h.mu.Unlock()
 	child.name = name
 	h.children[name] = child
+	child.setTrace(h.trace)
 	h.readDirEntries = append(h.readDirEntries, name)
 	sort.Strings(h.readDirEntries)
+}
+
+func (h *fakeWorkspaceFilesHandle) setTrace(trace *fakeWorkspaceFilesTrace) {
+	h.trace = trace
+	for _, child := range h.children {
+		child.setTrace(trace)
+	}
 }
 
 func (h *fakeWorkspaceFilesHandle) clone() *fakeWorkspaceFilesHandle {
@@ -680,6 +724,7 @@ func (h *fakeWorkspaceFilesHandle) clone() *fakeWorkspaceFilesHandle {
 		children: make(map[string]*fakeWorkspaceFilesHandle, len(h.children)), readDirEntries: append([]string(nil), h.readDirEntries...),
 		reparse: h.reparse, openError: h.openError, blockRead: h.blockRead, ignoreClose: h.ignoreClose, releaseRead: h.releaseRead,
 		readStarted: h.readStarted, readStartOnce: h.readStartOnce, closedSignal: h.closedSignal, closeOnce: h.closeOnce,
+		trace: h.trace,
 	}
 	for name, child := range h.children {
 		clone.children[name] = child.clone()
@@ -751,10 +796,13 @@ func (h *fakeWorkspaceFilesHandle) Stat() (os.FileInfo, error) {
 
 func (h *fakeWorkspaceFilesHandle) IsReparsePoint() bool { return h.reparse }
 
-func (h *fakeWorkspaceFilesHandle) OpenChild(ctx context.Context, name string, mode workspaceFilesOpenMode) (workspaceFilesHandle, error) {
+func (h *fakeWorkspaceFilesHandle) OpenChild(ctx context.Context, name string, request workspaceFilesOpenRequest) (workspaceFilesHandle, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, workspaceFilesContextError(err)
 	}
+	h.trace.mu.Lock()
+	h.trace.requests = append(h.trace.requests, fakeWorkspaceFilesOpenRecord{name: name, request: request})
+	h.trace.mu.Unlock()
 	h.mu.Lock()
 	child := h.children[name]
 	h.mu.Unlock()
@@ -767,10 +815,10 @@ func (h *fakeWorkspaceFilesHandle) OpenChild(ctx context.Context, name string, m
 	if child.reparse {
 		return nil, workspaceFilesError(protocol.WorkspaceFilesErrorSymlinkDenied)
 	}
-	if mode == workspaceFilesDirectory && !child.mode.IsDir() {
+	if request.mode == workspaceFilesDirectory && !child.mode.IsDir() {
 		return nil, workspaceFilesError(protocol.WorkspaceFilesErrorNotDirectory)
 	}
-	if mode == workspaceFilesReadOnly && !child.mode.IsRegular() {
+	if request.mode == workspaceFilesReadOnly && !child.mode.IsRegular() {
 		return nil, workspaceFilesError(protocol.WorkspaceFilesErrorNotRegular)
 	}
 	return child.clone(), nil

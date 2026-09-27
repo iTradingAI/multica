@@ -51,7 +51,7 @@ func (linuxWorkspaceFilesOpener) OpenRoot(ctx context.Context, root string) (wor
 			return nil, workspaceFilesError("invalid_path")
 		}
 	}
-	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, linuxWorkspaceFilesOpenError(err)
 	}
@@ -61,7 +61,7 @@ func (linuxWorkspaceFilesOpener) OpenRoot(ctx context.Context, root string) (wor
 		if component == "" || component == "." {
 			continue
 		}
-		next, openErr := current.OpenChild(ctx, component, workspaceFilesDirectory)
+		next, openErr := current.OpenChild(ctx, component, workspaceFilesOpenRequestFor(workspaceFilesDirectory))
 		if openErr != nil {
 			_ = current.Close()
 			return nil, openErr
@@ -86,15 +86,18 @@ func (h *linuxWorkspaceFilesHandle) Stat() (os.FileInfo, error) { return h.file.
 func (h *linuxWorkspaceFilesHandle) IsReparsePoint() bool       { return false }
 func (h *linuxWorkspaceFilesHandle) Close() error               { return h.file.Close() }
 
-func (h *linuxWorkspaceFilesHandle) OpenChild(ctx context.Context, name string, mode workspaceFilesOpenMode) (workspaceFilesHandle, error) {
+func (h *linuxWorkspaceFilesHandle) OpenChild(ctx context.Context, name string, request workspaceFilesOpenRequest) (workspaceFilesHandle, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, workspaceFilesContextError(err)
 	}
 	if !validWorkspaceFilesEntryName(name) {
 		return nil, workspaceFilesError("invalid_path")
 	}
+	if !request.nonBlocking || !request.closeOnExec || !request.noFollow {
+		return nil, workspaceFilesError("unsupported")
+	}
 	flags := unix.O_PATH | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
-	switch mode {
+	switch request.mode {
 	case workspaceFilesDirectory:
 		flags = unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
 	case workspaceFilesReadOnly:
