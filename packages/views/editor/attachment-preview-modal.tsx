@@ -58,6 +58,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { toast } from "sonner";
 import {
   PreviewTooLargeError,
   PreviewUnsupportedError,
@@ -66,6 +67,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Code,
+  Copy,
   Download,
   ExternalLink,
   File,
@@ -92,6 +94,7 @@ import {
 import type { Attachment } from "@multica/core/types";
 import { paths, useWorkspaceSlug } from "@multica/core/paths";
 import { cn } from "@multica/ui/lib/utils";
+import { copyImage } from "@multica/ui/lib/clipboard";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import {
   UI_EASE_OUT,
@@ -100,6 +103,7 @@ import {
 import { useT } from "../i18n";
 import { useNavigation } from "../navigation";
 import { openExternal } from "../platform";
+import { isDesktopShell } from "../platform/local-directory";
 import { useImmersiveMode } from "../platform/use-immersive-mode";
 import { ReadonlyContent } from "./readonly-content";
 import {
@@ -802,6 +806,19 @@ function PreviewPanel({
   const imageLoadError =
     mediaUrl !== "" && mediaUrl === targetUrl ? onImageError : undefined;
 
+  // Copying reads the image's bytes from script. The desktop renderer can
+  // read any origin; web script can't read the storage CDN (it sends no CORS
+  // headers), and there the browser's own context menu has Copy image. Copies
+  // the frame on screen, which during a sequence swap is still the last one.
+  const canCopyImage = kind === "image" && isDesktopShell();
+  const handleCopyImage = async () => {
+    if (await copyImage(mediaUrl)) {
+      toast.success(t(($) => $.image.image_copied));
+    } else {
+      toast.error(t(($) => $.image.copy_image_failed));
+    }
+  };
+
   // Natural size is carried with the URL it was measured from, so a panel
   // reused for a different attachment can never fit the new image against the
   // old one's dimensions.
@@ -997,6 +1014,15 @@ function PreviewPanel({
               onClick={onOpenInNewTab}
             >
               <ExternalLink className="size-4" />
+            </ChromeButton>
+          )}
+          {canCopyImage && (
+            <ChromeButton
+              label={t(($) => $.image.copy_image)}
+              disabled={!mediaUrl}
+              onClick={() => void handleCopyImage()}
+            >
+              <Copy className="size-4" />
             </ChromeButton>
           )}
           <ChromeButton label={t(($) => $.image.download)} onClick={onDownload}>

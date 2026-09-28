@@ -40,6 +40,9 @@
     "delete": "Delete",
     "link_copied": "Link copied",
     "copy_link_failed": "Failed to copy link",
+    "copy_image": "Copy image",
+    "image_copied": "Image copied",
+    "copy_image_failed": "Couldn't copy image",
     "canvas_label": "Image canvas. Drag to pan, scroll to zoom, double-click to toggle actual size.",
     "unavailable": "That image is no longer available — skipped it."
   },

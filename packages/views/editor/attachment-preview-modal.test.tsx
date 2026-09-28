@@ -4,11 +4,28 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ReactElement } from "react";
 import type { Attachment } from "@multica/core/types";
 
-const openExternalMock = vi.hoisted(() => vi.fn());
+const { openExternalMock, isDesktopShellMock, copyImageMock, toastMock } =
+  vi.hoisted(() => ({
+    openExternalMock: vi.fn(),
+    // Web by default; the copy-image tests flip it to the desktop shell.
+    isDesktopShellMock: vi.fn(() => false),
+    copyImageMock: vi.fn(async (_url: string) => true),
+    toastMock: { success: vi.fn(), error: vi.fn() },
+  }));
 
 vi.mock("../platform", () => ({
   openExternal: openExternalMock,
 }));
+
+vi.mock("../platform/local-directory", () => ({
+  isDesktopShell: isDesktopShellMock,
+}));
+
+vi.mock("@multica/ui/lib/clipboard", () => ({
+  copyImage: copyImageMock,
+}));
+
+vi.mock("sonner", () => ({ toast: toastMock }));
 
 // vi.hoisted: factories run before module evaluation, letting us name mocks
 // referenced from inside vi.mock factories below. The Error classes must be
@@ -108,6 +125,9 @@ vi.mock("../i18n", () => ({
       sel({
         image: {
           download: "Download",
+          copy_image: "Copy image",
+          image_copied: "Image copied",
+          copy_image_failed: "Couldn't copy image",
           canvas_label: "Image canvas",
         },
         canvas: {
@@ -207,6 +227,8 @@ beforeEach(() => {
   getAttachmentTextContentMock.mockReset();
   navState.hasOpenInNewTab = true;
   slugState.value = "acme";
+  isDesktopShellMock.mockReturnValue(false);
+  copyImageMock.mockResolvedValue(true);
   // Default to web's same-origin empty base so existing absolute-URL tests
   // remain unaffected by the relative-URL resolution added in normalize().
   getBaseUrlMock.mockReturnValue("");
@@ -659,6 +681,50 @@ describe("AttachmentPreviewModal — controls", () => {
     await waitFor(() => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("AttachmentPreviewModal — copy image (MUL-7759)", () => {
+  const image = () =>
+    makeAttachment({
+      filename: "screenshot.png",
+      content_type: "image/png",
+      download_url: "https://cdn.example.test/screenshot.png?Signature=s",
+    });
+
+  it("copies the image on screen from the desktop shell", async () => {
+    isDesktopShellMock.mockReturnValue(true);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: image() }} open onClose={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
+
+    expect(copyImageMock).toHaveBeenCalledWith(
+      "https://cdn.example.test/screenshot.png?Signature=s",
+    );
+    await waitFor(() => expect(toastMock.success).toHaveBeenCalledWith("Image copied"));
+  });
+
+  it("says so when the copy fails", async () => {
+    isDesktopShellMock.mockReturnValue(true);
+    copyImageMock.mockResolvedValue(false);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: image() }} open onClose={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
+
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith("Couldn't copy image"));
+    expect(toastMock.success).not.toHaveBeenCalled();
+  });
+
+  it("offers no copy button on web, where the storage CDN can't be read from script", () => {
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: image() }} open onClose={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Copy image" })).toBeNull();
+  });
+
+  it("offers no copy button for files that aren't images", () => {
+    isDesktopShellMock.mockReturnValue(true);
+    const pdf = makeAttachment({ filename: "manual.pdf", content_type: "application/pdf" });
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: pdf }} open onClose={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Copy image" })).toBeNull();
   });
 });
 
