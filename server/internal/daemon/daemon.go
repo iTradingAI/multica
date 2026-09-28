@@ -8275,10 +8275,28 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				}
 				return
 			}
+			// The delivery happened — the branch carries the work and its
+			// record is written — and only the disposable directory survived.
+			// That is an operational cleanup fault, not a run failure: the
+			// task's outcome stands, and failing here would misreport a
+			// delivered task as if the agent or provider had failed. Log it
+			// under its own classification so the lingering directory stays
+			// locatable (MAX-184).
+			var cleanupErr *execenv.WorktreeCleanupError
+			if errors.As(finalizeErr, &cleanupErr) {
+				taskLog.Error("local_directory: worktree delivered, but its directory could not be removed",
+					"classification", "worktree_cleanup",
+					"branch", cleanupErr.Branch,
+					"path", cleanupErr.Path,
+					"error", cleanupErr.Err)
+				return
+			}
 			// Finalize could not complete its delivery contract, so the task
-			// worktree remains authoritative. This covers both an uncommitted
-			// change set and a committed branch whose worktree removal could not
-			// be confirmed. Fail the task: reporting success or a durable project
+			// worktree remains authoritative — an uncommitted change set it
+			// could not capture, a delivery point it could not verify or
+			// record. (A delivered branch whose directory merely failed to be
+			// removed returned as WorktreeCleanupError above and never reaches
+			// here.) Fail the task: reporting success or a durable project
 			// directory here would hide the path that still needs attention.
 			//
 			// Wrapped in worktreePreservedError so the cancel path can
