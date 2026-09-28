@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
 func envOrDefault(key, fallback string) string {
@@ -78,6 +80,22 @@ func intFromEnv(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s: invalid integer %q: %w", key, value, err)
 	}
 	return n, nil
+}
+
+// windowsSandboxPinFromEnv reads the codex_windows_sandbox pin from the
+// environment, defaulting to inherit. An invalid token is an error, not a
+// quiet default: the pin decides whether codex tasks run behind a restricted
+// token, so a typo must surface at startup instead of silently unpinning.
+func windowsSandboxPinFromEnv(key string) (execenv.WindowsSandboxPin, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return execenv.WindowsSandboxPinInherit, nil
+	}
+	pin, err := execenv.ParseWindowsSandboxPin(value)
+	if err != nil {
+		return execenv.WindowsSandboxPinInherit, fmt.Errorf("%s: %w", key, err)
+	}
+	return pin, nil
 }
 
 func sleepWithContext(ctx context.Context, d time.Duration) error {

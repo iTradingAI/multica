@@ -405,6 +405,23 @@ func NormalizeCodexLaunchArgs(extraArgs, customArgs []string, mcpConfig json.Raw
 	return out
 }
 
+// codexWindowsSandboxConfigKeyRe matches a `-c` / `--config` override of the
+// native Windows sandbox key, e.g. `windows.sandbox=unelevated`. Whitespace
+// tolerant around the dotted key, mirroring Codex's own `-c` parsing.
+var codexWindowsSandboxConfigKeyRe = regexp.MustCompile(`^\s*windows\s*\.\s*sandbox\s*=`)
+
+// StripCodexWindowsSandboxOverrides removes every `-c windows.sandbox=...` /
+// `--config windows.sandbox=...` token pair from args. The daemon calls it
+// when an explicit codex_windows_sandbox pin is configured: the pin owns that
+// key for daemon tasks, so lower-priority channels (daemon defaults, profile
+// fixed args, agent custom_args) must not be able to re-select the sandbox
+// tier from argv — Codex applies `-c` last-wins over config.toml, so a
+// surviving token would silently defeat the pin. It deliberately strips
+// without appending anything; the pin's own value travels separately.
+func StripCodexWindowsSandboxOverrides(args []string, logger *slog.Logger) []string {
+	return filterCodexConfigOverrides(args, codexWindowsSandboxConfigKeyRe, "windows.sandbox", logger)
+}
+
 // enforceCodexFastMode makes the explicit agent service-tier selection
 // authoritative over daemon ExtraArgs, per-agent CustomArgs, and inherited
 // config.toml. Codex's `--disable fast_mode` wins over `--enable fast_mode`

@@ -7974,6 +7974,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// still on codex's argv, and a `-c windows.sandbox=...` written there
 		// must still be visible to the sandbox decision.
 		extraArgs := append(append([]string{}, profileFixedArgs...), defaultArgsForProvider(d.cfg, provider)...)
+		extraArgs, agentCustomArgs = applyCodexWindowsSandboxPinArgs(d.cfg.CodexWindowsSandboxPin, extraArgs, agentCustomArgs, d.logger)
 		codexSandboxArgs = agent.NormalizeCodexLaunchArgs(extraArgs, agentCustomArgs, effectiveMcpConfig, d.logger)
 	}
 	// Hermes: resolve the overlay source home through one resolver contract —
@@ -8106,6 +8107,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			HermesSessionStore:    hermesSessionStore,
 			ReasonixEnv:           reasonixEnv,
 			CodexCustomArgs:       codexSandboxArgs,
+			WindowsSandboxPin:     d.cfg.CodexWindowsSandboxPin,
 			Task:                  taskCtx,
 		})
 		if err != nil {
@@ -8156,6 +8158,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			HermesSessionStore:    hermesSessionStore,
 			ReasonixEnv:           reasonixEnv,
 			CodexCustomArgs:       codexSandboxArgs,
+			WindowsSandboxPin:     d.cfg.CodexWindowsSandboxPin,
 			Task:                  taskCtx,
 		}
 		if localAssignment.UsesWorktree() {
@@ -8651,6 +8654,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// Stripped above, alongside the launch prefix. A skill-less hermes task
 		// has no overlay to protect and keeps its flags untouched.
 		customArgs = hermesOverlayCustomArgs
+	}
+	if provider == "codex" {
+		// The same pin enforcement the sandbox-decision reconstruction applies:
+		// an explicit codex_windows_sandbox pin owns the windows.sandbox key, so
+		// no lower-priority argv channel may select the tier. This is the argv
+		// codex actually parses — keeping it identical to the reconstruction is
+		// what stops the decision and the launch from drifting apart.
+		extraArgs, customArgs = applyCodexWindowsSandboxPinArgs(d.cfg.CodexWindowsSandboxPin, extraArgs, customArgs, d.logger)
 	}
 	thinkingLevel := ""
 	serviceTier := ""
@@ -10634,4 +10645,25 @@ func defaultArgsForProvider(cfg Config, provider string) []string {
 		return nil
 	}
 	return append([]string(nil), args...)
+}
+
+// applyCodexWindowsSandboxPinArgs enforces an explicit codex_windows_sandbox
+// pin on a codex task's launch argv. Every `-c windows.sandbox=...` token the
+// lower-priority channels carry (daemon defaults, profile fixed args, agent
+// custom_args) is stripped, and a native-tier pin appends the daemon's own
+// override into extraArgs — the only surviving occurrence, so Codex's
+// last-wins `-c` precedence makes the pinned tier effective. Inherit returns
+// both slices untouched. Applied identically at the launch-argv site and the
+// sandbox-decision reconstruction so the two can never disagree about what
+// ran (see codexSandboxArgs above and execenv's prepareCodexHomeWithOpts).
+func applyCodexWindowsSandboxPinArgs(pin execenv.WindowsSandboxPin, extraArgs, customArgs []string, logger *slog.Logger) ([]string, []string) {
+	if !pin.Explicit() {
+		return extraArgs, customArgs
+	}
+	extra := agent.StripCodexWindowsSandboxOverrides(extraArgs, logger)
+	custom := agent.StripCodexWindowsSandboxOverrides(customArgs, logger)
+	if tier := pin.Tier(); tier != "" {
+		extra = append(extra, "-c", "windows.sandbox="+tier)
+	}
+	return extra, custom
 }
