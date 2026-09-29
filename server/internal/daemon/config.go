@@ -143,6 +143,13 @@ type Config struct {
 	// for app-servers that are legitimately slow to their first event (GH #3262).
 	CodexFirstTurnNoProgressTimeout time.Duration
 	CodexHandshakeTimeout           time.Duration
+	// CodexWindowsSandboxPin is the daemon-level policy for Codex's native
+	// Windows sandbox (codex_windows_sandbox / MULTICA_CODEX_WINDOWS_SANDBOX /
+	// --codex-windows-sandbox). Inherit (zero) keeps the per-task signal-based
+	// decision; an explicit pin overrides it so a desktop rewrite of the
+	// user's ~/.codex/config.toml cannot flip daemon tasks between sandbox
+	// tiers. Windows-only in effect. See execenv.WindowsSandboxPin.
+	CodexWindowsSandboxPin          execenv.WindowsSandboxPin
 	// CodexTurnInterruptTimeout is the bounded grace period after cancellation
 	// for app-server to acknowledge turn/interrupt and emit turn/completed.
 	// Operators can tune it with MULTICA_CODEX_TURN_INTERRUPT_TIMEOUT using the
@@ -180,7 +187,11 @@ type Overrides struct {
 	AgentTimeout                   *time.Duration
 	CodexSemanticInactivityTimeout time.Duration
 	CodexHandshakeTimeout          time.Duration
-	MaxConcurrentTasks             int
+	// CodexWindowsSandbox carries an explicitly configured
+	// codex_windows_sandbox value (flag or config.json; the env var is read
+	// by LoadConfig itself). Empty = not overridden.
+	CodexWindowsSandbox string
+	MaxConcurrentTasks  int
 	DaemonID                       string
 	DeviceName                     string
 	RuntimeName                    string
@@ -471,6 +482,25 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		codexTurnInterruptTimeout = DefaultCodexTurnInterruptTimeout
 	}
 
+	// codex_windows_sandbox pin: env when the override did not carry an
+	// explicit flag/config.json value (the CLI folds those into Overrides and
+	// leaves env resolution here — the same split the other daemon knobs use).
+	// An invalid value is a startup error rather than a quiet fall-back: the
+	// knob decides whether tasks run behind a restricted token, and guessing
+	// "inherit" on a typo would silently undo the policy an operator meant to
+	// set. `config set` validates the same vocabulary at write time.
+	codexWindowsSandboxPin, err := windowsSandboxPinFromEnv("MULTICA_CODEX_WINDOWS_SANDBOX")
+	if err != nil {
+		return Config{}, err
+	}
+	if overrides.CodexWindowsSandbox != "" {
+		pin, parseErr := execenv.ParseWindowsSandboxPin(overrides.CodexWindowsSandbox)
+		if parseErr != nil {
+			return Config{}, parseErr
+		}
+		codexWindowsSandboxPin = pin
+	}
+
 	maxConcurrentTasks, err := intFromEnv("MULTICA_DAEMON_MAX_CONCURRENT_TASKS", DefaultMaxConcurrentTasks)
 	if err != nil {
 		return Config{}, err
@@ -657,6 +687,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		CodexSemanticInactivityTimeout:  codexSemanticInactivityTimeout,
 		CodexFirstTurnNoProgressTimeout: codexFirstTurnNoProgressTimeout,
 		CodexHandshakeTimeout:           codexHandshakeTimeout,
+		CodexWindowsSandboxPin:          codexWindowsSandboxPin,
 		CodexTurnInterruptTimeout:       codexTurnInterruptTimeout,
 		CodexThreadHandshakeTimeout:     codexThreadHandshakeTimeout,
 		OpenCodeIdleWatchdog:            openCodeIdleWatchdog,

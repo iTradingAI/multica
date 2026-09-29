@@ -118,6 +118,14 @@ type repoCheckoutRequest struct {
 	// --fresh`). Without it an existing checkout that holds work is kept; older
 	// daemons ignore the field and always start over.
 	Fresh bool `json:"fresh,omitempty"`
+	// Reference asks for a read-only shared reference checkout in the
+	// daemon-owned area (<workspaces root>/.refs/<workspace-id>/<repo>)
+	// instead of a task-workdir worktree: no agent branch, detached HEAD,
+	// landing path decided entirely by the daemon. This is how an in_place
+	// project consults foreign source trees without polluting its own
+	// directory (MAX-184). WorkDir is ignored in this mode; task-token
+	// binding still applies.
+	Reference bool `json:"reference,omitempty"`
 }
 
 type activeRepoCheckoutTask struct {
@@ -443,10 +451,6 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 			http.Error(w, "workspace_id is required", http.StatusBadRequest)
 			return
 		}
-		if req.WorkDir == "" {
-			http.Error(w, "workdir is required", http.StatusBadRequest)
-			return
-		}
 		if req.CheckoutMode != "" && req.CheckoutMode != repoCheckoutModeIsolated {
 			http.Error(w, "invalid checkout_mode", http.StatusBadRequest)
 			return
@@ -455,10 +459,24 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 			http.Error(w, "repo checkout task context does not match the active task", http.StatusForbidden)
 			return
 		}
-		authorizedWorkDir, authErr := authorizeRepoCheckoutWorkDir(activeTask.WorkDir, req.WorkDir)
-		if authErr != nil {
-			http.Error(w, "repo checkout workdir is not owned by the active task", http.StatusForbidden)
-			return
+		// A reference checkout never lands in a caller-supplied directory: its
+		// path is derived server-side under the daemon's own .refs area, so
+		// there is no workdir to authorize. Task-token binding above is what
+		// authenticates the request; the workdir containment check exists only
+		// for the task-workdir mode.
+		if req.Reference {
+			req.WorkDir = ""
+		} else {
+			if req.WorkDir == "" {
+				http.Error(w, "workdir is required", http.StatusBadRequest)
+				return
+			}
+			authorizedWorkDir, authErr := authorizeRepoCheckoutWorkDir(activeTask.WorkDir, req.WorkDir)
+			if authErr != nil {
+				http.Error(w, "repo checkout workdir is not owned by the active task", http.StatusForbidden)
+				return
+			}
+			req.WorkDir = authorizedWorkDir
 		}
 		// Identity is derived from the token-bound active task. AgentName and the
 		// other caller-supplied fields are compatibility inputs only and never
@@ -466,7 +484,6 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 		req.WorkspaceID = activeTask.WorkspaceID
 		req.TaskID = activeTask.TaskID
 		req.AgentName = activeTask.AgentName
-		req.WorkDir = authorizedWorkDir
 
 		if d.repoCache == nil {
 			http.Error(w, "repo cache not initialized", http.StatusInternalServerError)
@@ -492,28 +509,48 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 			checkoutRef = d.taskRepoDefaultRef(req.WorkspaceID, req.TaskID, req.URL)
 		}
 
-		params := repocache.WorktreeParams{
-			WorkspaceID:         req.WorkspaceID,
-			RepoURL:             req.URL,
-			WorkDir:             req.WorkDir,
-			Ref:                 checkoutRef,
-			AgentName:           req.AgentName,
-			TaskID:              req.TaskID,
-			CoAuthoredByEnabled: d.workspaceCoAuthoredByEnabled(req.WorkspaceID),
-			IsolatedGitMetadata: req.CheckoutMode == repoCheckoutModeIsolated,
-			Fresh:               req.Fresh,
-		}
-		if req.RetryBusy {
-			params.LockWaitTimeout = repoCheckoutLockWaitTimeout
-		}
 		var result *repocache.WorktreeResult
 		var err error
-		if cache, ok := d.repoCache.(interface {
-			CreateWorktreeContext(context.Context, repocache.WorktreeParams) (*repocache.WorktreeResult, error)
-		}); ok {
-			result, err = cache.CreateWorktreeContext(r.Context(), params)
+		if req.Reference {
+			refParams := repocache.ReferenceParams{
+				WorkspaceID: req.WorkspaceID,
+				RepoURL:     req.URL,
+				Ref:         checkoutRef,
+				Path:        repocache.ReferencePath(d.cfg.WorkspacesRoot, req.WorkspaceID, req.URL),
+				Fresh:       req.Fresh,
+			}
+			if req.RetryBusy {
+				refParams.LockWaitTimeout = repoCheckoutLockWaitTimeout
+			}
+			if cache, ok := d.repoCache.(interface {
+				CreateReferenceWorktree(context.Context, repocache.ReferenceParams) (*repocache.WorktreeResult, error)
+			}); ok {
+				result, err = cache.CreateReferenceWorktree(r.Context(), refParams)
+			} else {
+				err = errors.New("reference checkout not supported by this repo cache")
+			}
 		} else {
-			result, err = d.repoCache.CreateWorktree(params)
+			params := repocache.WorktreeParams{
+				WorkspaceID:         req.WorkspaceID,
+				RepoURL:             req.URL,
+				WorkDir:             req.WorkDir,
+				Ref:                 checkoutRef,
+				AgentName:           req.AgentName,
+				TaskID:              req.TaskID,
+				CoAuthoredByEnabled: d.workspaceCoAuthoredByEnabled(req.WorkspaceID),
+				IsolatedGitMetadata: req.CheckoutMode == repoCheckoutModeIsolated,
+				Fresh:               req.Fresh,
+			}
+			if req.RetryBusy {
+				params.LockWaitTimeout = repoCheckoutLockWaitTimeout
+			}
+			if cache, ok := d.repoCache.(interface {
+				CreateWorktreeContext(context.Context, repocache.WorktreeParams) (*repocache.WorktreeResult, error)
+			}); ok {
+				result, err = cache.CreateWorktreeContext(r.Context(), params)
+			} else {
+				result, err = d.repoCache.CreateWorktree(params)
+			}
 		}
 		if err != nil {
 			if errors.Is(err, repocache.ErrRepoBusy) && req.RetryBusy {

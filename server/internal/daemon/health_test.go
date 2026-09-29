@@ -361,7 +361,7 @@ func TestRepoCheckoutUsesTaskScopedProjectRefByDefault(t *testing.T) {
 	d.registerTaskRepos(workspaceID, "task-1", []RepoData{{URL: repoURL, Ref: "release/v2"}})
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","agent_name":"Other Agent","task_id":"task-1"}`)
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + filepath.ToSlash(workDir) + `","agent_name":"Other Agent","task_id":"task-1"}`)
 	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
 
 	if rec.Code != http.StatusOK {
@@ -372,6 +372,53 @@ func TestRepoCheckoutUsesTaskScopedProjectRefByDefault(t *testing.T) {
 	}
 	if got := cache.lastCreateParams().AgentName; got != "Test Agent" {
 		t.Fatalf("CreateWorktree AgentName = %q, want token-bound active agent", got)
+	}
+}
+
+// TestRepoCheckoutReferenceModeIgnoresCallerWorkdir pins the MAX-184 contract
+// at the endpoint: a reference checkout never lands in (or is authorized
+// against) the caller-supplied workdir — a bogus path outside the active
+// task's workdir is neither rejected nor used, and the daemon derives the
+// landing spot under its own .refs area instead.
+func TestRepoCheckoutReferenceModeIgnoresCallerWorkdir(t *testing.T) {
+	t.Parallel()
+
+	const workspaceID = "ws-checkout-ref"
+	const repoURL = "https://github.com/org/repo.git"
+	cache := &recordingRepoCache{lookupPath: "/cache/org/repo.git"}
+	workDir := t.TempDir()
+	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, workDir, cache)
+	wsRoot := filepath.Join(t.TempDir(), "wsroot")
+	d.cfg.WorkspacesRoot = wsRoot
+	d.registerTaskRepos(workspaceID, "task-1", []RepoData{{URL: repoURL, Ref: "release/v2"}})
+
+	rec := httptest.NewRecorder()
+	// The workdir names a directory OUTSIDE the active task's workdir: in
+	// task-workdir mode this is the 403 path; in reference mode it must be
+	// irrelevant.
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + filepath.ToSlash(t.TempDir()) + `","task_id":"task-1","reference":true}`)
+	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cache.mu.Lock()
+	gotPath := cache.lastReferencePath
+	gotFresh := cache.lastReferenceFresh
+	creates := len(cache.params)
+	cache.mu.Unlock()
+	if creates != 1 {
+		t.Fatalf("reference checkout issued %d cache calls, want exactly the one reference call", creates)
+	}
+	if want := repocache.ReferencePath(wsRoot, workspaceID, repoURL); gotPath != want {
+		t.Fatalf("reference landing path = %q, want daemon-derived %q", gotPath, want)
+	}
+	if gotFresh {
+		t.Error("reference checkout defaulted to fresh; it must keep a dirty reference")
+	}
+	// The scoped project ref flows through like the task-workdir mode.
+	if got := cache.lastCreateParams().Ref; got != "release/v2" {
+		t.Fatalf("reference checkout Ref = %q, want release/v2", got)
 	}
 }
 
@@ -390,7 +437,7 @@ func TestRepoCheckoutRejectsMissingTaskCredential(t *testing.T) {
 	d.logger = captureLogger(&logs)
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1"}`)
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + filepath.ToSlash(workDir) + `","task_id":"task-1"}`)
 	d.repoCheckoutHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/repo/checkout", body))
 
 	if rec.Code != http.StatusUnauthorized {
@@ -440,7 +487,7 @@ func TestRepoCheckoutRejectsUnknownTaskCredential(t *testing.T) {
 	d.logger = captureLogger(&logs)
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1"}`)
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + filepath.ToSlash(workDir) + `","task_id":"task-1"}`)
 	req := httptest.NewRequest(http.MethodPost, "/repo/checkout", body)
 	req.Header.Set("Authorization", "Bearer mat_not_an_active_task")
 	d.repoCheckoutHandler().ServeHTTP(rec, req)
@@ -526,7 +573,7 @@ func TestRepoCheckoutRejectsAnotherTaskWorkdir(t *testing.T) {
 	otherWorkDir := t.TempDir()
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + otherWorkDir + `","task_id":"task-1"}`)
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + filepath.ToSlash(otherWorkDir) + `","task_id":"task-1"}`)
 	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
 
 	if rec.Code != http.StatusForbidden {
@@ -548,7 +595,7 @@ func TestRepoCheckoutExplicitRefOverridesProjectDefault(t *testing.T) {
 	d.registerTaskRepos(workspaceID, "task-1", []RepoData{{URL: repoURL, Ref: "release/v2"}})
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1","ref":"hotfix"}`)
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + filepath.ToSlash(workDir) + `","task_id":"task-1","ref":"hotfix"}`)
 	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
 
 	if rec.Code != http.StatusOK {
@@ -569,7 +616,7 @@ func TestRepoCheckoutForwardsIsolatedMode(t *testing.T) {
 	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, workDir, cache)
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1","checkout_mode":"isolated"}`)
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + filepath.ToSlash(workDir) + `","task_id":"task-1","checkout_mode":"isolated"}`)
 	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
 
 	if rec.Code != http.StatusOK {
@@ -593,8 +640,8 @@ func TestRepoCheckoutForwardsFresh(t *testing.T) {
 		body string
 		want bool
 	}{
-		{body: `{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1"}`, want: false},
-		{body: `{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1","fresh":true}`, want: true},
+		{body: `{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + filepath.ToSlash(workDir) + `","task_id":"task-1"}`, want: false},
+		{body: `{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + filepath.ToSlash(workDir) + `","task_id":"task-1","fresh":true}`, want: true},
 	} {
 		rec := httptest.NewRecorder()
 		d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(strings.NewReader(tc.body)))
@@ -617,7 +664,7 @@ func TestRepoCheckoutRejectsUnknownMode(t *testing.T) {
 	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, workDir, cache)
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1","checkout_mode":"unsafe"}`)
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + filepath.ToSlash(workDir) + `","task_id":"task-1","checkout_mode":"unsafe"}`)
 	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
 
 	if rec.Code != http.StatusBadRequest {
@@ -638,7 +685,7 @@ func TestRepoCheckoutReturnsRetryableBusyToCapableClient(t *testing.T) {
 	d := newRepoCheckoutTestDaemon(t, workspaceID, repoURL, workDir, cache)
 
 	rec := httptest.NewRecorder()
-	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + workDir + `","task_id":"task-1","retry_busy":true}`)
+	body := strings.NewReader(`{"url":"` + repoURL + `","workspace_id":"` + workspaceID + `","workdir":"` + filepath.ToSlash(workDir) + `","task_id":"task-1","retry_busy":true}`)
 	d.repoCheckoutHandler().ServeHTTP(rec, authorizedRepoCheckoutRequest(body))
 
 	if rec.Code != http.StatusServiceUnavailable {
@@ -754,9 +801,11 @@ func (c *blockingLookupRepoCache) CreateWorktree(repocache.WorktreeParams) (*rep
 }
 
 type recordingRepoCache struct {
-	lookupPath string
-	mu         sync.Mutex
-	params     []repocache.WorktreeParams
+	lookupPath         string
+	mu                 sync.Mutex
+	params             []repocache.WorktreeParams
+	lastReferencePath  string
+	lastReferenceFresh bool
 }
 
 func (c *recordingRepoCache) Lookup(_, _ string) string {
@@ -780,6 +829,17 @@ func (c *recordingRepoCache) CreateWorktree(params repocache.WorktreeParams) (*r
 	defer c.mu.Unlock()
 	c.params = append(c.params, params)
 	return &repocache.WorktreeResult{Path: params.WorkDir, BranchName: "agent/test"}, nil
+}
+
+// referenceParams records CreateReferenceWorktree calls so the reference-mode
+// handler tests can assert what the daemon actually asked for.
+func (c *recordingRepoCache) CreateReferenceWorktree(_ context.Context, params repocache.ReferenceParams) (*repocache.WorktreeResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.params = append(c.params, repocache.WorktreeParams{WorkspaceID: params.WorkspaceID, RepoURL: params.RepoURL, Ref: params.Ref})
+	c.lastReferencePath = params.Path
+	c.lastReferenceFresh = params.Fresh
+	return &repocache.WorktreeResult{Path: params.Path}, nil
 }
 
 func (c *recordingRepoCache) lastCreateParams() repocache.WorktreeParams {
