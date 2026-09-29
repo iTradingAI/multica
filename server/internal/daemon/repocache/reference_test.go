@@ -67,9 +67,27 @@ func writeReferenceFile(t *testing.T, dir, name, content string) {
 func TestReferencePathIsDaemonDerived(t *testing.T) {
 	t.Parallel()
 	got := ReferencePath("/srv/workspaces", "ws-uuid", "https://github.com/org/repo.git")
-	want := filepath.Join("/srv/workspaces", refsDirName, "ws-uuid", "repo")
+	want := filepath.Join("/srv/workspaces", refsDirName, "ws-uuid", "github.com+org+repo")
 	if got != want {
 		t.Fatalf("ReferencePath = %q, want %q", got, want)
+	}
+}
+
+// TestReferencePathDisambiguatesSameBasenameRepos pins MAX-184 R2: two repos
+// whose URLs differ only above the basename must land in distinct reference
+// directories, so one can never refresh the other's worktree through the
+// wrong bare cache's lock.
+func TestReferencePathDisambiguatesSameBasenameRepos(t *testing.T) {
+	t.Parallel()
+	a := ReferencePath("/srv/ws", "ws-1", "https://github.com/org-a/service.git")
+	b := ReferencePath("/srv/ws", "ws-1", "https://github.com/org-b/service.git")
+	if a == b {
+		t.Fatalf("same-basename repos collide at %q", a)
+	}
+	// Distinct workspaces stay isolated too.
+	c := ReferencePath("/srv/ws", "ws-2", "https://github.com/org-a/service.git")
+	if a == c {
+		t.Fatalf("same repo across workspaces collides at %q", a)
 	}
 }
 
@@ -206,5 +224,55 @@ func TestCreateReferenceWorktreeRefusesForeignDirectory(t *testing.T) {
 	}
 	if body, err := os.ReadFile(filepath.Join(target, "precious.txt")); err != nil || string(body) != "not ours to delete\n" {
 		t.Errorf("foreign directory was modified: %q, %v", body, err)
+	}
+}
+
+// TestCreateReferenceWorktreeSeparatesSameBasenameRepos is the functional half
+// of MAX-184 R2: two same-basename repos in one workspace each get their own
+// reference checkout whose content matches its own source, not the sibling's.
+func TestCreateReferenceWorktreeSeparatesSameBasenameRepos(t *testing.T) {
+	t.Parallel()
+	root, err := os.MkdirTemp("", "mref2")
+	if err != nil {
+		t.Fatalf("mkdir temp root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+
+	repoA := createTestRepoAt(t, filepath.Join(root, "org-a", "service"))
+	repoB := createTestRepoAt(t, filepath.Join(root, "org-b", "service"))
+	writeReferenceFile(t, repoA, "who.txt", "org-a\n")
+	runTestGit(t, repoA, "add", "-A")
+	runTestGit(t, repoA, "commit", "-m", "a marker")
+	writeReferenceFile(t, repoB, "who.txt", "org-b\n")
+	runTestGit(t, repoB, "add", "-A")
+	runTestGit(t, repoB, "commit", "-m", "b marker")
+
+	cache := New(filepath.Join(root, "cache"), testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: repoA}, {URL: repoB}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	refsRoot := filepath.Join(root, "ws")
+	pathA := ReferencePath(refsRoot, "ws-1", repoA)
+	pathB := ReferencePath(refsRoot, "ws-1", repoB)
+	if pathA == pathB {
+		t.Fatalf("reference paths collide: %q", pathA)
+	}
+	for _, tc := range []struct{ url, path, want string }{
+		{repoA, pathA, "org-a\n"},
+		{repoB, pathB, "org-b\n"},
+	} {
+		result, err := cache.CreateReferenceWorktree(context.Background(), ReferenceParams{
+			WorkspaceID: "ws-1", RepoURL: tc.url, Path: tc.path,
+		})
+		if err != nil {
+			t.Fatalf("CreateReferenceWorktree(%s): %v", tc.url, err)
+		}
+		if result.Path != tc.path {
+			t.Errorf("checkout for %s landed at %q, want %q", tc.url, result.Path, tc.path)
+		}
+		if got, readErr := os.ReadFile(filepath.Join(tc.path, "who.txt")); readErr != nil || string(got) != tc.want {
+			t.Errorf("reference at %s carries the wrong repo's content: %q, %v", tc.path, got, readErr)
+		}
 	}
 }

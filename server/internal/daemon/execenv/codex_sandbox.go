@@ -214,11 +214,13 @@ func windowsSandboxFromConfig(config string) windowsSandboxConfig {
 	return classifyWindowsSandboxValue(probe.Windows.Sandbox)
 }
 
-// codexConfigOverrideValueRe matches the value token of a Codex `-c` /
+// codexWindowsSandboxOverrideRe matches the value token of a Codex `-c` /
 // `--config` windows.sandbox override, e.g. `windows.sandbox = "unelevated"`.
-// It tolerates whitespace around the dotted key and the `=`, matching Codex's
-// own lenient `-c` parsing.
-var codexWindowsSandboxOverrideRe = regexp.MustCompile(`^\s*windows\s*\.\s*sandbox\s*=`)
+// It tolerates whitespace around the dotted key and the `=`, and the quoted
+// key-segment spellings TOML permits ("windows".sandbox, windows.'sandbox')
+// — a detector that missed them would downgrade a real opt-in (MAX-184 R1).
+var codexWindowsSandboxOverrideRe = regexp.MustCompile(
+	`^\s*(?:"windows"|'windows'|windows)\s*\.\s*(?:"sandbox"|'sandbox'|sandbox)\s*=`)
 
 // windowsSandboxFromCustomArgs classifies a native Windows sandbox selection
 // passed via Codex `-c windows.sandbox=...` / `--config windows.sandbox=...`

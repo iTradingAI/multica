@@ -407,8 +407,11 @@ func NormalizeCodexLaunchArgs(extraArgs, customArgs []string, mcpConfig json.Raw
 
 // codexWindowsSandboxConfigKeyRe matches a `-c` / `--config` override of the
 // native Windows sandbox key, e.g. `windows.sandbox=unelevated`. Whitespace
-// tolerant around the dotted key, mirroring Codex's own `-c` parsing.
-var codexWindowsSandboxConfigKeyRe = regexp.MustCompile(`^\s*windows\s*\.\s*sandbox\s*=`)
+// tolerant around the dotted key, and covers the quoted key-segment
+// spellings TOML permits ("windows".sandbox, windows.'sandbox') so no legal
+// spelling of the pin-owned key survives the strip (MAX-184 R1).
+var codexWindowsSandboxConfigKeyRe = regexp.MustCompile(
+	`^\s*(?:"windows"|'windows'|windows)\s*\.\s*(?:"sandbox"|'sandbox'|sandbox)\s*=`)
 
 // StripCodexWindowsSandboxOverrides removes every `-c windows.sandbox=...` /
 // `--config windows.sandbox=...` token pair from args. The daemon calls it

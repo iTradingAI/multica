@@ -24,8 +24,15 @@ const refsDirName = ".refs"
 // The caller never supplies this path — the daemon derives it, which is what
 // keeps reference checkouts out of in_place project directories no matter
 // where the calling task's workdir sits.
+//
+// The repo segment reuses the bare cache's URL-derived name (bareDirName)
+// rather than the bare repo basename, so two same-named repos in one
+// workspace — org-a/service.git and org-b/service.git — land in distinct
+// directories instead of refreshing each other's worktree through the wrong
+// bare cache's lock (MAX-184 R2).
 func ReferencePath(workspacesRoot, workspaceID, repoURL string) string {
-	return filepath.Join(workspacesRoot, refsDirName, workspaceID, repoNameFromURL(repoURL))
+	return filepath.Join(workspacesRoot, refsDirName, workspaceID,
+		strings.TrimSuffix(bareDirName(repoURL), ".git"))
 }
 
 // ReferenceParams describes a reference checkout request. Unlike
