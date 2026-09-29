@@ -88,6 +88,50 @@ func TestStripWindowsSandboxKeyFromContent(t *testing.T) {
 			wantOut: "[windows]\n",
 		},
 		{
+			// MAX-184 R1: quoted table headers address the same TOML table.
+			name:    "double-quoted table header (R1)",
+			in:      "model = \"gpt\"\n\n[\"windows\"]\nsandbox = \"unelevated\"\nother = 1\n",
+			wantOut: "model = \"gpt\"\n\n[\"windows\"]\nother = 1\n",
+		},
+		{
+			name:    "single-quoted table header (R1)",
+			in:      "['windows']\nsandbox = \"unelevated\"\n",
+			wantOut: "['windows']\n",
+		},
+		{
+			name:    "quoted bare key inside the windows table (R1)",
+			in:      "[windows]\n\"sandbox\" = \"unelevated\"\n",
+			wantOut: "[windows]\n",
+		},
+		{
+			name:    "root dotted with quoted first segment (R1)",
+			in:      "\"windows\".sandbox = \"unelevated\"\nmodel = \"gpt\"\n",
+			wantOut: "model = \"gpt\"\n",
+		},
+		{
+			name:    "root dotted with quoted second segment (R1)",
+			in:      "windows.'sandbox' = \"unelevated\"\n",
+			wantOut: "",
+		},
+		{
+			name:    "root dotted with both segments quoted (R1)",
+			in:      "'windows'.\"sandbox\"=\"elevated\"\n",
+			wantOut: "",
+		},
+		{
+			// Bare keys are case-sensitive in TOML: WINDOWS is a different table.
+			name:    "differently-cased table is preserved",
+			in:      "[WINDOWS]\nsandbox = \"nope\"\n",
+			wantOut: "[WINDOWS]\nsandbox = \"nope\"\n",
+		},
+		{
+			// A nested table under windows is not the windows table; its keys
+			// address windows.<name>.* — a different setting entirely.
+			name:    "nested windows table is preserved",
+			in:      "[windows.display]\nsandbox = \"nope\"\n",
+			wantOut: "[windows.display]\nsandbox = \"nope\"\n",
+		},
+		{
 			name:    "root dotted form",
 			in:      "windows.sandbox = \"unelevated\"\nmodel = \"gpt\"\n",
 			wantOut: "model = \"gpt\"\n",
@@ -140,6 +184,10 @@ func TestPrepareCodexHomeWindowsSandboxPinOffNeutralizesDesktopRewrite(t *testin
 	}{
 		{"table form", "[windows]\nsandbox = \"unelevated\"\n"},
 		{"dotted form", "windows.sandbox = \"unelevated\"\n"},
+		// MAX-184 R1: the quoted spellings address the same TOML key and must
+		// be neutralized just like the bare forms.
+		{"quoted table form", "[\"windows\"]\nsandbox = \"unelevated\"\n"},
+		{"quoted dotted form", "'windows'.\"sandbox\" = \"unelevated\"\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sharedHome := t.TempDir()
@@ -173,8 +221,7 @@ func TestPrepareCodexHomeWindowsSandboxPinOffNeutralizesDesktopRewrite(t *testin
 			if err != nil {
 				t.Fatalf("read shared config: %v", err)
 			}
-			if !strings.Contains(string(shared), "sandbox = \"unelevated\"") &&
-				!strings.Contains(string(shared), "windows.sandbox") {
+			if string(shared) != tc.sharedConfig {
 				t.Errorf("shared config was modified by the pin:\n%s", shared)
 			}
 		})

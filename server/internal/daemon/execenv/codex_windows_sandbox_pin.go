@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -169,6 +170,13 @@ func stripWindowsSandboxKey(configPath string, logger *slog.Logger) error {
 // stripWindowsSandboxKey, split out so the table/dotted-key matrix is testable
 // without touching the filesystem. Returns the content and whether anything
 // was removed.
+//
+// Key matching is TOML-semantics aware: quoted keys (['windows'], ["windows"],
+// "windows".sandbox, windows.'sandbox', …) address the SAME table/key as their
+// bare forms, and Codex parses them the same way — a strip that only matched
+// the bare spelling would leave the user-level selection live in the per-task
+// copy under an explicit off pin, exactly the drift the pin exists to end
+// (MAX-184 R1). Bare keys stay case-sensitive, matching TOML.
 func stripWindowsSandboxKeyFromContent(content string) (string, bool) {
 	lines := strings.Split(content, "\n")
 	out := make([]string, 0, len(lines))
@@ -179,7 +187,7 @@ func stripWindowsSandboxKeyFromContent(content string) (string, bool) {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
 			atRoot = false
-			inWindowsTable = trimmed == "[windows]"
+			inWindowsTable = isWindowsTableName(trimmed)
 			out = append(out, line)
 			continue
 		}
@@ -187,7 +195,7 @@ func stripWindowsSandboxKeyFromContent(content string) (string, bool) {
 			removed = true
 			continue
 		}
-		if atRoot && codexWindowsSandboxOverrideRe.MatchString(trimmed) {
+		if atRoot && isRootWindowsSandboxDottedKey(trimmed) {
 			removed = true
 			continue
 		}
@@ -199,6 +207,78 @@ func stripWindowsSandboxKeyFromContent(content string) (string, bool) {
 	return strings.Join(out, "\n"), true
 }
 
+// isWindowsTableName reports whether a TOML table header names exactly the
+// top-level `windows` table, tolerating the quoted spellings ['windows'] and
+// ["windows"] (and whitespace inside the brackets). A header naming a nested
+// table — [windows.display], [profile.'windows'] — is not the top-level
+// windows table.
+func isWindowsTableName(header string) bool {
+	inner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(header, "["), "]"))
+	segments := tomlKeySegments(inner)
+	return len(segments) == 1 && segments[0] == "windows"
+}
+
+// isWindowsSandboxDottedKeyRe matches a ROOT-level dotted assignment of the
+// windows.sandbox key with every segment optionally quoted: windows.sandbox,
+// "windows".sandbox, windows.'sandbox', 'windows'."sandbox" — with the loose
+// dot spacing Codex tolerates elsewhere.
+var isWindowsSandboxDottedKeyRe = regexp.MustCompile(
+	`^\s*(?:"windows"|'windows'|windows)\s*\.\s*(?:"sandbox"|'sandbox'|sandbox)\s*=`)
+
+func isRootWindowsSandboxDottedKey(trimmed string) bool {
+	return isWindowsSandboxDottedKeyRe.MatchString(trimmed)
+}
+
+// tomlKeySegments splits a dotted TOML key path into its unquoted segments.
+// Returns nil when the input is not a well-formed key path (unbalanced quotes,
+// empty segment). Used to compare table headers and keys by TOML identity
+// rather than by their literal spelling.
+func tomlKeySegments(key string) []string {
+	var segments []string
+	var current strings.Builder
+	quote := byte(0)
+	flush := func() bool {
+		seg := current.String()
+		current.Reset()
+		if seg == "" {
+			return false
+		}
+		segments = append(segments, seg)
+		return true
+	}
+	for i := 0; i < len(key); i++ {
+		c := key[i]
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			} else {
+				current.WriteByte(c)
+			}
+		case c == '"' || c == '\'':
+			// A quote starting mid-segment (sa"ndbox) is malformed TOML; treat
+			// it as a hard mismatch rather than trying to be lenient.
+			if current.Len() > 0 {
+				return nil
+			}
+			quote = c
+		case c == '.':
+			if !flush() {
+				return nil
+			}
+		default:
+			if c == ' ' || c == '\t' {
+				continue
+			}
+			current.WriteByte(c)
+		}
+	}
+	if quote != 0 || !flush() {
+		return nil
+	}
+	return segments
+}
+
 // isWindowsSandboxValueKey reports whether a table-body line assigns the bare
 // `sandbox` key: `sandbox = "unelevated"`, `sandbox="x"`, with quotes and
 // whitespace both tolerated. Only ever consulted while inside a `[windows]`
@@ -208,5 +288,6 @@ func isWindowsSandboxValueKey(trimmed string) bool {
 	if !found {
 		return false
 	}
-	return strings.TrimSpace(strings.Trim(strings.TrimSpace(key), `"'`)) == "sandbox"
+	segments := tomlKeySegments(strings.TrimSpace(key))
+	return segments != nil && len(segments) == 1 && segments[0] == "sandbox"
 }

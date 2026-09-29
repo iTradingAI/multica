@@ -34,6 +34,23 @@ func TestStripCodexWindowsSandboxOverrides(t *testing.T) {
 			want: []string{},
 		},
 		{
+			// MAX-184 R1: quoted key segments are legal TOML spellings of the
+			// same key; none may survive the pin's strip.
+			name: "quoted first segment",
+			in:   []string{"-c", `"windows".sandbox=unelevated`, "keep"},
+			want: []string{"keep"},
+		},
+		{
+			name: "quoted second segment",
+			in:   []string{"--config", `windows.'sandbox'=elevated`},
+			want: []string{},
+		},
+		{
+			name: "both segments quoted",
+			in:   []string{"-c", `'windows'."sandbox" = off`},
+			want: []string{},
+		},
+		{
 			name: "other -c overrides survive",
 			in:   []string{"-c", "model=gpt-5", "-c", "windows.sandbox=off", "-c", "theme=dark"},
 			want: []string{"-c", "model=gpt-5", "-c", "theme=dark"},
