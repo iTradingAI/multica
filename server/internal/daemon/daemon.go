@@ -31,6 +31,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/selfexec"
+	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -6818,11 +6819,15 @@ func shouldReusePriorWorkdir(task Task, localAssignment *localDirectoryAssignmen
 		return "", false
 	}
 
-	root, err := filepath.EvalSymlinks(workspacesRoot)
+	// util.ResolveSymlinks, not filepath.EvalSymlinks: on Windows the latter
+	// cannot pass through a directory junction, so a junctioned workspaces
+	// root silently declined every reuse and each follow-up lost its session
+	// (#8946).
+	root, err := util.ResolveSymlinks(workspacesRoot)
 	if err != nil {
 		return "", false
 	}
-	workdir, err := filepath.EvalSymlinks(task.PriorWorkDir)
+	workdir, err := util.ResolveSymlinks(task.PriorWorkDir)
 	if err != nil {
 		return "", false
 	}
@@ -7268,11 +7273,12 @@ func (d *Daemon) lockReusablePriorEnvRoot(ctx context.Context, task Task, localA
 		return nil, "", nil, false, nil
 	}
 	priorRoot := filepath.Dir(workDir)
-	// workDir came back through EvalSymlinks, so the root it is measured
-	// against has to be resolved the same way — otherwise a symlinked
-	// workspaces root (macOS /tmp -> /private/tmp, a home on a linked volume)
-	// makes the two look unrelated and every reuse is refused.
-	canonicalWorkspacesRoot, err := filepath.EvalSymlinks(d.cfg.WorkspacesRoot)
+	// workDir came back through util.ResolveSymlinks, so the root it is
+	// measured against has to be resolved the same way — otherwise a symlinked
+	// workspaces root (macOS /tmp -> /private/tmp, a home on a linked volume,
+	// a Windows junction to another drive) makes the two look unrelated and
+	// every reuse is refused.
+	canonicalWorkspacesRoot, err := util.ResolveSymlinks(d.cfg.WorkspacesRoot)
 	if err != nil {
 		return nil, "", nil, false, nil
 	}
@@ -7980,6 +7986,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// still on codex's argv, and a `-c windows.sandbox=...` written there
 		// must still be visible to the sandbox decision.
 		extraArgs := append(append([]string{}, profileFixedArgs...), defaultArgsForProvider(d.cfg, provider)...)
+		extraArgs, agentCustomArgs = applyCodexWindowsSandboxPinArgs(d.cfg.CodexWindowsSandboxPin, extraArgs, agentCustomArgs, d.logger)
 		codexSandboxArgs = agent.NormalizeCodexLaunchArgs(extraArgs, agentCustomArgs, effectiveMcpConfig, d.logger)
 	}
 	// Hermes: resolve the overlay source home through one resolver contract —
@@ -8000,10 +8007,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var hermesSessionStore string
 	if provider == "hermes" {
 		// Resolve from the argv hermes will actually parse — launch prefix,
-		// `acp`, then the filtered custom args — which agent.HermesLaunchArgv
+		// the filtered custom args, then `acp` — which agent.HermesLaunchArgv
 		// assembles the same way the backend does. A custom runtime profile's
 		// fixed_args are the launch prefix now, so they are scanned before
-		// custom_args, and the backend's own `acp` token sits between them and
+		// custom_args, and the backend's own `acp` token closes the argv and
 		// participates in the scan. Approximating that argv reads a different
 		// profile than the process does, and the overlay ends up seeded from
 		// the wrong home (GH #7046).
@@ -8112,6 +8119,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			HermesSessionStore:    hermesSessionStore,
 			ReasonixEnv:           reasonixEnv,
 			CodexCustomArgs:       codexSandboxArgs,
+			WindowsSandboxPin:     d.cfg.CodexWindowsSandboxPin,
 			Task:                  taskCtx,
 		})
 		if err != nil {
@@ -8162,6 +8170,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			HermesSessionStore:    hermesSessionStore,
 			ReasonixEnv:           reasonixEnv,
 			CodexCustomArgs:       codexSandboxArgs,
+			WindowsSandboxPin:     d.cfg.CodexWindowsSandboxPin,
 			Task:                  taskCtx,
 		}
 		if localAssignment.UsesWorktree() {
@@ -8278,10 +8287,28 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				}
 				return
 			}
+			// The delivery happened — the branch carries the work and its
+			// record is written — and only the disposable directory survived.
+			// That is an operational cleanup fault, not a run failure: the
+			// task's outcome stands, and failing here would misreport a
+			// delivered task as if the agent or provider had failed. Log it
+			// under its own classification so the lingering directory stays
+			// locatable (MAX-184).
+			var cleanupErr *execenv.WorktreeCleanupError
+			if errors.As(finalizeErr, &cleanupErr) {
+				taskLog.Error("local_directory: worktree delivered, but its directory could not be removed",
+					"classification", "worktree_cleanup",
+					"branch", cleanupErr.Branch,
+					"path", cleanupErr.Path,
+					"error", cleanupErr.Err)
+				return
+			}
 			// Finalize could not complete its delivery contract, so the task
-			// worktree remains authoritative. This covers both an uncommitted
-			// change set and a committed branch whose worktree removal could not
-			// be confirmed. Fail the task: reporting success or a durable project
+			// worktree remains authoritative — an uncommitted change set it
+			// could not capture, a delivery point it could not verify or
+			// record. (A delivered branch whose directory merely failed to be
+			// removed returned as WorktreeCleanupError above and never reaches
+			// here.) Fail the task: reporting success or a durable project
 			// directory here would hide the path that still needs attention.
 			//
 			// Wrapped in worktreePreservedError so the cancel path can
@@ -8574,8 +8601,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// The overlay is authoritative once built, so nothing on the command line
 	// may re-point HERMES_HOME out of it. Both argv regions are stripped
 	// together, against the same assembled argv the resolver read: a selection
-	// can straddle them (a prefix ending in a bare `-p` captures the backend's
-	// `acp`), which per-region stripping cannot see.
+	// can straddle them (a prefix ending in a bare `-p` captures the first
+	// custom arg), which per-region stripping cannot see.
 	var hermesOverlayCustomArgs []string
 	hermesOverlayActive := provider == "hermes" && env != nil && env.HermesHome != ""
 	if hermesOverlayActive {
@@ -8657,6 +8684,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// Stripped above, alongside the launch prefix. A skill-less hermes task
 		// has no overlay to protect and keeps its flags untouched.
 		customArgs = hermesOverlayCustomArgs
+	}
+	if provider == "codex" {
+		// The same pin enforcement the sandbox-decision reconstruction applies:
+		// an explicit codex_windows_sandbox pin owns the windows.sandbox key, so
+		// no lower-priority argv channel may select the tier. This is the argv
+		// codex actually parses — keeping it identical to the reconstruction is
+		// what stops the decision and the launch from drifting apart.
+		extraArgs, customArgs = applyCodexWindowsSandboxPinArgs(d.cfg.CodexWindowsSandboxPin, extraArgs, customArgs, d.logger)
 	}
 	thinkingLevel := ""
 	serviceTier := ""
@@ -10640,4 +10675,25 @@ func defaultArgsForProvider(cfg Config, provider string) []string {
 		return nil
 	}
 	return append([]string(nil), args...)
+}
+
+// applyCodexWindowsSandboxPinArgs enforces an explicit codex_windows_sandbox
+// pin on a codex task's launch argv. Every `-c windows.sandbox=...` token the
+// lower-priority channels carry (daemon defaults, profile fixed args, agent
+// custom_args) is stripped, and a native-tier pin appends the daemon's own
+// override into extraArgs — the only surviving occurrence, so Codex's
+// last-wins `-c` precedence makes the pinned tier effective. Inherit returns
+// both slices untouched. Applied identically at the launch-argv site and the
+// sandbox-decision reconstruction so the two can never disagree about what
+// ran (see codexSandboxArgs above and execenv's prepareCodexHomeWithOpts).
+func applyCodexWindowsSandboxPinArgs(pin execenv.WindowsSandboxPin, extraArgs, customArgs []string, logger *slog.Logger) ([]string, []string) {
+	if !pin.Explicit() {
+		return extraArgs, customArgs
+	}
+	extra := agent.StripCodexWindowsSandboxOverrides(extraArgs, logger)
+	custom := agent.StripCodexWindowsSandboxOverrides(customArgs, logger)
+	if tier := pin.Tier(); tier != "" {
+		extra = append(extra, "-c", "windows.sandbox="+tier)
+	}
+	return extra, custom
 }

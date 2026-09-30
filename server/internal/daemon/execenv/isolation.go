@@ -212,6 +212,17 @@ func runPreparationProcess(ctx context.Context, command []string, request prepar
 		// logger so later cleanup retains its normal diagnostics.
 		response.Environment.logger = logger
 	}
+	// Surface the helper's diagnostics on the SUCCESS path too. They are the
+	// only durable record of decisions made inside the helper process — the
+	// sandbox pin's neutralization lines, session-store migrations, kept
+	// configs — and dropping them made a successful prepare unverifiable from
+	// daemon.log (MAX-184 R3: the live drill had no independent evidence the
+	// windows.sandbox key was stripped at task-prepare time). Debug level:
+	// routine noise stays out of Info, but the lines are greppable on demand.
+	if detail := strings.TrimSpace(stderr.String()); detail != "" && logger != nil {
+		logger.Debug("execenv: preparation helper diagnostics",
+			"stderr", detail)
+	}
 	return response.Environment, nil
 }
 

@@ -54,14 +54,18 @@ var repoCheckoutCmd = &cobra.Command{
 		"Running it again where the repository is already checked out never silently discards work: a checkout " +
 		"that has uncommitted changes, untracked files, or unpushed commits, or is already on this task's branch, " +
 		"is kept as it is and only its remote refs are fetched. Pass --fresh to discard its uncommitted changes and " +
-		"untracked files and start over on a new branch; commits stay on the old branch, but push any you still need first.",
+		"untracked files and start over on a new branch; commits stay on the old branch, but push any you still need first.\n\n" +
+		"Pass --reference for read-only source consultation: the checkout lands in the daemon's shared reference " +
+		"area (outside every project directory), detached, with no agent branch. Use it when you only need to read " +
+		"the code — e.g. consulting platform source from inside a project — so nothing lands in the project's tree.",
 	Args: exactArgs(1),
 	RunE: runRepoCheckout,
 }
 
 var (
-	repoCheckoutRef   string
-	repoCheckoutFresh bool
+	repoCheckoutRef       string
+	repoCheckoutFresh     bool
+	repoCheckoutReference bool
 )
 
 func init() {
@@ -76,6 +80,7 @@ func init() {
 
 	repoCheckoutCmd.Flags().StringVar(&repoCheckoutRef, "ref", "", "branch, tag, or commit to check out instead of the remote default branch")
 	repoCheckoutCmd.Flags().BoolVar(&repoCheckoutFresh, "fresh", false, "discard an existing checkout's uncommitted changes and untracked files and start over on a new branch from the latest default branch (or --ref); commits stay on the old branch")
+	repoCheckoutCmd.Flags().BoolVar(&repoCheckoutReference, "reference", false, "check out into the daemon's shared reference area instead of the task workdir: a detached, read-only consultation copy at a daemon-owned path outside every project directory; no agent branch is created")
 
 	repoCmd.AddCommand(repoListCmd)
 	repoCmd.AddCommand(repoAddCmd)
@@ -356,10 +361,16 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("MULTICA_TOKEN not set (repo checkout requires the active task credential)")
 	}
 
-	// Use current working directory as the checkout target.
-	workDir, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
+	// Use current working directory as the checkout target. A reference
+	// checkout never sends one: the daemon derives its landing path itself,
+	// which is what keeps it out of the caller's project directory.
+	workDir := ""
+	if !repoCheckoutReference {
+		wd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get working directory: %w", err)
+		}
+		workDir = wd
 	}
 
 	reqBody := map[string]any{
@@ -372,6 +383,7 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 		"checkout_mode": strings.TrimSpace(os.Getenv("MULTICA_REPO_CHECKOUT_MODE")),
 		"retry_busy":    true,
 		"fresh":         repoCheckoutFresh,
+		"reference":     repoCheckoutReference,
 	}
 
 	data, err := json.Marshal(reqBody)

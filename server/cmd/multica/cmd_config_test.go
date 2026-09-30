@@ -431,3 +431,37 @@ func TestPollIntervalRoundTripThroughDuration(t *testing.T) {
 		t.Fatalf("parsed = %v, want %v", got, want)
 	}
 }
+
+// TestApplyConfigSetCodexWindowsSandbox covers the pin vocabulary: every
+// accepted value normalizes to lowercase and round-trips, an empty value
+// clears the field, and anything outside the vocabulary is rejected at write
+// time so the daemon never starts on a typo'd policy (MAX-184).
+func TestApplyConfigSetCodexWindowsSandbox(t *testing.T) {
+	t.Parallel()
+
+	cfg := cli.CLIConfig{}
+	for raw, want := range map[string]string{
+		"off":        "off",
+		"inherit":    "inherit",
+		"UNELEVATED": "unelevated",
+		" elevated ": "elevated",
+	} {
+		if err := applyConfigSet(&cfg, "codex_windows_sandbox", raw); err != nil {
+			t.Fatalf("set %q: %v", raw, err)
+		}
+		if cfg.CodexWindowsSandbox != want {
+			t.Fatalf("set %q persisted %q, want %q", raw, cfg.CodexWindowsSandbox, want)
+		}
+	}
+	if err := applyConfigSet(&cfg, "codex_windows_sandbox", ""); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if cfg.CodexWindowsSandbox != "" {
+		t.Fatalf("clear left %q behind", cfg.CodexWindowsSandbox)
+	}
+	for _, bad := range []string{"full", "native", "0", "workspace-write"} {
+		if err := applyConfigSet(&cfg, "codex_windows_sandbox", bad); err == nil {
+			t.Fatalf("accepted invalid value %q", bad)
+		}
+	}
+}

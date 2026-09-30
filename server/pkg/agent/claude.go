@@ -357,7 +357,12 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		}
 		// Internal protocol failures cancel the process to unblock its pipes.
 		// Preserve the actual failure instead of reporting a user cancellation.
-		if supplements != nil && writeErr != nil && ctx.Err() == nil && terminalReasonError == "" && !errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		// MAX-207: a write failure observed only after cmd.Wait() returned is
+		// routinely a trailing write racing process exit ("file already
+		// closed") on a CLI that exits 1 AFTER delivering its result. Once the
+		// result event was seen, the pipe error carries no failure signal —
+		// only promote it when the stream never reached a result.
+		if supplements != nil && writeErr != nil && ctx.Err() == nil && terminalReasonError == "" && !sawResult && !errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			terminalReasonError = fmt.Sprintf("claude input/control protocol failed: %v", writeErr)
 		}
 

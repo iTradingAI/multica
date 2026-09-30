@@ -681,10 +681,12 @@ func (w *LocalWorktree) Finalize(logger *slog.Logger) (LocalWorktreeOutcome, err
 	}
 
 	if removeErr := removeLocalWorktreeDir(w.GitRoot, w.Path, logger); removeErr != nil {
-		outcome.PreservedPath = w.Path
-		return outcome, fmt.Errorf(
-			"could not remove finalized worktree for branch %s: %w; the task worktree remains at %s",
-			w.Branch, removeErr, w.Path)
+		// The delivery is complete — the branch carries the work and its
+		// record is written. Only the disposable directory failed to go away.
+		// Return the branch as delivered and classify the failure separately,
+		// so a cleanup fault cannot masquerade as a run/provider failure and
+		// the delivered work stays visible in the task's result (MAX-184).
+		return outcome, &WorktreeCleanupError{Branch: w.Branch, Path: w.Path, Err: removeErr}
 	}
 
 	if dropped {
@@ -835,41 +837,106 @@ func worktreeIsDirty(worktreePath string) (bool, error) {
 	return strings.TrimSpace(out) != "", nil
 }
 
+// WorktreeCleanupError reports that a worktree task DELIVERED its branch but
+// the disposable worktree directory could not be removed afterwards. The
+// delivery itself — the commits, the branch, and its recorded state —
+// succeeded; what failed is housekeeping. Callers must not treat this as a
+// run or provider failure (the task's outcome stands) but should surface it
+// under its own classification so the lingering directory can be located and
+// cleaned up (MAX-184).
+type WorktreeCleanupError struct {
+	// Branch is the delivered branch. Empty when the task produced no work
+	// and its empty branch was on its way to being dropped.
+	Branch string
+	// Path is the worktree directory that is still on disk.
+	Path string
+	// Err is the underlying removal failure.
+	Err error
+}
+
+func (e *WorktreeCleanupError) Error() string {
+	return fmt.Sprintf("delivered branch %s but could not remove the task worktree at %s: %v — the work is safe on the branch; remove the directory manually if it persists",
+		e.Branch, e.Path, e.Err)
+}
+
+func (e *WorktreeCleanupError) Unwrap() error { return e.Err }
+
+// worktreeRemoveAttempts bounds how many times removeLocalWorktreeDir retries
+// the git removal + manual fallback sequence when the directory refuses to go
+// away. Three covers the observed Windows shapes (a handle released a moment
+// later, a scanner or indexer holding a file open) without hanging a daemon
+// slot on a permanently locked path.
+const worktreeRemoveAttempts = 3
+
+// Test seams for the removal failure shapes that git's own exit status cannot
+// reproduce deterministically on every platform: `worktree remove --force`
+// reporting success while the directory survives, and RemoveAll failing a
+// bounded number of times before succeeding. Tests swap them; production
+// always runs the real implementations.
+var (
+	worktreeRemoveGit        = runGit
+	worktreeRemoveAll        = os.RemoveAll
+	worktreeRemoveRetryDelay = 200 * time.Millisecond
+)
+
 // removeLocalWorktreeDir unregisters the worktree from the user's repo and
 // deletes its directory. The branch is deliberately left alone — it is the
 // task's deliverable.
+//
+// On Windows, `git worktree remove --force` can report success while the
+// directory is still on disk (a handle released a moment later, a scanner
+// holding a file open), and can fail the same way. Both shapes get the same
+// bounded sequence: run git's removal, then — whenever the directory entry
+// still exists, whatever git's exit status said — delete the directory
+// directly and prune the now dangling registration. The loop retries that
+// sequence with a short delay; only a directory that survives every attempt
+// is an error, and a cleanup-only one at that (see WorktreeCleanupError).
 func removeLocalWorktreeDir(gitRoot, worktreePath string, logger *slog.Logger) error {
-	var removeErr error
-	if out, err := runGit(gitRoot, "worktree", "remove", "--force", worktreePath); err != nil {
-		removeErr = err
-		if logger != nil {
-			logger.Warn("execenv: git worktree remove failed; pruning registration",
-				"path", worktreePath, "output", out, "error", err)
-		}
-		// Fall back to deleting the directory ourselves and dropping the now
-		// dangling registration, so the user's repo isn't left listing a
-		// worktree that no longer exists.
-		if rmErr := os.RemoveAll(worktreePath); rmErr != nil {
-			removeErr = errors.Join(removeErr, rmErr)
+	var lastErr error
+	for attempt := 1; attempt <= worktreeRemoveAttempts; attempt++ {
+		if out, err := worktreeRemoveGit(gitRoot, "worktree", "remove", "--force", worktreePath); err != nil {
+			lastErr = err
 			if logger != nil {
-				logger.Warn("execenv: remove worktree directory failed", "path", worktreePath, "error", rmErr)
+				logger.Warn("execenv: git worktree remove failed; falling back to a direct delete",
+					"path", worktreePath, "attempt", attempt, "output", out, "error", err)
+			}
+		}
+		if worktreeDirGone(worktreePath) {
+			return nil
+		}
+		// The directory entry is still there — git either reported success and
+		// left it behind, or failed outright. Delete it ourselves and drop the
+		// dangling registration so the user's repo isn't left listing a
+		// worktree that no longer exists.
+		if rmErr := worktreeRemoveAll(worktreePath); rmErr != nil {
+			lastErr = rmErr
+			if logger != nil {
+				logger.Warn("execenv: remove worktree directory failed",
+					"path", worktreePath, "attempt", attempt, "error", rmErr)
 			}
 		}
 		if out, pruneErr := runGit(gitRoot, "worktree", "prune"); pruneErr != nil && logger != nil {
 			logger.Warn("execenv: git worktree prune failed", "output", out, "error", pruneErr)
 		}
+		if worktreeDirGone(worktreePath) {
+			return nil
+		}
+		if attempt < worktreeRemoveAttempts {
+			time.Sleep(worktreeRemoveRetryDelay)
+		}
 	}
-	// Lstat verifies the path entry itself is gone. Stat would treat a broken
-	// symlink as absent even though a stale entry still occupies the handoff path.
-	if _, statErr := os.Lstat(worktreePath); errors.Is(statErr, os.ErrNotExist) {
-		return nil
-	} else if statErr != nil {
-		return fmt.Errorf("confirm worktree removal: %w", statErr)
+	if lastErr == nil {
+		lastErr = errors.New("git worktree remove reported success but left the directory in place")
 	}
-	if removeErr != nil {
-		return fmt.Errorf("worktree directory still exists after removal fallback: %w", removeErr)
-	}
-	return errors.New("worktree directory still exists after git removal reported success")
+	return fmt.Errorf("worktree directory %s still exists after %d removal attempts: %w",
+		worktreePath, worktreeRemoveAttempts, lastErr)
+}
+
+// worktreeDirGone reports that no directory entry remains at path. Lstat, not
+// Stat: a broken symlink is still a stale entry occupying the handoff path.
+func worktreeDirGone(path string) bool {
+	_, statErr := os.Lstat(path)
+	return errors.Is(statErr, os.ErrNotExist)
 }
 
 // deleteBranch drops a task branch that carries nothing worth keeping — an
@@ -1431,10 +1498,12 @@ func quotedPaths(paths []string) string {
 // ours, and a tip without this turn's starting point no longer carries the
 // snapshot about to be recorded as delivered (MUL-6881 review).
 func (w *LocalWorktree) verifyDeliveryPoint(tip string) error {
-	if !w.tracksState {
-		// Nothing will be recorded for this branch, so there is nothing to prove.
-		return nil
-	}
+	// The two assertions below apply to EVERY delivered branch, not only the
+	// ones whose state gets recorded: a task-scoped branch is just as much a
+	// deliverable, and a run that wandered off it — or reset away the commit
+	// it started from — must fail the task rather than have it name a branch
+	// whose tip is not the work that ran (MAX-184). tracksState narrows what
+	// is RECORDED, never what is verified.
 	if tip == "" {
 		return errors.New("the task worktree has no resolvable HEAD")
 	}

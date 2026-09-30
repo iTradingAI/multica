@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
 var configCmd = &cobra.Command{
@@ -42,6 +43,7 @@ var configSetSupportedKeys = []string{
 	"agent_timeout",
 	"codex_semantic_inactivity_timeout",
 	"codex_handshake_timeout",
+	"codex_windows_sandbox",
 	"disable_auto_update",
 	"auto_update_check_interval",
 	"disable_auto_reload",
@@ -54,11 +56,11 @@ var configSetCmd = &cobra.Command{
 		"server_url, app_url, workspace_id, " +
 		"device_name, runtime_name, workspaces_root, max_concurrent_tasks, poll_interval, ws_claim_poll_interval, " +
 		"heartbeat_interval, agent_timeout, " +
-		"codex_semantic_inactivity_timeout, codex_handshake_timeout, " +
+		"codex_semantic_inactivity_timeout, codex_handshake_timeout, codex_windows_sandbox, " +
 		"disable_auto_update, auto_update_check_interval, disable_auto_reload.\n\n" +
 		"The daemon keys (device_name, runtime_name, workspaces_root, max_concurrent_tasks, " +
 		"poll_interval, ws_claim_poll_interval, heartbeat_interval, agent_timeout, " +
-		"codex_semantic_inactivity_timeout, codex_handshake_timeout, " +
+		"codex_semantic_inactivity_timeout, codex_handshake_timeout, codex_windows_sandbox, " +
 		"disable_auto_update, auto_update_check_interval, disable_auto_reload) mirror their " +
 		"--flag / env counterparts and are read by `daemon start` when " +
 		"neither the flag nor the env var is set. " +
@@ -68,7 +70,10 @@ var configSetCmd = &cobra.Command{
 		"'0s' is meaningful and explicitly disables the wall-clock cap. " +
 		"disable_auto_update and disable_auto_reload take 'true' or 'false' " +
 		"(single-direction: setting one to 'true' turns that behavior off, " +
-		"'false' clears the override so env/default decides). Pass an empty " +
+		"'false' clears the override so env/default decides). " +
+		"codex_windows_sandbox takes 'off', 'inherit', 'unelevated', or " +
+		"'elevated' and pins the daemon's Codex native Windows sandbox policy " +
+		"(Windows only; 'inherit' restores signal-based behavior). Pass an empty " +
 		"string to clear a persisted " +
 		"value (e.g. `config set poll_interval \"\"`).",
 	Args: exactArgs(2),
@@ -108,6 +113,7 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "agent_timeout:", agentTimeoutDisplay(cfg.AgentTimeout))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "codex_semantic_inactivity_timeout:", valueOrDefault(cfg.CodexSemanticInactivityTimeout, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "codex_handshake_timeout:", valueOrDefault(cfg.CodexHandshakeTimeout, "(not set)"))
+	fmt.Fprintf(os.Stdout, "%-34s %s\n", "codex_windows_sandbox:", codexWindowsSandboxDisplay(cfg.CodexWindowsSandbox))
 	fmt.Fprintf(os.Stdout, "%-34s %t\n", "disable_auto_update:", cfg.DisableAutoUpdate)
 	fmt.Fprintf(os.Stdout, "%-34s %s\n", "auto_update_check_interval:", valueOrDefault(cfg.AutoUpdateCheckInterval, "(not set)"))
 	fmt.Fprintf(os.Stdout, "%-34s %t\n", "disable_auto_reload:", cfg.DisableAutoReload)
@@ -242,6 +248,17 @@ func applyConfigSet(cfg *cli.CLIConfig, key, value string) error {
 		if err := assignPositiveDuration(&cfg.CodexHandshakeTimeout, key, value); err != nil {
 			return err
 		}
+	case "codex_windows_sandbox":
+		// Normalized to the exact lowercase vocabulary the daemon parses, so
+		// a hand-edited config.json with mixed case still round-trips cleanly
+		// through `config show`.
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		if normalized != "" {
+			if _, err := execenv.ParseWindowsSandboxPin(normalized); err != nil {
+				return err
+			}
+		}
+		cfg.CodexWindowsSandbox = normalized
 	case "disable_auto_update":
 		if err := assignBool(&cfg.DisableAutoUpdate, key, value); err != nil {
 			return err
@@ -294,6 +311,16 @@ func assignPositiveDuration(dst *string, key, value string) error {
 	}
 	*dst = normalized
 	return nil
+}
+
+// codexWindowsSandboxDisplay renders the persisted pin for `config show`:
+// empty = not persisted (env/flag/default decides), anything else is shown
+// as stored.
+func codexWindowsSandboxDisplay(v string) string {
+	if v == "" {
+		return "(not set)"
+	}
+	return v
 }
 
 // agentTimeoutDisplay renders the tri-state agent_timeout value for
