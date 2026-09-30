@@ -557,6 +557,11 @@ type Daemon struct {
 	// wsRPC and detached (killing every session) when the connection drops.
 	termChannel *termChannel
 
+	// workspaceFilesChannel handles read-only workspace-files requests on the
+	// daemon control connection. Active reads and directory handles are closed
+	// when the connection detaches.
+	workspaceFilesChannel *workspaceFilesChannel
+
 	// batchClaimUnsupported is set once a batch claim gets a 404 from the
 	// server (no /api/daemon/tasks/claim route — an un-upgraded server), so
 	// subsequent polls skip WS+batch and use the legacy per-runtime claim
@@ -755,6 +760,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		workspaceChanges:            newWorkspaceChangeSignal(),
 		wsRPC:                       newWSRPCClient(wsRPCResponseGrace),
 		termChannel:                 newTermChannel(),
+		workspaceFilesChannel:       newWorkspaceFilesChannel(),
 	}
 	d.activeEnvRootsCond = sync.NewCond(&d.activeEnvRootsMu)
 	d.activeStoresCond = sync.NewCond(&d.activeStoresMu)
