@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
+	"github.com/multica-ai/multica/server/internal/util"
 )
 
 // HealthResponse is returned by the daemon's local health endpoint.
@@ -282,26 +283,32 @@ func (d *Daemon) writeRepoCheckoutAuthError(w http.ResponseWriter, result repoCh
 	http.Error(w, message, http.StatusUnauthorized)
 }
 
+// authorizeRepoCheckoutWorkDir proves the requested checkout directory lies
+// inside the active task's workdir and returns its resolved form. Both sides
+// are resolved the way the kernel opens them — util.ResolveSymlinks, not
+// filepath.EvalSymlinks, which on Windows cannot pass through a directory
+// junction: a workspaces root moved to another drive and left behind as a
+// junction made every checkout fail here (#8946). Any path that cannot be
+// resolved is refused; the error says which side and why, because the caller
+// surfaces it instead of a bare "not owned".
 func authorizeRepoCheckoutWorkDir(activeRoot, requested string) (string, error) {
 	root, err := filepath.Abs(activeRoot)
-	if err != nil {
-		return "", err
+	if err == nil {
+		root, err = util.ResolveSymlinks(root)
 	}
-	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve active task workdir: %w", err)
 	}
 	workdir, err := filepath.Abs(requested)
-	if err != nil {
-		return "", err
+	if err == nil {
+		workdir, err = util.ResolveSymlinks(workdir)
 	}
-	workdir, err = filepath.EvalSymlinks(workdir)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve requested workdir: %w", err)
 	}
 	rel, err := filepath.Rel(root, workdir)
 	if err != nil || !filepath.IsLocal(rel) {
-		return "", errors.New("workdir is outside the active task workdir")
+		return "", fmt.Errorf("%s is outside the active task workdir %s", workdir, root)
 	}
 	return workdir, nil
 }
@@ -459,12 +466,10 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 			http.Error(w, "repo checkout task context does not match the active task", http.StatusForbidden)
 			return
 		}
-		// A reference checkout never lands in a caller-supplied directory: its
-		// path is derived server-side under the daemon's own .refs area, so
-		// there is no workdir to authorize. Task-token binding above is what
-		// authenticates the request; the workdir containment check exists only
-		// for the task-workdir mode.
 		if req.Reference {
+			// Reference checkouts land in a daemon-derived .refs path, so there
+			// is no caller-supplied workdir to authorize. The task token above
+			// still binds the request to the active task.
 			req.WorkDir = ""
 		} else {
 			if req.WorkDir == "" {
@@ -473,7 +478,14 @@ func (d *Daemon) repoCheckoutHandler() http.HandlerFunc {
 			}
 			authorizedWorkDir, authErr := authorizeRepoCheckoutWorkDir(activeTask.WorkDir, req.WorkDir)
 			if authErr != nil {
-				http.Error(w, "repo checkout workdir is not owned by the active task", http.StatusForbidden)
+				// Include the reason in the response and daemon log. Both paths
+				// come from the requesting task, which can already read them.
+				d.logger.Warn("repo checkout rejected",
+					"reason", "workdir_not_owned",
+					"task_id", activeTask.TaskID,
+					"error", authErr,
+				)
+				http.Error(w, "repo checkout workdir is not owned by the active task: "+authErr.Error(), http.StatusForbidden)
 				return
 			}
 			req.WorkDir = authorizedWorkDir
