@@ -222,6 +222,8 @@ func sk(t, id string) scopeKey { return scopeKey{Type: t, ID: id} }
 // Client represents a single WebSocket connection with identity and the set
 // of scopes it is currently subscribed to.
 type Client struct {
+	filesNonce  string // Guarded by hub.filesMu.
+	filesClosed bool   // Guarded by hub.filesMu.
 	hub         *Hub
 	conn        *websocket.Conn
 	send        chan []byte
@@ -285,6 +287,8 @@ type SubscriptionCallback func(scopeType, scopeID string)
 
 // Hub manages WebSocket connections organized into scope-based rooms.
 type Hub struct {
+	filesMu        sync.Mutex
+	files          *workspaceFilesState
 	rooms          map[scopeKey]map[*Client]bool
 	clients        map[*Client]bool // every connected client (used by global Broadcast and snapshots)
 	broadcast      chan []byte
@@ -312,6 +316,7 @@ type Hub struct {
 // NewHub creates a new Hub instance.
 func NewHub() *Hub {
 	return &Hub{
+		files:          newWorkspaceFilesState(),
 		rooms:          make(map[scopeKey]map[*Client]bool),
 		clients:        make(map[*Client]bool),
 		broadcast:      make(chan []byte),
@@ -341,8 +346,12 @@ func (h *Hub) SetSubscriptionCallbacks(onFirst, onLast SubscriptionCallback) {
 
 // Run starts the hub event loop.
 func (h *Hub) Run() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 	for {
 		select {
+		case <-ticker.C:
+			h.sweepWorkspaceFiles()
 		case client := <-h.register:
 			h.mu.Lock()
 			h.clients[client] = true
@@ -401,6 +410,7 @@ func (h *Hub) removeClient(client *Client) {
 	// Terminal scopes die with the connection: kill every session the client
 	// opened so none leak (MAX-51 M3).
 	h.terminalClientGone(client)
+	h.workspaceFilesClientGone(client)
 	for _, key := range emptied {
 		M.DecRoom(key.Type)
 	}
@@ -677,6 +687,7 @@ func (h *Hub) evictSlow(slow []*Client) {
 		M.DisconnectsTotal.Add(int64(evicted))
 	}
 	for _, c := range slow {
+		h.workspaceFilesClientGone(c)
 		if c.evictedTerminal {
 			continue
 		}
@@ -986,6 +997,8 @@ func (c *Client) handleFrame(raw []byte) {
 		} else {
 			c.handleUnsubscribe(p.Scope, p.ID)
 		}
+	case protocol.EventWorkspaceFilesResources, protocol.EventWorkspaceFilesList, protocol.EventWorkspaceFilesRead, protocol.EventWorkspaceFilesCancel:
+		c.handleWorkspaceFilesClientFrame(f.Type, f.Payload)
 	case protocol.EventTerminalOpen,
 		protocol.EventTerminalInput,
 		protocol.EventTerminalResize,
