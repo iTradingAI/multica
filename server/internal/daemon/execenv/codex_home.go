@@ -90,6 +90,12 @@ type CodexHomeOptions struct {
 	// override that never lands in config.toml. See resolveWindowsSandboxState
 	// and MUL-4957.
 	CodexCustomArgs []string
+	// WindowsSandboxPin is the daemon-level codex_windows_sandbox policy.
+	// Inherit (zero) keeps the signal-based decision; an explicit pin is
+	// applied after the signals are folded and neutralizes the user-level
+	// windows.sandbox key in the copied config first. Windows only. See
+	// codex_windows_sandbox_pin.go.
+	WindowsSandboxPin WindowsSandboxPin
 }
 
 // prepareCodexHome is a thin wrapper around prepareCodexHomeWithOpts kept for
@@ -283,7 +289,17 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 	configFile := filepath.Join(codexHome, "config.toml")
 	winState := windowsSandboxAbsent
 	if resolveGOOS(opts.GOOS) == "windows" {
-		winState = resolveWindowsSandboxState(configFile, configSyncErr, statSharedCodexConfig(sharedHome), opts.CodexCustomArgs, logger)
+		// An explicit pin neutralizes the user-level key in the per-task copy
+		// BEFORE the signals are read, so what Codex loads on disk agrees with
+		// the policy the daemon is about to write into the managed block — a
+		// desktop rewrite of the shared config must not survive into the task.
+		if opts.WindowsSandboxPin.Explicit() {
+			if err := stripWindowsSandboxKey(configFile, logger); err != nil {
+				return fmt.Errorf("apply codex_windows_sandbox pin: %w", err)
+			}
+		}
+		folded := resolveWindowsSandboxState(configFile, configSyncErr, statSharedCodexConfig(sharedHome), opts.CodexCustomArgs, logger)
+		winState = applyWindowsSandboxPin(opts.WindowsSandboxPin, folded, logger)
 	}
 	policy := codexSandboxPolicyForConfig(opts.GOOS, opts.CodexVersion, winState)
 	if err := ensureCodexSandboxConfig(configFile, policy, opts.CodexVersion, logger); err != nil {

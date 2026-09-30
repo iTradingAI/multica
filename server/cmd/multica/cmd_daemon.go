@@ -22,6 +22,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon"
+	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	logger_pkg "github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -104,6 +105,7 @@ func init() {
 	f.Duration("agent-timeout", 0, "Absolute per-run wall-clock cap; 0 = no cap, rely on the watchdogs (env: MULTICA_AGENT_TIMEOUT)")
 	f.Duration("codex-semantic-inactivity-timeout", 0, "Codex semantic inactivity timeout (env: MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT)")
 	f.Duration("codex-handshake-timeout", 0, "Codex app-server startup RPC timeout (env: MULTICA_CODEX_HANDSHAKE_TIMEOUT)")
+	f.String("codex-windows-sandbox", "", "Pin the Codex native Windows sandbox policy for daemon tasks: off, inherit, unelevated, or elevated (env: MULTICA_CODEX_WINDOWS_SANDBOX; config: codex_windows_sandbox)")
 	f.Int("max-concurrent-tasks", 0, "Maximum concurrent runs (env: MULTICA_DAEMON_MAX_CONCURRENT_TASKS)")
 	f.Bool("no-auto-update", false, "Disable periodic CLI self-update (env: MULTICA_DAEMON_AUTO_UPDATE=false)")
 	f.Duration("auto-update-interval", 0, "How often to poll GitHub for a newer release (env: MULTICA_DAEMON_AUTO_UPDATE_INTERVAL)")
@@ -127,6 +129,7 @@ func init() {
 	rf.Duration("agent-timeout", 0, "Absolute per-run wall-clock cap; 0 = no cap, rely on the watchdogs (env: MULTICA_AGENT_TIMEOUT)")
 	rf.Duration("codex-semantic-inactivity-timeout", 0, "Codex semantic inactivity timeout (env: MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT)")
 	rf.Duration("codex-handshake-timeout", 0, "Codex app-server startup RPC timeout (env: MULTICA_CODEX_HANDSHAKE_TIMEOUT)")
+	rf.String("codex-windows-sandbox", "", "Pin the Codex native Windows sandbox policy for daemon tasks: off, inherit, unelevated, or elevated (env: MULTICA_CODEX_WINDOWS_SANDBOX; config: codex_windows_sandbox)")
 	rf.Int("max-concurrent-tasks", 0, "Maximum concurrent runs (env: MULTICA_DAEMON_MAX_CONCURRENT_TASKS)")
 	rf.Bool("no-auto-update", false, "Disable periodic CLI self-update (env: MULTICA_DAEMON_AUTO_UPDATE=false)")
 	rf.Duration("auto-update-interval", 0, "How often to poll GitHub for a newer release (env: MULTICA_DAEMON_AUTO_UPDATE_INTERVAL)")
@@ -889,6 +892,9 @@ func buildDaemonStartArgs(cmd *cobra.Command) []string {
 	if d, _ := cmd.Flags().GetDuration("codex-handshake-timeout"); d > 0 {
 		args = append(args, "--codex-handshake-timeout", d.String())
 	}
+	if s, _ := cmd.Flags().GetString("codex-windows-sandbox"); strings.TrimSpace(s) != "" {
+		args = append(args, "--codex-windows-sandbox", s)
+	}
 	if n, _ := cmd.Flags().GetInt("max-concurrent-tasks"); n > 0 {
 		args = append(args, "--max-concurrent-tasks", strconv.Itoa(n))
 	}
@@ -1036,6 +1042,17 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	}
 	if handshakeOverride > 0 {
 		overrides.CodexHandshakeTimeout = handshakeOverride
+	}
+	// codex_windows_sandbox resolves through the same flag > env > config
+	// split: env is left for daemon.LoadConfig (see resolveDaemonStringOverride),
+	// and an explicit flag/config value is validated here so a typo fails the
+	// start command instead of the daemon's first codex task.
+	sandboxPinFlag, _ := cmd.Flags().GetString("codex-windows-sandbox")
+	if sandboxPin := resolveDaemonStringOverride(sandboxPinFlag, "MULTICA_CODEX_WINDOWS_SANDBOX", fileCfg.CodexWindowsSandbox); sandboxPin != "" {
+		if _, err := execenv.ParseWindowsSandboxPin(sandboxPin); err != nil {
+			return err
+		}
+		overrides.CodexWindowsSandbox = sandboxPin
 	}
 	maxFlag, _ := cmd.Flags().GetInt("max-concurrent-tasks")
 	if n := resolveDaemonIntOverride(maxFlag, "MULTICA_DAEMON_MAX_CONCURRENT_TASKS", fileCfg.MaxConcurrentTasks); n > 0 {

@@ -357,7 +357,12 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		}
 		// Internal protocol failures cancel the process to unblock its pipes.
 		// Preserve the actual failure instead of reporting a user cancellation.
-		if supplements != nil && writeErr != nil && ctx.Err() == nil && terminalReasonError == "" && !errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		// MAX-207: a write failure observed only after cmd.Wait() returned is
+		// routinely a trailing write racing process exit ("file already
+		// closed") on a CLI that exits 1 AFTER delivering its result. Once the
+		// result event was seen, the pipe error carries no failure signal —
+		// only promote it when the stream never reached a result.
+		if supplements != nil && writeErr != nil && ctx.Err() == nil && terminalReasonError == "" && !sawResult && !errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			terminalReasonError = fmt.Sprintf("claude input/control protocol failed: %v", writeErr)
 		}
 
@@ -400,6 +405,15 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		// task's error field, which is the only place users see it.
 		stderrTail := stderrBuf.Tail()
 		if finalError != "" {
+			// A startup model rejection reads as a bare pipe failure
+			// ("write |1: file already closed") that names neither the
+			// model nor a remedy; swap in actionable copy that keeps
+			// both classification witnesses so the persisted error still
+			// routes to agent_error.provider_model_rejected and the
+			// platform's auto-retry applies.
+			if replacement := claudeStartupModelRejection(opts.Model, finalError, eventCount, stderrTail); replacement != "" {
+				finalError = replacement
+			}
 			finalError = withAgentStderr(finalError, "claude", stderrTail)
 		}
 		logStreamProtocolObservation(b.cfg.Logger, streamProtocolObservation{
@@ -457,6 +471,34 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		session.SupplementReady = supplements.ready
 	}
 	return session, nil
+}
+
+// claudeStartupModelRejection rewrites the failure text for a claude run
+// the CLI killed at startup by rejecting the model id. The raw error at that
+// point is the pipe-level "claude input/control protocol failed: write |1:
+// file already closed", which names neither the model nor a remedy. The
+// rewritten text keeps the original error (and the unrecognized_model marker
+// arrives via the stderr tail withAgentStderr appends), so
+// taskfailure.Classify still routes the persisted error to
+// agent_error.provider_model_rejected and the auto-retry applies. Empty when
+// the shape does not match — in particular when the run produced stream
+// events, since the marker alone also appears on healthy router/proxy runs
+// whose custom endpoint serves the id.
+func claudeStartupModelRejection(model, finalError string, eventCount int, stderrTail string) string {
+	if finalError == "" || eventCount > 0 {
+		return ""
+	}
+	if !taskfailure.ClaudeStartupModelRejected(finalError + "\n" + stderrTail) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"claude rejected model %q at startup (claude-code:unrecognized_model): "+
+			"Claude Code accepts a non-Anthropic model id only when a custom endpoint exposes both "+
+			"ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN to the CLI - via the user's "+
+			"~/.claude/settings.json env block or the agent's custom env. The run produced no stream "+
+			"events, so the platform retries it; if the retry fails the same way, make that pair "+
+			"visible to the Claude CLI on this runtime. Original error: %s",
+		model, finalError)
 }
 
 func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message, usage map[string]TokenUsage, seenUsage map[string]struct{}) assistantTurn {

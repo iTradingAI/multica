@@ -119,6 +119,16 @@ type CLIConfig struct {
 	// DefaultCodexHandshakeTimeout.
 	CodexHandshakeTimeout string `json:"codex_handshake_timeout,omitempty"`
 
+	// CodexWindowsSandbox pins the daemon's Codex native Windows sandbox
+	// policy: "off", "inherit", "unelevated", or "elevated"; empty means not
+	// set (= inherit). The pin overrides the per-task signals (the user's
+	// ~/.codex/config.toml windows.sandbox key and `-c windows.sandbox=...`
+	// args), so a Codex Desktop rewrite of that file can no longer flip daemon
+	// tasks between sandbox tiers. Resolution precedence:
+	// --codex-windows-sandbox flag, MULTICA_CODEX_WINDOWS_SANDBOX env, this
+	// field, inherit default. Windows-only in effect.
+	CodexWindowsSandbox string `json:"codex_windows_sandbox,omitempty"`
+
 	// DisableAutoUpdate, when true, turns off the daemon's periodic CLI
 	// self-update poll. Only a single direction is persistable — the
 	// --no-auto-update flag is likewise one-way — because the env/default

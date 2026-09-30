@@ -336,3 +336,56 @@ printf '%s\n' '{"type":"user","message":{"role":"user","content":[{"type":"tool_
 		}
 	}
 }
+
+// MAX-207 regression: Claude Code ~2.1.28x sometimes exits 1 AFTER delivering
+// its result (~1 run in 10 on glm endpoints), and the trailing input/control
+// write racing process exit surfaces as "file already closed". Both are
+// teardown noise once a non-error result event was seen — the run must stay
+// completed with its delivered output, not failed into the
+// provider_model_rejected classifier (whose stderr marker every healthy glm
+// run prints anyway).
+func TestFinalizeStreamResultDeliveredResultSurvivesExit1AndTrailingWriteFailure(t *testing.T) {
+	t.Parallel()
+
+	exitErr := fmt.Errorf("exit status 1")
+	writeErr := fmt.Errorf("write |1: file already closed")
+
+	status, output, errMsg := finalizeStreamResult(
+		"claude",
+		15*time.Minute,
+		nil,
+		writeErr,
+		exitErr,
+		"session-1",
+		streamTerminalState{
+			lastAssistantText: "final brief text",
+			finalResultText:   "the delivered brief",
+			sawResult:         true,
+			resultIsError:     false,
+		},
+		"",
+	)
+	if status != "completed" || errMsg != "" {
+		t.Fatalf("finalizeStreamResult(delivered, exit 1, trailing write failure) = (%q, %q, %q), want completed without error", status, output, errMsg)
+	}
+	if output != "the delivered brief" {
+		t.Fatalf("output = %q, want the delivered result text", output)
+	}
+
+	// Without a delivered result the same exit error must still fail the run:
+	// the fail-closed contract for streams that never reached a result event
+	// is unchanged.
+	status, output, errMsg = finalizeStreamResult(
+		"claude",
+		15*time.Minute,
+		nil,
+		writeErr,
+		exitErr,
+		"",
+		streamTerminalState{},
+		"",
+	)
+	if status != "failed" || output != "" || errMsg == "" {
+		t.Fatalf("finalizeStreamResult(no result, exit 1, write failure) = (%q, %q, %q), want failed", status, output, errMsg)
+	}
+}
