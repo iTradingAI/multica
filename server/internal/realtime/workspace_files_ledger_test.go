@@ -205,7 +205,18 @@ func TestWorkspaceFilesLedgerEightRows(t *testing.T) {
 			t.Fatal("principal victim/counters")
 		}
 		filesAssertLedger(t, s)
-		filesLedgerCloseAll(t, s)
+		filesLedgerCloseAll(t, s, old.owner, c)
+	})
+	t.Run("row2 reserve class transfers sockets", func(t *testing.T) {
+		s, cs := filesLedgerFixture(t, 512)
+		old := filesOldest(&s.principals[filesKey(cs[30])].order)
+		c := &Client{userID: cs[30].userID, workspaceID: "ws"}
+		x := filesLedgerTerminal(t, s, c)
+		if x.class != filesReserve || s.sockets[old.owner].order.Len() != 255 || s.sockets[c].order.Len() != 1 || s.principals[filesKey(c)].order.Len() != 512 || s.incumbent != 7680 || s.reserve != 512 {
+			t.Fatal("principal reserve inheritance")
+		}
+		filesAssertLedger(t, s)
+		filesLedgerCloseAll(t, s, old.owner, c)
 	})
 	for _, removed := range []int{0, 1, 512} {
 		t.Run(fmt.Sprintf("row7 actual global minus %d", removed), func(t *testing.T) {
@@ -219,7 +230,7 @@ func TestWorkspaceFilesLedgerEightRows(t *testing.T) {
 				t.Fatal("row7 must preserve actual global")
 			}
 			filesAssertLedger(t, s)
-			filesLedgerCloseAll(t, s)
+			filesLedgerCloseAll(t, s, old.owner, c)
 		})
 	}
 	t.Run("row5 reserve owner at full reserve", func(t *testing.T) {
@@ -233,7 +244,7 @@ func TestWorkspaceFilesLedgerEightRows(t *testing.T) {
 			t.Fatal("row5")
 		}
 		filesAssertLedger(t, s)
-		filesLedgerCloseAll(t, s)
+		filesLedgerCloseAll(t, s, old.owner, c)
 	})
 	t.Run("row8 incumbent self victim", func(t *testing.T) {
 		s, cs := filesLedgerFixture(t, 512)
@@ -245,14 +256,14 @@ func TestWorkspaceFilesLedgerEightRows(t *testing.T) {
 			t.Fatal("row8")
 		}
 		filesAssertLedger(t, s)
-		filesLedgerCloseAll(t, s)
+		filesLedgerCloseAll(t, s, old.owner, c)
 	})
 }
-func filesLedgerCloseAll(t *testing.T, s *workspaceFilesState) {
+func filesLedgerCloseAll(t *testing.T, s *workspaceFilesState, first ...*Client) {
 	t.Helper()
 	h := NewHub()
 	h.files = s
-	cs := []*Client{}
+	cs := append([]*Client{}, first...)
 	for c := range s.sockets {
 		cs = append(cs, c)
 	}
