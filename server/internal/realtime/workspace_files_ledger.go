@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,7 +91,9 @@ type workspaceFilesState struct {
 func newWorkspaceFilesState() *workspaceFilesState {
 	return &workspaceFilesState{now: time.Now, newID: func() string { return uuid.NewString() }, sockets: map[*Client]*filesSocket{}, principals: map[filesPrincipalKey]*filesPrincipal{}, reserveOwners: map[filesPrincipalKey]*filesPrincipal{}, users: map[string]*filesCounts{}, workspaces: map[string]*filesCounts{}, routes: map[protocol.WorkspaceFilesGeneration]*filesRecord{}}
 }
-func filesKey(c *Client) filesPrincipalKey { return filesPrincipalKey{c.userID, c.workspaceID} }
+func filesKey(c *Client) filesPrincipalKey {
+	return filesPrincipalKey{strings.ToLower(c.userID), strings.ToLower(c.workspaceID)}
+}
 func (s *workspaceFilesState) principal(c *Client) *filesPrincipal {
 	key := filesKey(c)
 	p := s.principals[key]
@@ -120,7 +123,7 @@ func (s *workspaceFilesState) prune(c *Client) {
 	for _, x := range []struct {
 		m   map[string]*filesCounts
 		key string
-	}{{s.users, c.userID}, {s.workspaces, c.workspaceID}} {
+	}{{s.users, filesKey(c).user}, {s.workspaces, filesKey(c).workspace}} {
 		if v := x.m[x.key]; v != nil && v.active == 0 && v.terminal == 0 {
 			delete(x.m, x.key)
 		}
@@ -149,8 +152,8 @@ func (s *workspaceFilesState) removeTombstone(t *filesTombstone) {
 		s.incumbent--
 	}
 	s.terminal.Remove(t.global)
-	s.users[t.owner.userID].terminal--
-	s.workspaces[t.owner.workspaceID].terminal--
+	s.users[filesKey(t.owner).user].terminal--
+	s.workspaces[filesKey(t.owner).workspace].terminal--
 	s.prune(t.owner)
 }
 func (s *workspaceFilesState) sweep(now time.Time) {
@@ -265,8 +268,8 @@ func (s *workspaceFilesState) addTombstone(r *filesRecord) {
 		t.classified = p.incumbent.PushBack(t)
 		s.incumbent++
 	}
-	filesCounter(s.users, r.owner.userID).terminal++
-	filesCounter(s.workspaces, r.owner.workspaceID).terminal++
+	filesCounter(s.users, filesKey(r.owner).user).terminal++
+	filesCounter(s.workspaces, filesKey(r.owner).workspace).terminal++
 }
 func (s *workspaceFilesState) contains(r *filesRecord) bool {
 	sock := s.sockets[r.owner]
@@ -288,10 +291,10 @@ func (s *workspaceFilesState) accept(c *Client, event string, req protocol.Works
 		pa = p.active
 	}
 	ua, wa := 0, 0
-	if n := s.users[c.userID]; n != nil {
+	if n := s.users[filesKey(c).user]; n != nil {
 		ua = n.active
 	}
-	if n := s.workspaces[c.workspaceID]; n != nil {
+	if n := s.workspaces[filesKey(c).workspace]; n != nil {
 		wa = n.active
 	}
 	if active >= filesSocketActive || pa >= filesPrincipalActive || ua >= filesUserActive || wa >= filesWorkspaceActive || s.active >= filesGlobalActive {
@@ -312,8 +315,8 @@ func (s *workspaceFilesState) accept(c *Client, event string, req protocol.Works
 	r := &filesRecord{owner: c, nonce: c.filesNonce, generation: s.generation, request: req, event: event, snapshot: snap, auth: s.auth, relay: s.relay, ctx: ctx, cancel: cancel}
 	sock.active[req.ClientReqID] = r
 	s.principal(c).active++
-	filesCounter(s.users, c.userID).active++
-	filesCounter(s.workspaces, c.workspaceID).active++
+	filesCounter(s.users, filesKey(c).user).active++
+	filesCounter(s.workspaces, filesKey(c).workspace).active++
 	s.active++
 	return r, ""
 }
@@ -326,8 +329,8 @@ func (s *workspaceFilesState) retire(r *filesRecord, remember bool) bool {
 		delete(s.routes, r.target.Generation)
 	}
 	s.principals[filesKey(r.owner)].active--
-	s.users[r.owner.userID].active--
-	s.workspaces[r.owner.workspaceID].active--
+	s.users[filesKey(r.owner).user].active--
+	s.workspaces[filesKey(r.owner).workspace].active--
 	s.active--
 	if r.timer != nil {
 		r.timer.Stop()

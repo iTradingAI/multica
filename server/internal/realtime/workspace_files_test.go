@@ -498,3 +498,20 @@ func TestWorkspaceFilesDefaultGateAndBrowserDispatch(t *testing.T) {
 		t.Fatal("disabled gate reached daemon")
 	}
 }
+
+func TestWorkspaceFilesUsesCanonicalAuthorizedWorkspace(t *testing.T) {
+	h, c, a, relay := filesTestHub(t)
+	c.workspaceID = strings.ToUpper(c.workspaceID)
+	id := uuid.NewString()
+	filesReadRequest(c, a.snapshot, id)
+	r := filesRecordFor(t, h, c, id)
+	if r.target.WorkspaceID != a.snapshot.WorkspaceID || r.target.WorkspaceID != strings.ToLower(c.workspaceID) {
+		t.Fatal("URL UUID casing changed daemon workspace route")
+	}
+	filesChunk(h, r, 0, true)
+	filesMessage(t, c)
+	if relay.sent(protocol.EventWorkspaceFilesRead) != 1 {
+		t.Fatal("request did not reach canonical target")
+	}
+	filesAssertLedger(t, h.files)
+}

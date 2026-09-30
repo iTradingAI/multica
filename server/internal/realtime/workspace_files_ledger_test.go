@@ -3,6 +3,7 @@ package realtime
 import (
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,10 +36,10 @@ func filesAssertLedger(t *testing.T, s *workspaceFilesState) {
 			inc++
 		}
 		principalTotals[filesKey(x.owner)]++
-		u, w := userTotals[x.owner.userID], wsTotals[x.owner.workspaceID]
+		u, w := userTotals[filesKey(x.owner).user], wsTotals[filesKey(x.owner).workspace]
 		u.terminal++
 		w.terminal++
-		userTotals[x.owner.userID], wsTotals[x.owner.workspaceID] = u, w
+		userTotals[filesKey(x.owner).user], wsTotals[filesKey(x.owner).workspace] = u, w
 	}
 	for c, sock := range s.sockets {
 		if sock.order.Len() != len(sock.terminal) || sock.order.Len() > 256 || len(sock.active) > 16 || len(sock.terminal)+len(sock.active) == 0 {
@@ -55,10 +56,10 @@ func filesAssertLedger(t *testing.T, s *workspaceFilesState) {
 				t.Fatal("active owner")
 			}
 			active++
-			u, w := userTotals[c.userID], wsTotals[c.workspaceID]
+			u, w := userTotals[filesKey(c).user], wsTotals[filesKey(c).workspace]
 			u.active++
 			w.active++
-			userTotals[c.userID], wsTotals[c.workspaceID] = u, w
+			userTotals[filesKey(c).user], wsTotals[filesKey(c).workspace] = u, w
 		}
 	}
 	for k, p := range s.principals {
@@ -116,6 +117,37 @@ func filesAssertLedger(t *testing.T, s *workspaceFilesState) {
 			t.Fatal("stale route")
 		}
 	}
+}
+
+func TestWorkspaceFilesLedgerCanonicalIdentityQuotas(t *testing.T) {
+	s := newWorkspaceFilesState()
+	user, workspace := uuid.NewString(), uuid.NewString()
+	records := []*filesRecord{}
+	for i := 0; i < 64; i++ {
+		u, w := user, workspace
+		if i%2 == 0 {
+			u, w = strings.ToUpper(u), strings.ToUpper(w)
+		}
+		c := &Client{userID: u, workspaceID: w}
+		r, code := s.accept(c, "read", protocol.WorkspaceFilesRequest{ClientReqID: uuid.NewString()}, WorkspaceFilesSnapshot{})
+		if code != "" {
+			t.Fatal(code)
+		}
+		records = append(records, r)
+	}
+	c := &Client{userID: user, workspaceID: strings.ToUpper(workspace)}
+	if r, code := s.accept(c, "read", protocol.WorkspaceFilesRequest{ClientReqID: uuid.NewString()}, WorkspaceFilesSnapshot{}); r != nil || code != "busy" {
+		t.Fatal("UUID casing bypassed principal quota")
+	}
+	if len(s.principals) != 1 || len(s.users) != 1 || len(s.workspaces) != 1 {
+		t.Fatal("canonical owners split")
+	}
+	filesAssertLedger(t, s)
+	for _, r := range records {
+		s.retire(r, true)
+	}
+	filesAssertLedger(t, s)
+	filesLedgerCloseAll(t, s)
 }
 func filesLedgerTerminal(t *testing.T, s *workspaceFilesState, c *Client) *filesTombstone {
 	t.Helper()

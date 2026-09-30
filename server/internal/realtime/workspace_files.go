@@ -157,7 +157,7 @@ func (c *Client) handleWorkspaceFilesClientFrame(event string, raw json.RawMessa
 	}
 	var target *protocol.WorkspaceFilesTarget
 	if event != protocol.EventWorkspaceFilesResources {
-		target, code = h.files.relay.SelectWorkspaceFilesTarget(snapshot.DaemonID, c.workspaceID, h.files.newID())
+		target, code = h.files.relay.SelectWorkspaceFilesTarget(snapshot.DaemonID, snapshot.WorkspaceID, h.files.newID())
 		if code != "" {
 			h.filesErrorLocked(c, req.ClientReqID, snapshot.ResourceID, filesRouteCode(code))
 			return
