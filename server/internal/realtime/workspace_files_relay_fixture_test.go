@@ -352,7 +352,7 @@ func newRelayEvidenceEnv(t *testing.T, n int) *relayEvidenceEnv {
 		p.issue = e.db.f.Insert(t, "issue", testutil.Cols{"workspace_id": ws, "project_id": p.project})
 		ref, _ := json.Marshal(map[string]string{"daemon_id": e.db.daemon, "local_path": p.root})
 		p.resource = e.db.f.Insert(t, "project_resource", testutil.Cols{"workspace_id": ws, "project_id": p.project, "resource_type": "local_directory", "resource_ref": ref, "label": p.root, "position": 1})
-		e.auth.tokens["fixture-"+u] = u
+		e.auth.tokens["mul_fixture_"+u] = u
 		e.principals = append(e.principals, p)
 		e.roots = append(e.roots, p.root)
 	}
@@ -525,7 +525,7 @@ func (e *relayEvidenceEnv) open(p *relayEvidencePrincipal) *relayEvidenceBrowser
 			b.frames <- m
 		}
 	}()
-	b.send(t, "auth", map[string]string{"token": "fixture-" + p.user})
+	b.send(t, "auth", map[string]string{"token": "mul_fixture_" + p.user})
 	if b.next(t).Type != "auth_ack" {
 		t.Fatal("fixture browser auth failed")
 	}
