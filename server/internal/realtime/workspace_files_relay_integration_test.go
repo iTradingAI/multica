@@ -89,6 +89,9 @@ func TestWorkspaceFilesRelayEvidenceE01(t *testing.T) {
 				t.Fatal("B was not accepted independently of A limit")
 			}
 			w.barrier(t)
+			if w.requestsCount() != before+1 {
+				t.Fatal("rejected A request appeared before B on the daemon wire")
+			}
 			e.observe("A-busy-zero-forward-B-native-EOF-" + level)
 			e.close()
 		})

@@ -579,6 +579,9 @@ func (e *relayEvidenceEnv) error(b *relayEvidenceBrowser, id, code string) {
 func (e *relayEvidenceEnv) chunk(b *relayEvidenceBrowser, id string, seq int) protocol.WorkspaceFilesClientReadChunkPayload {
 	m := b.next(e.t)
 	e.safe(m)
+	if seq == 0 && strings.Contains(e.t.Name(), "RelayEvidenceE02") {
+		e.t.Logf("SAFE_BROWSER_FRAME %s", mustRelayEvidenceJSON(m))
+	}
 	var p protocol.WorkspaceFilesClientReadChunkPayload
 	if m.Type != protocol.EventWorkspaceFilesReadChunk || json.Unmarshal(m.Payload, &p) != nil || p.ClientReqID != id || p.Seq != seq {
 		e.t.Fatal("unexpected browser content frame")
