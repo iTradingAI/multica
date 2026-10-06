@@ -147,6 +147,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
+	var terminalObserved atomic.Bool
 
 	// procDone closes once cmd.Wait() returns, letting the cancellation handler
 	// skip a process that already exited and avoid signalling a dead/reused pid.
@@ -278,6 +279,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 				trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
 			case "result":
 				sawResult = true
+				terminalObserved.Store(true)
 				finalResultText = msg.ResultText
 				resultIsError = msg.IsError
 				terminalReasonError = claudeTerminalReasonFailure(msg.TerminalReason, msg.ResultText)
@@ -465,7 +467,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		}
 	}()
 
-	session := &Session{Messages: msgCh, Result: resCh}
+	session := &Session{Messages: msgCh, Result: resCh, TerminalObserved: terminalObserved.Load}
 	if supplements != nil {
 		session.Supplement = supplements.supplement
 		session.SupplementReady = supplements.ready

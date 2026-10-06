@@ -71,7 +71,8 @@ func ClaudeStartupModelRejected(errText string) bool {
 }
 
 // Classify maps a free-form error string from the agent runtime / CLI
-// to one of the 15 agent_error.* sub-reasons. Always returns a valid
+// to an agent_error.* sub-reason, or ReasonCancelled for an explicit stop.
+// Always returns a valid
 // Reason; falls back to ReasonAgentUnknown when no rule matches and for
 // empty input.
 //
@@ -322,6 +323,13 @@ func Classify(rawError string) Reason {
 	//     next dispatch).
 	case ClaudeStartupModelRejected(lower):
 		return ReasonAgentProviderModelRejected
+
+	// A known cancellation header outranks generic process-exit noise caused
+	// by terminating that process. Specific provider errors above still win.
+	case lower == "execution cancelled", strings.HasPrefix(lower, "execution cancelled; "),
+		lower == "task cancelled by server",
+		lower == "task cancelled by upstream context (server cancel or daemon shutdown)":
+		return ReasonCancelled
 
 	// 14. Agent / runner process-level failure. Checked last among
 	//     specific rules because "exit status" / "signal" can co-occur
@@ -631,6 +639,15 @@ func NormalizeDaemonReason(reason, rawError string) Reason {
 	// the observed trigger).
 	if legacyClaudeModelRejectedReasons[reason] && ClaudeStartupModelRejected(rawError) {
 		return ReasonAgentProviderModelRejected
+	}
+	// Upgrade legacy cancellation and stderr-backed catchalls at the write
+	// boundary. Without a runtime witness, keep the existing label. Historical
+	// rows and explicit platform reasons (including runtime_recovery) are untouched.
+	if reason == "agent_error" || reason == string(ReasonAgentUnknown) {
+		classified := Classify(rawError)
+		if classified == ReasonCancelled || (strings.Contains(lowerError, " stderr: ") && classified != ReasonAgentUnknown) {
+			return classified
+		}
 	}
 	return Reason(reason)
 }

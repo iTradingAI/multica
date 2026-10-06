@@ -128,21 +128,22 @@ func finalizeStreamResult(
 
 	// delivered: the stream reached a terminal result event that was not an
 	// error. Past that point the protocol's answer exists; a trailing write
-	// error or a non-zero exit code observed after cmd.Wait() is noise from
+	// error, cancelled cleanup context, stdout-close error or non-zero exit
+	// code observed after cmd.Wait() is noise from
 	// process teardown (Claude Code ~2.1.28x exits 1 after delivering its
 	// result in roughly 1 run in 10, MAX-207), not a failure signal. Only
 	// runs without a delivered result keep the fail-closed read of exitErr /
 	// writeErr below.
-	delivered := state.sawResult && !state.resultIsError
+	delivered := state.sawResult && !state.resultIsError && state.terminalReasonError == ""
 
 	switch {
-	case status == "completed" && errors.Is(runErr, context.DeadlineExceeded):
+	case status == "completed" && !delivered && errors.Is(runErr, context.DeadlineExceeded):
 		status = "timeout"
 		errMsg = fmt.Sprintf("%s timed out after %s", provider, timeout)
-	case status == "completed" && errors.Is(runErr, context.Canceled):
+	case status == "completed" && !delivered && errors.Is(runErr, context.Canceled):
 		status = "aborted"
 		errMsg = "execution cancelled"
-	case state.scanErr != nil && status == "completed":
+	case state.scanErr != nil && !delivered && status == "completed":
 		status = "failed"
 		errMsg = fmt.Sprintf("%s stdout read error: %v", provider, state.scanErr)
 	case writeErr != nil && !delivered && status == "completed" && sessionID == "":

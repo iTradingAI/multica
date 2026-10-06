@@ -5078,7 +5078,7 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 		// held, then reanchor the next direct head. Otherwise the successor could
 		// be claimed between the status flip and this row, placing its user input
 		// before the failure it follows.
-		if t.ChatSessionID.Valid && retried == nil {
+		if t.Status == "failed" && t.ChatSessionID.Valid && retried == nil {
 			// This turn is dead, so anything it owned has to move on. An adopted
 			// onboarding kickoff would otherwise stay bound to a task that will
 			// never run again: the next turn would reach Mika with no onboarding
@@ -5133,6 +5133,17 @@ func (s *TaskService) FailTaskWithTransition(ctx context.Context, taskID pgtype.
 			)
 		}
 		return nil, false, fmt.Errorf("fail task: %w", err)
+	}
+
+	if task.Status == "cancelled" {
+		// A runtime stop may arrive through /fail before the cancellation poll
+		// observes it. Preserve the terminal metadata above, but do not create
+		// failure comments, delegated recovery inputs, or member notifications.
+		s.captureTaskCancelled(ctx, task)
+		s.finalizeCancelledChatMessage(ctx, task, CancelTaskOptions{ClientSupportsDraftRestore: true})
+		s.ReconcileAgentStatus(ctx, task.AgentID)
+		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, task)
+		return &task, true, nil
 	}
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)

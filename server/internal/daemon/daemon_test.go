@@ -5147,6 +5147,12 @@ func TestReportTaskResult_NonCompletedHitsFailEndpoint(t *testing.T) {
 			wantFailureReason: "agent_error.unknown",
 		},
 		{
+			name:              "aborted cancellation has a deliberate stop reason",
+			status:            "aborted",
+			comment:           "execution cancelled",
+			wantFailureReason: "cancelled",
+		},
+		{
 			name:              "cancelled defaults to cancelled reason regardless of comment",
 			status:            "cancelled",
 			comment:           "rate limit reached",

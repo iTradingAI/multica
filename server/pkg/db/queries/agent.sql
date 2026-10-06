@@ -1264,7 +1264,9 @@ ORDER BY COALESCE(completed_at, started_at, dispatched_at, created_at) DESC
 LIMIT 1;
 
 -- name: FailAgentTask :one
--- Marks a task as failed. session_id and work_dir are merged via COALESCE so
+-- Settles runtime failures and deliberate stops reported through /fail.
+-- Cancellation must not enter the failure notification/recovery path.
+-- session_id and work_dir are merged via COALESCE so
 -- if the agent already established a real session before failing (e.g. it
 -- crashed mid-conversation, was cancelled, or hit a tool error) the resume
 -- pointer is preserved on the task row. The next chat task can then fall
@@ -1280,7 +1282,8 @@ LIMIT 1;
 -- the row, in the SAME transaction that creates and wakes the auto-retry, so the
 -- retry can never claim the bad pointer or miss the continuity gap.
 UPDATE agent_task_queue
-SET status = 'failed',
+SET status = CASE WHEN sqlc.narg('failure_reason')::text = 'cancelled' THEN 'cancelled' ELSE 'failed' END,
+    cancelled_by_type = CASE WHEN sqlc.narg('failure_reason')::text = 'cancelled' THEN 'system' ELSE cancelled_by_type END,
     completed_at = now(),
     error = $2,
     failure_reason = COALESCE(sqlc.narg('failure_reason'), 'agent_error'),

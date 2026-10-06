@@ -6261,7 +6261,9 @@ func (d *Daemon) acquireLocalDirectoryLockIfNeeded(ctx context.Context, task Tas
 // Anything else — "blocked", "cancelled", or any future status we forget to
 // enumerate — must go through FailTask, so a run that never produced a real
 // result can never be displayed as "Completed" in the UI (e.g. provider 429 /
-// out-of-credit / runtime crash). Forward SessionID/WorkDir on every path:
+// out-of-credit / runtime crash). The legacy /fail transport also carries
+// deliberate stops; the server settles reason="cancelled" as a cancellation
+// without failure notifications. Forward SessionID/WorkDir on every path:
 // the agent may have built a real session before getting stuck, and we want
 // the next chat turn to resume there rather than start over and "forget"
 // the conversation.
@@ -6307,7 +6309,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 				failureReason = taskfailure.Classify(result.Comment).String()
 			}
 		}
-		taskLog.Info("task did not complete, reporting failure", "status", result.Status, "failure_reason", failureReason)
+		taskLog.Info("task did not complete, reporting terminal state", "status", result.Status, "failure_reason", failureReason)
 		if err := d.reportTerminalTask(ctx, terminalTaskReport{
 			kind:           terminalTaskReportFail,
 			taskID:         taskID,

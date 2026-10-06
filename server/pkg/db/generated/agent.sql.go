@@ -3438,7 +3438,8 @@ func (q *Queries) ExtendAgentTaskPrepareLease(ctx context.Context, arg ExtendAge
 
 const failAgentTask = `-- name: FailAgentTask :one
 UPDATE agent_task_queue
-SET status = 'failed',
+SET status = CASE WHEN $3::text = 'cancelled' THEN 'cancelled' ELSE 'failed' END,
+    cancelled_by_type = CASE WHEN $3::text = 'cancelled' THEN 'system' ELSE cancelled_by_type END,
     completed_at = now(),
     error = $2,
     failure_reason = COALESCE($3, 'agent_error'),
@@ -3465,7 +3466,9 @@ type FailAgentTaskParams struct {
 	RetiredSessionID      pgtype.Text `json:"retired_session_id"`
 }
 
-// Marks a task as failed. session_id and work_dir are merged via COALESCE so
+// Settles runtime failures and deliberate stops reported through /fail.
+// Cancellation must not enter the failure notification/recovery path.
+// session_id and work_dir are merged via COALESCE so
 // if the agent already established a real session before failing (e.g. it
 // crashed mid-conversation, was cancelled, or hit a tool error) the resume
 // pointer is preserved on the task row. The next chat task can then fall
