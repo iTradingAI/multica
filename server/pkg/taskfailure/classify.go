@@ -43,33 +43,6 @@ var (
 // member-facing recovery guidance describe the actual failure.
 const concurrentRequestLimitWitness = "concurrent request limit"
 
-// claudeUnrecognizedModelWitness is Claude Code's startup-rejection marker:
-// `[claude-code:unrecognized_model] {"model":...,"query_source":"sdk"}`. The
-// CLI prints it on stderr for EVERY run whose --model is not an Anthropic id
-// — including healthy router/proxy runs, where the request is served by a
-// custom ANTHROPIC_BASE_URL that accepts the id (observed: quota-429
-// failures on a GLM endpoint carry the same line). It only names a model
-// rejection when the process also died at startup, which for the daemon's
-// stream-json wrapper surfaces as the input/control protocol write failure;
-// requiring both keeps the benign-warning shape out of this bucket.
-const (
-	claudeUnrecognizedModelWitness     = "claude-code:unrecognized_model"
-	claudeStartupProtocolFailedWitness = "input/control protocol failed"
-)
-
-// ClaudeStartupModelRejected reports whether an agent error is Claude Code
-// refusing the configured model at process startup — the unrecognized_model
-// stderr marker alongside the daemon's input/control protocol write failure
-// that follows the immediate exit. The claude backend uses it to rewrite the
-// cryptic pipe error into actionable copy, and Classify routes the same
-// shape to ReasonAgentProviderModelRejected. The marker alone is NOT enough:
-// healthy router/proxy runs print it too (see the witness consts above).
-func ClaudeStartupModelRejected(errText string) bool {
-	lower := strings.ToLower(errText)
-	return strings.Contains(lower, claudeUnrecognizedModelWitness) &&
-		strings.Contains(lower, claudeStartupProtocolFailedWitness)
-}
-
 // Classify maps a free-form error string from the agent runtime / CLI
 // to one of the 15 agent_error.* sub-reasons. Always returns a valid
 // Reason; falls back to ReasonAgentUnknown when no rule matches and for
@@ -681,4 +654,31 @@ func containsAny(s string, subs ...string) bool {
 		}
 	}
 	return false
+}
+
+// claudeUnrecognizedModelWitness is Claude Code's startup-rejection marker:
+// `[claude-code:unrecognized_model] {"model":...,"query_source":"sdk"}`. The
+// CLI prints it on stderr for EVERY run whose --model is not an Anthropic id
+// — including healthy router/proxy runs, where the request is served by a
+// custom ANTHROPIC_BASE_URL that accepts the id (observed: quota-429
+// failures on a GLM endpoint carry the same line). It only names a model
+// rejection when the process also died at startup, which for the daemon's
+// stream-json wrapper surfaces as the input/control protocol write failure;
+// requiring both keeps the benign-warning shape out of this bucket.
+const (
+	claudeUnrecognizedModelWitness     = "claude-code:unrecognized_model"
+	claudeStartupProtocolFailedWitness = "input/control protocol failed"
+)
+
+// ClaudeStartupModelRejected reports whether an agent error is Claude Code
+// refusing the configured model at process startup — the unrecognized_model
+// stderr marker alongside the daemon's input/control protocol write failure
+// that follows the immediate exit. The claude backend uses it to rewrite the
+// cryptic pipe error into actionable copy, and Classify routes the same
+// shape to ReasonAgentProviderModelRejected. The marker alone is NOT enough:
+// healthy router/proxy runs print it too (see the witness consts above).
+func ClaudeStartupModelRejected(errText string) bool {
+	lower := strings.ToLower(errText)
+	return strings.Contains(lower, claudeUnrecognizedModelWitness) &&
+		strings.Contains(lower, claudeStartupProtocolFailedWitness)
 }
