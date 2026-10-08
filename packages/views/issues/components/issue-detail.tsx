@@ -112,6 +112,7 @@ import { ExecutionLogSection } from "./execution-log-section";
 import { WakeupsSection } from "./wakeups-section";
 import { QuickActionsSection } from "./quick-actions-section";
 import { PluginPanelSection } from "../../plugins";
+import { WorkbenchDrawer } from "../../workbench";
 import { PullRequestsSection } from "./pull-requests-section";
 import { useGitHubSettings } from "@multica/core/github";
 import { DeliverablesSection } from "./deliverables/deliverables-section";
@@ -3164,6 +3165,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 It self-hides when no agent is active. */}
             <IssueAgentHeaderChip issueId={id} />
             <IssueWakeupHeaderChip issueId={id} onOpen={openWakeups} />
+            <WorkbenchDrawer key={`${wsId}:${issue.id}:${issue.project_id ?? ""}`} wsId={wsId} context={{ kind: "issue", issue_id: issue.id }} hasProject={Boolean(issue.project_id)} />
             {onDone && !issueBehavesAsAny(issue, ["done", "closed"]) && (
               <Tooltip>
                 <TooltipTrigger

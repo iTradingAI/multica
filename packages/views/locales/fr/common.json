@@ -128,5 +128,20 @@
   },
   "navigation": {
     "open_in_new_tab": "Ouvrir dans un nouvel onglet"
+  },
+  "workbench": {
+    "title": "Atelier",
+    "diagnostics": "État du répertoire",
+    "loading": "Vérification de l’accès au répertoire…",
+    "no_project": "Cette tâche n’a pas de projet.",
+    "no_resources": "Ce projet n’a pas de répertoire local.",
+    "forbidden": "Vous n’avez pas accès à ce répertoire.",
+    "unavailable": "Le canal du répertoire est indisponible.",
+    "daemon_offline": "Le daemon du répertoire est hors ligne.",
+    "daemon_upgrade_required": "Mettez à jour le daemon du répertoire.",
+    "timeout": "La vérification du répertoire a expiré.",
+    "ready": "Le répertoire est disponible.",
+    "retry": "Réessayer",
+    "directory": "Répertoire {{number}}"
   }
 }

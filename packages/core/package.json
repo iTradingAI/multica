@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "exports": {
+    "./workspace-files": "./workspace-files/index.ts",
     ".": "./index.ts",
     "./markdown": "./markdown/index.ts",
     "./types": "./types/index.ts",
