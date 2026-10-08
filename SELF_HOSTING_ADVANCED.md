@@ -177,6 +177,28 @@ rewrite configuration. Its backend fallback therefore accepts
 `BACKEND_PORT` → `API_PORT` → `SERVER_PORT` → `8080`, while an explicit
 `REMOTE_API_URL` or `NEXT_PUBLIC_API_URL` still takes priority.
 
+### Workspace file relay (Optional)
+
+The read-only workspace file relay is disabled by default. Enable it on the API
+server only after confirming that browser and daemon WebSockets terminate in the
+same API process:
+
+```bash
+export MULTICA_WORKSPACE_FILES_ENABLED=true
+export MULTICA_WORKSPACE_FILES_SINGLE_API=true
+```
+
+Both values must be exactly `true`. Multiple API replicas are unsupported for
+this relay; Redis broadcasts do not provide request-to-socket affinity. Daemons
+must advertise `workspace-files-v2`; older daemons return
+`daemon_upgrade_required`, and disconnected daemons return `daemon_offline`.
+Current workspace membership and project resource ownership are checked before
+requests and again before each response frame. Filesystem roots remain server
+and daemon metadata and are excluded from browser responses.
+
+Disable `MULTICA_WORKSPACE_FILES_ENABLED` and restart the API to roll back the
+relay. Shutdown cancels pending requests; the relay never modifies user files.
+
 ### Private CA Certificates (Optional)
 
 The backend checks the TLS certificates of the HTTPS services it calls against
