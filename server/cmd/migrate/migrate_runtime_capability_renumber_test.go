@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,6 +18,14 @@ import (
 func TestRuntimeCapabilityRenumberPreservesAppliedFunction(t *testing.T) {
 	t.Parallel()
 	const version = "565_runtime_capability_merge"
+	var completed atomic.Int32
+	// The shared DB helper may skip when a developer has no database. CI has
+	// PostgreSQL configured and must prove that every regression case ran.
+	t.Cleanup(func() {
+		if os.Getenv("CI") == "true" && completed.Load() != 4 {
+			t.Errorf("expected all 4 database cases to complete in CI, got %d", completed.Load())
+		}
+	})
 	for _, legacy := range []string{"", "548_runtime_capability_merge", "551_runtime_capability_merge", "564_runtime_capability_merge"} {
 		name := legacy
 		if name == "" {
@@ -119,6 +128,7 @@ func TestRuntimeCapabilityRenumberPreservesAppliedFunction(t *testing.T) {
 				AND merge_runtime_capabilities('{"capabilities":["terminal-v1"]}'::jsonb, '{"capabilities":null}'::jsonb) = '{"capabilities":null}'::jsonb`).Scan(&correct); err != nil || !correct {
 				t.Fatalf("legacy fallback changed: correct=%t error=%v", correct, err)
 			}
+			completed.Add(1)
 		})
 	}
 }
