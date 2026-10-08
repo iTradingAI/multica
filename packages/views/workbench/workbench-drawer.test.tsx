@@ -1,7 +1,7 @@
 import React from "react";
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginInstallation } from "@multica/core/types";
 import { renderWithI18n } from "../test/i18n";
@@ -70,6 +70,31 @@ describe("workbench lifecycle", () => {
     await waitFor(() => expect(screen.queryByTitle("Example — Sidebar")).not.toBeInTheDocument());
     expect(state.close).toHaveBeenCalled();
     expect(screen.queryByRole("tab", { name: "Sidebar" })).not.toBeInTheDocument();
+  });
+  it("observes disable through the five-second foreground refresh", async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByRole("button", { name: "Workbench" }));
+    await user.click(await screen.findByRole("tab", { name: "Sidebar" }));
+    await screen.findByTitle("Example — Sidebar");
+    state.close.mockClear();
+    state.plugins = [{ ...state.plugins[0]!, enabled: false }];
+    await waitFor(() => expect(screen.queryByTitle("Example — Sidebar")).not.toBeInTheDocument(), { timeout: 6500 });
+    expect(state.close).toHaveBeenCalled();
+  }, 10000);
+  it("refreshes the installed list when the client regains focus", async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByRole("button", { name: "Workbench" }));
+    await user.click(await screen.findByRole("tab", { name: "Sidebar" }));
+    await screen.findByTitle("Example — Sidebar");
+    state.close.mockClear();
+    state.plugins = [{ ...state.plugins[0]!, enabled: false }];
+    try {
+      act(() => { focusManager.setFocused(false); focusManager.setFocused(true); });
+      await waitFor(() => expect(screen.queryByTitle("Example — Sidebar")).not.toBeInTheDocument());
+      expect(state.close).toHaveBeenCalled();
+    } finally { focusManager.setFocused(undefined); }
   });
   it("removes a running plugin if list refresh fails", async () => {
     const user = userEvent.setup();
