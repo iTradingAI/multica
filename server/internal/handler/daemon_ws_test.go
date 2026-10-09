@@ -94,6 +94,75 @@ func TestBuildDaemonWebSocketIdentityFailsClosedForMissingRuntime(t *testing.T) 
 	}
 }
 
+func TestBuildDaemonWebSocketIdentityBindsOnlyOwnedUnambiguousAccountRuntimes(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	otherUser := dbfx.Insert(t, "user", testutil.Cols{"name": "Other daemon owner", "email": "ws-owner-" + uuid.NewString() + "@example.test"})
+	for _, tc := range []struct {
+		name       string
+		daemons    []any
+		owners     []any
+		want       string
+		unenrolled bool
+	}{
+		{"owned single daemon", []any{"pat-daemon", "pat-daemon"}, []any{testUserID, testUserID}, "pat-daemon", false},
+		{"other member runtime", []any{"pat-daemon"}, []any{otherUser}, "", false},
+		{"mixed ownership", []any{"pat-daemon", "pat-daemon"}, []any{testUserID, otherUser}, "", false},
+		{"mixed daemon identities", []any{"pat-daemon", "other-daemon"}, []any{testUserID, testUserID}, "", false},
+		{"missing daemon identity", []any{nil}, []any{testUserID}, "", false},
+		{"missing owner", []any{"pat-daemon"}, []any{nil}, "", false},
+		{"owned rows without enrollment", []any{"pat-daemon"}, []any{testUserID}, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			suffix := "-" + uuid.NewString()
+			if tc.want != "" {
+				tc.want += suffix
+			}
+			for i, raw := range tc.daemons {
+				if raw == nil {
+					continue
+				}
+				id := raw.(string) + suffix
+				tc.daemons[i] = id
+				if tc.unenrolled {
+					continue
+				}
+				w := httptest.NewRecorder()
+				testHandler.DaemonRegister(w, newRequest(http.MethodPost, "/api/daemon/register", map[string]any{
+					"workspace_id": testWorkspaceID, "daemon_id": id,
+					"runtimes": []map[string]string{{"type": "enrollment-proof"}},
+				}))
+				if w.Code != http.StatusOK {
+					t.Fatalf("enrollment status=%d: %s", w.Code, w.Body.String())
+				}
+			}
+			var ids []string
+			for i, daemonID := range tc.daemons {
+				ids = append(ids, dbfx.Runtime(t, "Account WS binding", testutil.Cols{
+					"workspace_id": testWorkspaceID, "daemon_id": daemonID, "owner_id": tc.owners[i],
+					"provider": "ws-binding-" + uuid.NewString(),
+				}))
+			}
+			req := newRequest(http.MethodGet, "/api/daemon/ws", nil)
+			// A client-supplied daemon hint is never proof of its identity.
+			req.Header.Set("X-Daemon-ID", "forged-daemon")
+			w := httptest.NewRecorder()
+			identity, ok := testHandler.buildDaemonWebSocketIdentity(w, req, ids, testUserID)
+			if !ok {
+				t.Fatalf("legacy account connection rejected: %d %s", w.Code, w.Body.String())
+			}
+			if identity.DaemonID != tc.want {
+				t.Fatalf("bound daemon = %q, want %q", identity.DaemonID, tc.want)
+			}
+		})
+	}
+	identity, ok := testHandler.buildDaemonWebSocketIdentity(httptest.NewRecorder(), newRequest(http.MethodGet, "/api/daemon/ws", nil), nil, testUserID)
+	if !ok || identity.DaemonID != "" {
+		t.Fatal("account-only connection gained a daemon identity")
+	}
+}
+
 func TestBuildDaemonWebSocketIdentityRejectsWrongDaemon(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

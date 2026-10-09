@@ -128,5 +128,20 @@
   },
   "navigation": {
     "open_in_new_tab": "在新标签页打开"
+  },
+  "workbench": {
+    "title": "工作台",
+    "diagnostics": "目录状态",
+    "loading": "正在检查目录访问…",
+    "no_project": "此 Issue 尚未关联项目。",
+    "no_resources": "此项目没有本地目录资源。",
+    "forbidden": "你无权访问此目录。",
+    "unavailable": "目录通道不可用。",
+    "daemon_offline": "目录守护进程已离线。",
+    "daemon_upgrade_required": "请更新目录守护进程后重试。",
+    "timeout": "目录检查超时。",
+    "ready": "目录可用。",
+    "retry": "重试",
+    "directory": "目录 {{number}}"
   }
 }
