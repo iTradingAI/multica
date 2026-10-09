@@ -63,6 +63,11 @@ func (h *Handler) buildDaemonWebSocketIdentity(w http.ResponseWriter, r *http.Re
 
 	workspaceIDs := make([]string, 0, len(runtimeIDs))
 	seenWorkspaceIDs := make(map[string]struct{}, len(runtimeIDs))
+	// Account credentials do not carry a daemon ID. Bind only the single
+	// daemon proved by the complete authorized runtime set owned by this user,
+	// never a client header or one selected runtime from an ambiguous set.
+	accountDaemonID := ""
+	canBindAccount := identity.DaemonID == "" && userID != ""
 	for runtimeIndex, runtimeID := range runtimeIDs {
 		index, found := byID[uuidToString(runtimeUUIDs[runtimeIndex])]
 		if !found {
@@ -77,6 +82,15 @@ func (h *Handler) buildDaemonWebSocketIdentity(w http.ResponseWriter, r *http.Re
 		workspaceID := uuidToString(rt.WorkspaceID)
 		if !h.requireDaemonWorkspaceAccess(w, r, workspaceID) {
 			return daemonws.ClientIdentity{}, false
+		}
+		if canBindAccount {
+			if !rt.OwnerID.Valid || uuidToString(rt.OwnerID) != userID || !rt.DaemonID.Valid || strings.TrimSpace(rt.DaemonID.String) == "" {
+				canBindAccount = false
+			} else if accountDaemonID == "" {
+				accountDaemonID = rt.DaemonID.String
+			} else if accountDaemonID != rt.DaemonID.String {
+				canBindAccount = false
+			}
 		}
 		if workspaceID != "" {
 			if _, ok := seenWorkspaceIDs[workspaceID]; !ok {
@@ -98,6 +112,9 @@ func (h *Handler) buildDaemonWebSocketIdentity(w http.ResponseWriter, r *http.Re
 	}
 	identity.WorkspaceID = primaryWorkspaceID
 	identity.WorkspaceIDs = workspaceIDs
+	if canBindAccount {
+		identity.DaemonID = accountDaemonID
+	}
 	return identity, true
 }
 

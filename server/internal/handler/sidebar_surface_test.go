@@ -135,7 +135,12 @@ func TestSidebarActionRechecksMembershipAndProjectContext(t *testing.T) {
 	dbfx.Exec(t, "DELETE FROM member WHERE id = $1", memberID)
 	response = httptest.NewRecorder()
 	testHandler.GetPluginContext(response, request)
-	if response.Code != http.StatusForbidden {
+	// pluginSessionCaller preserves the existing workspace invisibility
+	// contract: revoked membership returns 404 without exposing context data.
+	if response.Code != http.StatusNotFound {
 		t.Fatalf("revoked member context status=%d", response.Code)
+	}
+	if strings.Contains(response.Body.String(), testWorkspaceID) || strings.Contains(response.Body.String(), userID) {
+		t.Fatal("revoked member response leaked context data")
 	}
 }

@@ -94,6 +94,51 @@ func TestBuildDaemonWebSocketIdentityFailsClosedForMissingRuntime(t *testing.T) 
 	}
 }
 
+func TestBuildDaemonWebSocketIdentityBindsOnlyOwnedUnambiguousAccountRuntimes(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	otherUser := dbfx.Insert(t, "user", testutil.Cols{"name": "Other daemon owner", "email": "ws-owner-" + uuid.NewString() + "@example.test"})
+	for _, tc := range []struct {
+		name    string
+		daemons []any
+		owners  []any
+		want    string
+	}{
+		{"owned single daemon", []any{"pat-daemon", "pat-daemon"}, []any{testUserID, testUserID}, "pat-daemon"},
+		{"other member runtime", []any{"pat-daemon"}, []any{otherUser}, ""},
+		{"mixed ownership", []any{"pat-daemon", "pat-daemon"}, []any{testUserID, otherUser}, ""},
+		{"mixed daemon identities", []any{"pat-daemon", "other-daemon"}, []any{testUserID, testUserID}, ""},
+		{"missing daemon identity", []any{nil}, []any{testUserID}, ""},
+		{"missing owner", []any{"pat-daemon"}, []any{nil}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var ids []string
+			for i, daemonID := range tc.daemons {
+				ids = append(ids, dbfx.Runtime(t, "Account WS binding", testutil.Cols{
+					"workspace_id": testWorkspaceID, "daemon_id": daemonID, "owner_id": tc.owners[i],
+					"provider": "ws-binding-" + uuid.NewString(),
+				}))
+			}
+			req := newRequest(http.MethodGet, "/api/daemon/ws", nil)
+			// A client-supplied daemon hint is never proof of its identity.
+			req.Header.Set("X-Daemon-ID", "forged-daemon")
+			w := httptest.NewRecorder()
+			identity, ok := testHandler.buildDaemonWebSocketIdentity(w, req, ids, testUserID)
+			if !ok {
+				t.Fatalf("legacy account connection rejected: %d %s", w.Code, w.Body.String())
+			}
+			if identity.DaemonID != tc.want {
+				t.Fatalf("bound daemon = %q, want %q", identity.DaemonID, tc.want)
+			}
+		})
+	}
+	identity, ok := testHandler.buildDaemonWebSocketIdentity(httptest.NewRecorder(), newRequest(http.MethodGet, "/api/daemon/ws", nil), nil, testUserID)
+	if !ok || identity.DaemonID != "" {
+		t.Fatal("account-only connection gained a daemon identity")
+	}
+}
+
 func TestBuildDaemonWebSocketIdentityRejectsWrongDaemon(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
