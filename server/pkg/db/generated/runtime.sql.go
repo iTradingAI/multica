@@ -493,23 +493,30 @@ func (q *Queries) GetAgentRuntimeForWorkspace(ctx context.Context, arg GetAgentR
 }
 
 const getAgentRuntimeHeartbeatLeases = `-- name: GetAgentRuntimeHeartbeatLeases :many
-SELECT id, workspace_id, daemon_id, owner_id, status, last_seen_at
-FROM agent_runtime
-WHERE id = ANY($1::uuid[])
+SELECT runtime.id, runtime.workspace_id, runtime.daemon_id, runtime.owner_id,
+       runtime.status, runtime.last_seen_at,
+       identity.owner_id AS enrolled_owner_id
+FROM agent_runtime AS runtime
+LEFT JOIN daemon_registration_identity AS identity
+  ON identity.workspace_id = runtime.workspace_id
+ AND identity.daemon_id = runtime.daemon_id
+ AND identity.account_enrolled
+WHERE runtime.id = ANY($1::uuid[])
 `
 
 type GetAgentRuntimeHeartbeatLeasesRow struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	DaemonID    pgtype.Text        `json:"daemon_id"`
-	OwnerID     pgtype.UUID        `json:"owner_id"`
-	Status      string             `json:"status"`
-	LastSeenAt  pgtype.Timestamptz `json:"last_seen_at"`
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	DaemonID        pgtype.Text        `json:"daemon_id"`
+	OwnerID         pgtype.UUID        `json:"owner_id"`
+	Status          string             `json:"status"`
+	LastSeenAt      pgtype.Timestamptz `json:"last_seen_at"`
+	EnrolledOwnerID pgtype.UUID        `json:"enrolled_owner_id"`
 }
 
 // Narrow connection-time and heartbeat-reconciliation projection. The daemon
 // WebSocket authenticates its whole runtime set in one round trip and then
-// keeps these immutable ownership fields plus liveness state in its connection
+// keeps the authorized scope plus liveness state in its connection
 // lease, avoiding a GetAgentRuntime call on every heartbeat.
 func (q *Queries) GetAgentRuntimeHeartbeatLeases(ctx context.Context, ids []pgtype.UUID) ([]GetAgentRuntimeHeartbeatLeasesRow, error) {
 	rows, err := q.db.Query(ctx, getAgentRuntimeHeartbeatLeases, ids)
@@ -527,6 +534,7 @@ func (q *Queries) GetAgentRuntimeHeartbeatLeases(ctx context.Context, ids []pgty
 			&i.OwnerID,
 			&i.Status,
 			&i.LastSeenAt,
+			&i.EnrolledOwnerID,
 		); err != nil {
 			return nil, err
 		}

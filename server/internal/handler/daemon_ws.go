@@ -31,8 +31,8 @@ func (h *Handler) DaemonWebSocket(w http.ResponseWriter, r *http.Request) {
 
 // buildDaemonWebSocketIdentity authenticates the connection's entire runtime
 // set with one narrow query and seeds the connection-scoped heartbeat leases.
-// Runtime ownership is immutable, so the heartbeat hot path can safely use
-// this fixed scope without re-reading agent_runtime every 15 seconds.
+// The heartbeat hot path uses the authenticated connection's fixed scope
+// without re-reading agent_runtime every 15 seconds.
 func (h *Handler) buildDaemonWebSocketIdentity(w http.ResponseWriter, r *http.Request, runtimeIDs []string, userID string) (daemonws.ClientIdentity, bool) {
 	identity := daemonws.ClientIdentity{
 		DaemonID:      middleware.DaemonIDFromContext(r.Context()),
@@ -63,9 +63,9 @@ func (h *Handler) buildDaemonWebSocketIdentity(w http.ResponseWriter, r *http.Re
 
 	workspaceIDs := make([]string, 0, len(runtimeIDs))
 	seenWorkspaceIDs := make(map[string]struct{}, len(runtimeIDs))
-	// Account credentials do not carry a daemon ID. Bind only the single
-	// daemon proved by the complete authorized runtime set owned by this user,
-	// never a client header or one selected runtime from an ambiguous set.
+	// Account credentials identify the registration principal. A provider row
+	// is not machine proof: bind only a server-enrolled machine owned by that
+	// principal, with a complete unambiguous authorized runtime set.
 	accountDaemonID := ""
 	canBindAccount := identity.DaemonID == "" && userID != ""
 	for runtimeIndex, runtimeID := range runtimeIDs {
@@ -84,7 +84,7 @@ func (h *Handler) buildDaemonWebSocketIdentity(w http.ResponseWriter, r *http.Re
 			return daemonws.ClientIdentity{}, false
 		}
 		if canBindAccount {
-			if !rt.OwnerID.Valid || uuidToString(rt.OwnerID) != userID || !rt.DaemonID.Valid || strings.TrimSpace(rt.DaemonID.String) == "" {
+			if !rt.EnrolledOwnerID.Valid || uuidToString(rt.EnrolledOwnerID) != userID || !rt.OwnerID.Valid || uuidToString(rt.OwnerID) != userID || !rt.DaemonID.Valid || strings.TrimSpace(rt.DaemonID.String) == "" {
 				canBindAccount = false
 			} else if accountDaemonID == "" {
 				accountDaemonID = rt.DaemonID.String

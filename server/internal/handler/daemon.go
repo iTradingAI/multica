@@ -441,6 +441,10 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "workspace not found")
 			return
 		}
+		if middleware.DaemonIDFromContext(r.Context()) != req.DaemonID {
+			writeError(w, http.StatusNotFound, "daemon not found")
+			return
+		}
 		// ownerID stays zero — COALESCE keeps the existing owner on upsert.
 	} else {
 		member, ok := h.requireWorkspaceMember(w, r, req.WorkspaceID, "workspace not found")
@@ -453,6 +457,27 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	ws, err := h.Queries.GetWorkspace(r.Context(), wsUUID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "workspace not found")
+		return
+	}
+
+	// Establish machine authority before any provider upsert can change its
+	// apparent owner. The server-owned enrollment never transfers principals;
+	// a new provider, failed profile, or reconnect cannot bypass that boundary.
+	if ownerID.Valid {
+		_, err = h.Queries.EnrollAccountDaemonIdentity(r.Context(), db.EnrollAccountDaemonIdentityParams{
+			WorkspaceID: wsUUID, DaemonID: req.DaemonID, OwnerID: ownerID,
+		})
+	} else {
+		_, err = h.Queries.EnrollTokenDaemonIdentity(r.Context(), db.EnrollTokenDaemonIdentityParams{
+			WorkspaceID: wsUUID, DaemonID: req.DaemonID,
+		})
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, "daemon identity is not owned by this account")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to enroll daemon identity")
 		return
 	}
 
@@ -788,6 +813,12 @@ func (h *Handler) mergeLegacyRuntimes(r *http.Request, registered db.AgentRuntim
 			continue
 		}
 		for _, old := range matches {
+			// A legacy hint must not remove another principal's provider and
+			// thereby erase its registration provenance. Unknown owners also
+			// fail closed; a daemon-token scope is not proof of an alias.
+			if !old.OwnerID.Valid || !registered.OwnerID.Valid || old.OwnerID != registered.OwnerID {
+				continue
+			}
 			oldID := uuidToString(old.ID)
 			if oldID == newID {
 				continue

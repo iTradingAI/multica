@@ -33,11 +33,17 @@ WHERE id = ANY(@ids::uuid[]);
 -- name: GetAgentRuntimeHeartbeatLeases :many
 -- Narrow connection-time and heartbeat-reconciliation projection. The daemon
 -- WebSocket authenticates its whole runtime set in one round trip and then
--- keeps these immutable ownership fields plus liveness state in its connection
+-- keeps the authorized scope plus liveness state in its connection
 -- lease, avoiding a GetAgentRuntime call on every heartbeat.
-SELECT id, workspace_id, daemon_id, owner_id, status, last_seen_at
-FROM agent_runtime
-WHERE id = ANY(@ids::uuid[]);
+SELECT runtime.id, runtime.workspace_id, runtime.daemon_id, runtime.owner_id,
+       runtime.status, runtime.last_seen_at,
+       identity.owner_id AS enrolled_owner_id
+FROM agent_runtime AS runtime
+LEFT JOIN daemon_registration_identity AS identity
+  ON identity.workspace_id = runtime.workspace_id
+ AND identity.daemon_id = runtime.daemon_id
+ AND identity.account_enrolled
+WHERE runtime.id = ANY(@ids::uuid[]);
 
 -- name: LockAgentRuntime :one
 -- Acquires a row-level exclusive lock on the runtime row. Used at the

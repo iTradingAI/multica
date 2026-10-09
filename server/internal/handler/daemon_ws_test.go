@@ -100,19 +100,43 @@ func TestBuildDaemonWebSocketIdentityBindsOnlyOwnedUnambiguousAccountRuntimes(t 
 	}
 	otherUser := dbfx.Insert(t, "user", testutil.Cols{"name": "Other daemon owner", "email": "ws-owner-" + uuid.NewString() + "@example.test"})
 	for _, tc := range []struct {
-		name    string
-		daemons []any
-		owners  []any
-		want    string
+		name       string
+		daemons    []any
+		owners     []any
+		want       string
+		unenrolled bool
 	}{
-		{"owned single daemon", []any{"pat-daemon", "pat-daemon"}, []any{testUserID, testUserID}, "pat-daemon"},
-		{"other member runtime", []any{"pat-daemon"}, []any{otherUser}, ""},
-		{"mixed ownership", []any{"pat-daemon", "pat-daemon"}, []any{testUserID, otherUser}, ""},
-		{"mixed daemon identities", []any{"pat-daemon", "other-daemon"}, []any{testUserID, testUserID}, ""},
-		{"missing daemon identity", []any{nil}, []any{testUserID}, ""},
-		{"missing owner", []any{"pat-daemon"}, []any{nil}, ""},
+		{"owned single daemon", []any{"pat-daemon", "pat-daemon"}, []any{testUserID, testUserID}, "pat-daemon", false},
+		{"other member runtime", []any{"pat-daemon"}, []any{otherUser}, "", false},
+		{"mixed ownership", []any{"pat-daemon", "pat-daemon"}, []any{testUserID, otherUser}, "", false},
+		{"mixed daemon identities", []any{"pat-daemon", "other-daemon"}, []any{testUserID, testUserID}, "", false},
+		{"missing daemon identity", []any{nil}, []any{testUserID}, "", false},
+		{"missing owner", []any{"pat-daemon"}, []any{nil}, "", false},
+		{"owned rows without enrollment", []any{"pat-daemon"}, []any{testUserID}, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			suffix := "-" + uuid.NewString()
+			if tc.want != "" {
+				tc.want += suffix
+			}
+			for i, raw := range tc.daemons {
+				if raw == nil {
+					continue
+				}
+				id := raw.(string) + suffix
+				tc.daemons[i] = id
+				if tc.unenrolled {
+					continue
+				}
+				w := httptest.NewRecorder()
+				testHandler.DaemonRegister(w, newRequest(http.MethodPost, "/api/daemon/register", map[string]any{
+					"workspace_id": testWorkspaceID, "daemon_id": id,
+					"runtimes": []map[string]string{{"type": "enrollment-proof"}},
+				}))
+				if w.Code != http.StatusOK {
+					t.Fatalf("enrollment status=%d: %s", w.Code, w.Body.String())
+				}
+			}
 			var ids []string
 			for i, daemonID := range tc.daemons {
 				ids = append(ids, dbfx.Runtime(t, "Account WS binding", testutil.Cols{
