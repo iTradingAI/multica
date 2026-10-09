@@ -236,6 +236,21 @@ cleared_vcs_prs AS (
 cleared_vcs_connections AS (
     DELETE FROM vcs_connection WHERE workspace_id = $1
 ),
+cleared_file_touch_execution AS (
+ DELETE FROM file_touch_execution WHERE file_touch_execution.workspace_id = $1
+),
+cleared_issue_file_touch_pending AS (
+ DELETE FROM issue_file_touch_pending WHERE issue_file_touch_pending.workspace_id = $1
+),
+cleared_issue_file_touch_event AS (
+ DELETE FROM issue_file_touch_event WHERE issue_file_touch_event.workspace_id = $1
+),
+cleared_issue_file_touches AS (
+ DELETE FROM issue_file_touches WHERE issue_file_touches.workspace_id = $1
+),
+cleared_issue_file_touch_backfill AS (
+ DELETE FROM issue_file_touch_backfill WHERE issue_file_touch_backfill.workspace_id = $1
+),
 cleared_client_usage_workspace AS (
     UPDATE client_usage_daily SET workspace_id = NULL WHERE workspace_id = $1
 )

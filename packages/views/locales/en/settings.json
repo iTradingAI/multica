@@ -475,6 +475,7 @@
       "secret_set": "Saved — enter a new value to replace it"
     },
     "scopes": {
+      "files_read": "Read the file selected in Files",
       "issues_read": "Read issues",
       "issues_write": "Create and edit issues",
       "comments_read": "Read comments",

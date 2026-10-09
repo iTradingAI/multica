@@ -5,7 +5,8 @@
  * parses; the client never re-derives them from anything else.
  */
 
-export type PluginConfigFieldType = "string" | "number" | "bool" | "enum" | "secret";
+export type PluginConfigFieldType =
+  | "string" | "number" | "bool" | "enum" | "secret";
 
 export interface PluginConfigField {
   key: string;
@@ -19,7 +20,9 @@ export interface PluginConfigField {
   multiline?: boolean;
 }
 
-export type PluginSurfaceType = "issue_panel" | "sidebar_panel" | "modal";
+export type PluginSurfaceType =
+  | "issue_panel" | "sidebar_panel" | "modal"
+  | "file_viewer";
 
 export interface PluginSurface {
   key: string;
@@ -27,9 +30,11 @@ export interface PluginSurface {
   name: string;
   entry: string;
   platforms?: string[];
+  extensions?: string[];
 }
 
-export type PluginHookTrigger = "ui" | "manual" | "agent" | "event" | "schedule";
+export type PluginHookTrigger =
+  | "ui" | "manual" | "agent" | "event" | "schedule";
 
 export interface PluginHookSchedule {
   cron: string;

@@ -7,7 +7,8 @@ import { createSurfaceBridge } from "./surface-bridge";
 
 const TOKEN = "single-use-launch-proof";
 
-function connectMessage(source: Window | null, port: MessagePort, challenge = TOKEN, version = 2) {
+function connectMessage(source: Window | null, port: MessagePort, challenge = TOKEN, version = 2,
+) {
   const event = new MessageEvent("message", {
     data: { type: "multica:plugin-bridge-connect", version, challenge },
   });
@@ -17,7 +18,8 @@ function connectMessage(source: Window | null, port: MessagePort, challenge = TO
 }
 
 function connectedBridge(
-  options: Parameters<typeof createSurfaceBridge>[0] = { installationId: "installation-1", bridgeToken: TOKEN },
+  options: Parameters<typeof createSurfaceBridge>[0] = { installationId: "installation-1", bridgeToken: TOKEN,
+  },
 ) {
   const bridge = createSurfaceBridge(options);
   const posted: unknown[] = [];
@@ -59,31 +61,102 @@ describe("surface bridge", () => {
     mockCall.mockResolvedValue({ ok: true });
   });
 
+  it("viewer bridge exposes only a fixed read and no Action authority", async () => {
+    const readSelected = vi.fn(async () => ({ text: "selected text" }));
+    const { bridge, port, posted } = connectedBridge({
+      installationId: "viewer",
+      bridgeToken: TOKEN,
+      readSelected,
+    });
+    port.postMessage({
+      id: "path",
+      kind: "files.readSelected",
+      path: "other.txt",
+    });
+    port.postMessage({
+      id: "context",
+      kind: "action",
+      method: "GET",
+      path: "/context",
+    });
+    port.postMessage({ id: "read", kind: "files.readSelected" });
+    await vi.waitFor(() =>
+      expect(posted).toContainEqual({
+        id: "read",
+        ok: true,
+        status: 200,
+        data: { text: "selected text" },
+      }),
+    );
+    expect(readSelected).toHaveBeenCalledTimes(1);
+    expect(readSelected).toHaveBeenCalledWith();
+    expect(mockCall).not.toHaveBeenCalled();
+    expect(posted).toContainEqual(
+      expect.objectContaining({ id: "context", ok: false, status: 403 }),
+    );
+    expect(
+      posted.some((value) => (value as { id: string }).id === "path"),
+    ).toBe(false);
+    bridge.close();
+    port.close();
+  });
+
+  it("closing viewer bridge discards an outstanding read result", async () => {
+    let finish!: (value: { text: string }) => void;
+    const readSelected = vi.fn(
+      () =>
+        new Promise<{ text: string }>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { bridge, port, posted } = connectedBridge({
+      installationId: "viewer",
+      bridgeToken: TOKEN,
+      readSelected,
+    });
+    port.postMessage({ id: "read", kind: "files.readSelected" });
+    await vi.waitFor(() => expect(readSelected).toHaveBeenCalledOnce());
+    bridge.close();
+    finish({ text: "late private content" });
+    await portDrain();
+    expect(posted).toHaveLength(0);
+    port.close();
+  });
+
   it("forwards an allowed request with the installation that owns the channel", async () => {
-    const { port } = connectedBridge({ installationId: "installation-1", bridgeToken: TOKEN, issueId: "issue-1" });
-    port.postMessage({ id: "r1", kind: "action", method: "GET", path: "/context" });
+    const { port } = connectedBridge({ installationId: "installation-1", bridgeToken: TOKEN, issueId: "issue-1",
+    });
+    port.postMessage({ id: "r1", kind: "action", method: "GET", path: "/context",
+    });
 
     await vi.waitFor(() => expect(mockCall).toHaveBeenCalledWith("installation-1", expect.objectContaining({
       method: "GET",
       path: "/context",
       issueId: "issue-1",
-    })));
+    }),
+      ),
+    );
   });
 
   it("refuses paths and methods outside the Action API before fetch", async () => {
     const { port, posted } = connectedBridge();
-    port.postMessage({ id: "bad-path", kind: "action", method: "GET", path: "/me" });
-    port.postMessage({ id: "bad-method", kind: "action", method: "TRACE", path: "/context" });
+    port.postMessage({ id: "bad-path", kind: "action", method: "GET", path: "/me",
+    });
+    port.postMessage({ id: "bad-method", kind: "action", method: "TRACE", path: "/context",
+    });
     await answered(port, posted);
 
     expect(mockCall).not.toHaveBeenCalled();
-    expect(posted).toContainEqual(expect.objectContaining({ id: "bad-path", ok: false, status: 400 }));
+    expect(posted).toContainEqual(expect.objectContaining({ id: "bad-path", ok: false, status: 400 }),
+    );
   });
 
   it("passes a refusal status through to the plugin", async () => {
-    mockCall.mockRejectedValue(Object.assign(new Error("not granted"), { status: 403 }));
+    mockCall.mockRejectedValue(Object.assign(new Error("not granted"), { status: 403 }),
+    );
     const { port, posted } = connectedBridge();
-    port.postMessage({ id: "r1", kind: "action", method: "POST", path: "/issues/i1/comments", body: {} });
+    port.postMessage({ id: "r1", kind: "action", method: "POST", path: "/issues/i1/comments", body: {},
+    });
     await vi.waitFor(() => expect(posted).toHaveLength(1));
     expect(posted[0]).toMatchObject({ id: "r1", ok: false, status: 403 });
   });
@@ -102,7 +175,8 @@ describe("surface bridge", () => {
   });
 
   it("refuses the wrong frame, protocol, challenge, and a replay", async () => {
-    const bridge = createSurfaceBridge({ installationId: "installation-1", bridgeToken: TOKEN });
+    const bridge = createSurfaceBridge({ installationId: "installation-1", bridgeToken: TOKEN,
+    });
     const frame = { contentWindow: {} } as unknown as HTMLIFrameElement;
     bridge.connect(frame, {});
 
@@ -123,22 +197,28 @@ describe("surface bridge", () => {
     replay.port2.start();
     connectMessage(frame.contentWindow, accepted.port1);
     connectMessage(frame.contentWindow, replay.port1);
-    accepted.port2.postMessage({ id: "real", kind: "action", method: "GET", path: "/context" });
-    replay.port2.postMessage({ id: "replay", kind: "action", method: "GET", path: "/context" });
+    accepted.port2.postMessage({ id: "real", kind: "action", method: "GET", path: "/context",
+    });
+    replay.port2.postMessage({ id: "replay", kind: "action", method: "GET", path: "/context",
+    });
 
     await vi.waitFor(() => expect(mockCall).toHaveBeenCalledTimes(1));
-    expect(mockCall).toHaveBeenCalledWith("installation-1", expect.objectContaining({ path: "/context" }));
+    expect(mockCall).toHaveBeenCalledWith("installation-1", expect.objectContaining({ path: "/context" }),
+    );
     expect(replayMessages).toHaveLength(0);
-    expect(acceptedMessages).toContainEqual(expect.objectContaining({ kind: "theme" }));
+    expect(acceptedMessages).toContainEqual(expect.objectContaining({ kind: "theme" }),
+    );
     bridge.close();
   });
 
   it("stops answering once closed", async () => {
     const { bridge, port } = connectedBridge();
-    port.postMessage({ id: "r1", kind: "action", method: "GET", path: "/context" });
+    port.postMessage({ id: "r1", kind: "action", method: "GET", path: "/context",
+    });
     await vi.waitFor(() => expect(mockCall).toHaveBeenCalledTimes(1));
     bridge.close();
-    port.postMessage({ id: "r2", kind: "action", method: "GET", path: "/context" });
+    port.postMessage({ id: "r2", kind: "action", method: "GET", path: "/context",
+    });
     await portDrain();
     expect(mockCall).toHaveBeenCalledTimes(1);
   });

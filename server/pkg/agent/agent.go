@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/filetouch"
 )
 
 // Backend is the unified interface for executing prompts via coding agents.
@@ -24,6 +26,9 @@ type Backend interface {
 
 // ExecOptions configures a single execution.
 type ExecOptions struct {
+	// FilePathProvider is daemon-selected, never sourced from a tool input.
+	FilePathProvider   string
+	FileTouchExecution *filetouch.Execution
 	// EnableTaskSupplement installs provider hooks only for runs whose daemon/server
 	// capability handshake enabled additional messages.
 	EnableTaskSupplement bool
@@ -211,15 +216,16 @@ const (
 
 // Message is a unified event emitted by an agent during execution.
 type Message struct {
-	Type      MessageType
-	Content   string         // text content (Text, Error, Log)
-	Tool      string         // tool name (ToolUse, ToolResult)
-	CallID    string         // tool call ID (ToolUse, ToolResult)
-	Input     map[string]any // tool input (ToolUse)
-	Output    string         // tool output (ToolResult)
-	Status    string         // agent status string (Status)
-	Level     string         // log level (Log)
-	SessionID string         // backend session id (Status), for early resume-pointer pinning
+	Type          MessageType
+	Content       string              // text content (Text, Error, Log)
+	Tool          string              // tool name (ToolUse, ToolResult)
+	CallID        string              // tool call ID (ToolUse, ToolResult)
+	Input         map[string]any      // tool input (ToolUse)
+	PathIntegrity filetouch.Integrity // internal source evidence, never taken from Input
+	Output        string              // tool output (ToolResult)
+	Status        string              // agent status string (Status)
+	Level         string              // log level (Log)
+	SessionID     string              // backend session id (Status), for early resume-pointer pinning
 }
 
 // TokenUsage tracks token consumption for a single model.

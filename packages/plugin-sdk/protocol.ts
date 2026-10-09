@@ -32,6 +32,7 @@ export type ThemeTokens = Record<string, string>;
 export type BridgeMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 export type BridgeRequest =
+  | { id: string; kind: "files.readSelected" }
   | {
       id: string;
       kind: "action";
@@ -70,6 +71,14 @@ export function isBridgeRequest(message: unknown): message is BridgeRequest {
   if (typeof message !== "object" || message === null) return false;
   const candidate = message as Record<string, unknown>;
   if (typeof candidate.id !== "string") return false;
-  if (candidate.kind === "ui.resize") return typeof candidate.height === "number";
-  return candidate.kind === "action" && typeof candidate.path === "string" && typeof candidate.method === "string";
+  if (candidate.kind === "files.readSelected")
+    return Object.keys(candidate).length === 2;
+  if (candidate.kind === "ui.resize") return (
+      typeof candidate.height === "number" &&
+      Number.isFinite(candidate.height) &&
+      Object.keys(candidate).length === 3
+    );
+  return (
+    candidate.kind === "action" && typeof candidate.path === "string" && typeof candidate.method === "string"
+  );
 }

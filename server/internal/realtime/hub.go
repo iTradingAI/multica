@@ -997,7 +997,7 @@ func (c *Client) handleFrame(raw []byte) {
 		} else {
 			c.handleUnsubscribe(p.Scope, p.ID)
 		}
-	case protocol.EventWorkspaceFilesResources, protocol.EventWorkspaceFilesList, protocol.EventWorkspaceFilesRead, protocol.EventWorkspaceFilesCancel:
+	case protocol.EventWorkspaceFilesResources, protocol.EventWorkspaceFilesList, protocol.EventWorkspaceFilesRead, protocol.EventWorkspaceFilesCancel, protocol.EventWorkspaceFilesViewerSelect, protocol.EventWorkspaceFilesViewerRead:
 		c.handleWorkspaceFilesClientFrame(f.Type, f.Payload)
 	case protocol.EventTerminalOpen,
 		protocol.EventTerminalInput,

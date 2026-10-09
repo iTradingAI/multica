@@ -18,7 +18,11 @@ const BRIDGE_CONNECT_MESSAGE = "multica:plugin-bridge-connect";
 type BridgeMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 type BridgeRequest =
-  | { id: string; kind: "action"; method: BridgeMethod; path: string; body?: unknown }
+  | { id: string; kind: "files.readSelected" }
+  | {
+      id: string;
+      kind: "action"; method: BridgeMethod; path: string; body?: unknown;
+    }
   | { id: string; kind: "ui.resize"; height: number };
 
 /** Paths a surface may name. Anything else is refused before it reaches fetch. */
@@ -47,7 +51,13 @@ function isBridgeRequest(value: unknown): value is BridgeRequest {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Record<string, unknown>;
   if (typeof candidate.id !== "string") return false;
-  if (candidate.kind === "ui.resize") return typeof candidate.height === "number";
+  if (candidate.kind === "files.readSelected")
+    return Object.keys(candidate).length === 2;
+  if (candidate.kind === "ui.resize") return (
+      typeof candidate.height === "number" &&
+      Number.isFinite(candidate.height) &&
+      Object.keys(candidate).length === 3
+    );
   return (
     candidate.kind === "action" &&
     typeof candidate.path === "string" &&
@@ -64,6 +74,10 @@ export interface SurfaceBridgeOptions {
   /** Mounted-on issue, forwarded to /context so the surface knows where it is. */
   issueId?: string;
   onResize?: (height: number) => void;
+  /** Viewer mode has no Action authority. Only the host's fixed selection is readable. */
+  readSelected?: () => Promise<{ text: string }>;
+  onConnected?: () => void;
+  onFailure?: () => void;
 }
 
 export interface SurfaceBridge {
@@ -78,7 +92,8 @@ export interface SurfaceBridge {
   close(): void;
 }
 
-export function createSurfaceBridge(options: SurfaceBridgeOptions): SurfaceBridge {
+export function createSurfaceBridge(options: SurfaceBridgeOptions,
+): SurfaceBridge {
   let port: MessagePort | null = null;
   let closed = false;
   let connected = false;
@@ -92,8 +107,46 @@ export function createSurfaceBridge(options: SurfaceBridgeOptions): SurfaceBridg
       return;
     }
 
+    if (request.kind === "files.readSelected") {
+      if (!options.readSelected) {
+        port.postMessage({
+          id: request.id,
+          ok: false,
+          status: 403,
+          error: "unavailable",
+        });
+        return;
+      }
+      try {
+        const data = await options.readSelected();
+        if (!closed && connected)
+          port.postMessage({ id: request.id, ok: true, status: 200, data });
+      } catch {
+        if (!closed) {
+          port.postMessage({
+            id: request.id,
+            ok: false,
+            status: 403,
+            error: "unavailable",
+          });
+          options.onFailure?.();
+        }
+      }
+      return;
+    }
+    if (options.readSelected) {
+      port.postMessage({
+        id: request.id,
+        ok: false,
+        status: 403,
+        error: "unsupported request",
+      });
+      return;
+    }
+
     if (!isAllowedPath(request.path)) {
-      port.postMessage({ id: request.id, ok: false, status: 400, error: `unsupported path ${request.path}` });
+      port.postMessage({ id: request.id, ok: false, status: 400, error: `unsupported path ${request.path}`,
+      });
       return;
     }
 
@@ -108,8 +161,12 @@ export function createSurfaceBridge(options: SurfaceBridgeOptions): SurfaceBridg
     } catch (error) {
       // The status matters to the surface: 403 means "the admin did not grant
       // this", which is a different thing for a plugin author to fix than 404.
-      const status = typeof (error as { status?: number })?.status === "number" ? (error as { status: number }).status : 500;
-      const message = error instanceof Error ? error.message : "plugin action failed";
+      const status =
+        typeof (error as { status?: number })?.status === "number"
+          ? (error as { status: number }).status
+          : 500;
+      const message =
+        error instanceof Error ? error.message : "plugin action failed";
       port.postMessage({ id: request.id, ok: false, status, error: message });
     }
   };
@@ -118,16 +175,26 @@ export function createSurfaceBridge(options: SurfaceBridgeOptions): SurfaceBridg
     connect(frame, theme) {
       if (closed) return;
       const onConnect = (event: MessageEvent) => {
-        const data = event.data as { type?: string; version?: number; challenge?: string } | null;
+        const data = event.data as {
+          type?: string;
+          version?: number;
+          challenge?: string;
+        } | null;
         if (data?.type !== BRIDGE_CONNECT_MESSAGE) return;
         // The outer frame is trusted host code. It forwards an inner port only
         // after its own source, protocol and challenge checks have passed.
-        if (!frame.contentWindow || event.source !== frame.contentWindow) return;
-        if (data.version !== BRIDGE_PROTOCOL_VERSION || data.challenge !== options.bridgeToken) return;
+        if (!frame.contentWindow || event.source !== frame.contentWindow)
+          return;
+        if (
+          data.version !== BRIDGE_PROTOCOL_VERSION ||
+          data.challenge !== options.bridgeToken
+        )
+          return;
         const guestPort = event.ports?.[0];
         if (!guestPort || closed || connected) return;
 
         connected = true;
+        options.onConnected?.();
         window.removeEventListener("message", onConnect);
         port = guestPort;
         port.onmessage = (portEvent) => {
@@ -145,7 +212,8 @@ export function createSurfaceBridge(options: SurfaceBridgeOptions): SurfaceBridg
     },
     close() {
       closed = true;
-      for (const listener of connectListeners.splice(0)) window.removeEventListener("message", listener);
+      for (const listener of connectListeners.splice(0))
+        window.removeEventListener("message", listener);
       port?.close();
       port = null;
     },

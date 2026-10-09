@@ -130,6 +130,23 @@
     "open_in_new_tab": "Ouvrir dans un nouvel onglet"
   },
   "workbench": {
+    "files": {
+      "title": "Fichiers",
+      "resource": "Répertoire",
+      "breadcrumb": "Emplacement du fichier",
+      "root": "Racine",
+      "refresh": "Actualiser",
+      "more": "Charger plus",
+      "empty": "Ce répertoire est vide.",
+      "expand": "Développer",
+      "collapse": "Réduire",
+      "loading": "Chargement des fichiers…",
+      "too_large": "Aperçu indisponible : le fichier dépasse 1 MiB.",
+      "binary": "Aperçu indisponible : contenu binaire ou UTF-8 invalide.",
+      "touches": "Activité des fichiers",
+      "touch_counts": "Le compteur inclut les appels d’écriture échoués ; Bash est exclu.",
+      "coverage": "Inconnu {{unknown}} · Indisponible {{unavailable}} · Incertain {{uncertain}} · Conflit {{conflicting}} · En attente {{pending}}"
+    },
     "title": "Atelier",
     "diagnostics": "État du répertoire",
     "loading": "Vérification de l’accès au répertoire…",

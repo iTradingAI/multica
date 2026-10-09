@@ -33,6 +33,7 @@ func HostCapabilities() Capabilities {
 			SurfaceIssuePanel:   true,
 			SurfaceModal:        true,
 			SurfaceSidebarPanel: true,
+			SurfaceFileViewer:   true,
 		},
 		// The agent trigger is not a call site the host drives: the hook is
 		// offered to an agent as an MCP tool and the agent decides. The

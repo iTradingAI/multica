@@ -178,6 +178,7 @@ type AgentTaskQueue struct {
 	CancelledByID             pgtype.UUID `json:"cancelled_by_id"`
 	CancelledByName           pgtype.Text `json:"cancelled_by_name"`
 	IssueSnapshot             []byte      `json:"issue_snapshot"`
+	FileClaimSnapshot         []byte      `json:"-"`
 }
 
 type AgentToLabel struct {
@@ -686,6 +687,22 @@ type Feedback struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type FileTouchExecution struct {
+	ID                 pgtype.UUID        `json:"id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	TaskID             pgtype.UUID        `json:"task_id"`
+	IssueID            pgtype.UUID        `json:"issue_id"`
+	RuntimeID          pgtype.UUID        `json:"runtime_id"`
+	DaemonID           string             `json:"daemon_id"`
+	DispatchedAt       pgtype.Timestamptz `json:"dispatched_at"`
+	ProjectID          pgtype.UUID        `json:"project_id"`
+	Cwd                string             `json:"cwd"`
+	PathPlatform       string             `json:"path_platform"`
+	SelectedResourceID pgtype.UUID        `json:"selected_resource_id"`
+	ClaimSnapshot      []byte             `json:"claim_snapshot"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
 type GithubInstallation struct {
 	ID               pgtype.UUID        `json:"id"`
 	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
@@ -853,6 +870,58 @@ type IssueDependency struct {
 	IssueID          pgtype.UUID `json:"issue_id"`
 	DependsOnIssueID pgtype.UUID `json:"depends_on_issue_id"`
 	Type             string      `json:"type"`
+}
+
+type IssueFileTouch struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	IssueID           pgtype.UUID        `json:"issue_id"`
+	RunID             pgtype.UUID        `json:"run_id"`
+	ExecutionID       pgtype.UUID        `json:"execution_id"`
+	SourceMessageID   pgtype.UUID        `json:"source_message_id"`
+	EventKey          pgtype.UUID        `json:"event_key"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	ResourceID        pgtype.UUID        `json:"resource_id"`
+	BindingGeneration pgtype.Int8        `json:"binding_generation"`
+	RelativePath      pgtype.Text        `json:"relative_path"`
+	IdentityKey       string             `json:"identity_key"`
+	Op                string             `json:"op"`
+	Role              string             `json:"role"`
+	Tool              string             `json:"tool"`
+	ObservedAt        pgtype.Timestamptz `json:"observed_at"`
+	MappingStatus     string             `json:"mapping_status"`
+	Reason            string             `json:"reason"`
+	ExtractorVersion  int32              `json:"extractor_version"`
+}
+
+type IssueFileTouchBackfill struct {
+	ID                 pgtype.UUID `json:"id"`
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	RunID              pgtype.UUID `json:"run_id"`
+	HighWater          pgtype.UUID `json:"high_water"`
+	Checkpoint         pgtype.UUID `json:"checkpoint"`
+	PreviewFingerprint string      `json:"preview_fingerprint"`
+	ExtractorVersion   int32       `json:"extractor_version"`
+	Completed          bool        `json:"completed"`
+}
+
+type IssueFileTouchEvent struct {
+	EventKey    pgtype.UUID `json:"event_key"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	RunID       pgtype.UUID `json:"run_id"`
+	Signature   string      `json:"signature"`
+	Uncertain   bool        `json:"uncertain"`
+	Conflict    bool        `json:"conflict"`
+}
+
+type IssueFileTouchPending struct {
+	SourceMessageID pgtype.UUID        `json:"source_message_id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	RunID           pgtype.UUID        `json:"run_id"`
+	Completed       bool               `json:"completed"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type IssueLabel struct {
@@ -1324,15 +1393,16 @@ type Project struct {
 }
 
 type ProjectResource struct {
-	ID           pgtype.UUID        `json:"id"`
-	ProjectID    pgtype.UUID        `json:"project_id"`
-	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
-	ResourceType string             `json:"resource_type"`
-	ResourceRef  []byte             `json:"resource_ref"`
-	Label        pgtype.Text        `json:"label"`
-	Position     int32              `json:"position"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	CreatedBy    pgtype.UUID        `json:"created_by"`
+	ID                pgtype.UUID        `json:"id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ResourceType      string             `json:"resource_type"`
+	ResourceRef       []byte             `json:"resource_ref"`
+	Label             pgtype.Text        `json:"label"`
+	Position          int32              `json:"position"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	BindingGeneration int64              `json:"binding_generation"`
 }
 
 type QuickAction struct {
@@ -1491,6 +1561,10 @@ type TaskMessage struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	OutputTruncated pgtype.Bool        `json:"output_truncated"`
 	CallID          pgtype.Text        `json:"call_id"`
+	FileExecutionID pgtype.UUID        `json:"-"`
+	SourceEventID   pgtype.UUID        `json:"-"`
+	PathIntegrity   []byte             `json:"-"`
+	ProofVersion    pgtype.Int4        `json:"-"`
 }
 
 type TaskSupplement struct {

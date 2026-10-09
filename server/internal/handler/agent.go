@@ -315,10 +315,11 @@ type RepoData struct {
 // well-known fields like url for github_repo. New types can be added without
 // changing this struct.
 type ProjectResourceData struct {
-	ID           string          `json:"id"`
-	ResourceType string          `json:"resource_type"`
-	ResourceRef  json.RawMessage `json:"resource_ref"`
-	Label        string          `json:"label,omitempty"`
+	BindingGeneration int64           `json:"binding_generation,omitempty"`
+	ID                string          `json:"id"`
+	ResourceType      string          `json:"resource_type"`
+	ResourceRef       json.RawMessage `json:"resource_ref"`
+	Label             string          `json:"label,omitempty"`
 }
 
 // ConnectedAppData keeps the daemon-claim wire field local to handler types
@@ -358,6 +359,7 @@ type TaskCancellationActor struct {
 }
 
 type AgentTaskResponse struct {
+	FileTouchProofVersion    int                    `json:"file_touch_proof_version,omitempty"`
 	StartClaimSupported      bool                   `json:"start_claim_supported,omitempty"`
 	CancelledByCommentChange bool                   `json:"cancelled_by_comment_change,omitempty"`
 	CancelledBy              *TaskCancellationActor `json:"cancelled_by,omitempty"`

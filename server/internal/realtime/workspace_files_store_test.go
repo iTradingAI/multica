@@ -65,6 +65,13 @@ func filesNativeDB(t *testing.T) *filesDBFixture {
 	if _, err = pool.Exec(ctx, ddl); err != nil {
 		t.Fatal(err)
 	}
+	guard, err := os.ReadFile("../../migrations/567_project_resource_binding_generation.up.sql")
+	if err != nil {
+		t.Fatal("read binding guard fixture", err)
+	}
+	if _, err = pool.Exec(ctx, string(guard)); err != nil {
+		t.Fatal("install binding guard fixture", err)
+	}
 	d := &filesDBFixture{user: uuid.NewString(), workspace: uuid.NewString(), daemon: uuid.NewString()}
 	d.f = testutil.New(pool, d.workspace, d.user)
 	d.store = WorkspaceFilesStore{DB: pool}
@@ -150,7 +157,7 @@ func TestWorkspaceFilesDatabaseAuthorizationMatrix(t *testing.T) {
 	}
 }
 func TestWorkspaceFilesDatabaseStreamingRevalidation(t *testing.T) {
-	for _, mutation := range []string{"member removed", "issue moved", "root changed", "daemon changed", "type changed", "resource deleted", "metadata only"} {
+	for _, mutation := range []string{"member removed", "issue moved", "root changed", "daemon changed", "type changed", "resource deleted", "mode changed", "metadata only"} {
 		t.Run(mutation, func(t *testing.T) {
 			d := filesNativeDB(t)
 			h := NewHub()
@@ -177,8 +184,10 @@ func TestWorkspaceFilesDatabaseStreamingRevalidation(t *testing.T) {
 				d.f.Exec(t, `UPDATE project_resource SET resource_type='github_repo' WHERE id=$1`, d.resource)
 			case "resource deleted":
 				d.f.Exec(t, `DELETE FROM project_resource WHERE id=$1`, d.resource)
+			case "mode changed":
+				d.f.Exec(t, `UPDATE project_resource SET resource_ref=jsonb_set(resource_ref,'{execution_mode}','"worktree"') WHERE id=$1`, d.resource)
 			case "metadata only":
-				d.f.Exec(t, `UPDATE project_resource SET label='renamed',position=99,resource_ref=jsonb_set(resource_ref,'{execution_mode}','"worktree"') WHERE id=$1`, d.resource)
+				d.f.Exec(t, `UPDATE project_resource SET label='renamed',position=99 WHERE id=$1`, d.resource)
 			}
 			filesChunk(h, r, 1, true)
 			if mutation == "metadata only" {

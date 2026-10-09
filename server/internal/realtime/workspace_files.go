@@ -81,6 +81,14 @@ func filesCancelFrame(r *filesRecord) []byte {
 	return marshalMessage(protocol.EventWorkspaceFilesCancel, protocol.WorkspaceFilesCancelPayload{WorkspaceFilesGeneration: r.target.Generation, DaemonReqID: r.target.RequestID, RuntimeID: r.target.RuntimeID})
 }
 func (h *Hub) filesFinishLocked(r *filesRecord, code string, cancel, remember bool) {
+	if r.viewer != nil && r.viewer.read != nil {
+		read := r.viewer.read
+		r.viewer.read = nil
+		h.filesFinishLocked(read, code, true, remember)
+	}
+	if r.selection != nil && r.selection.viewer != nil && r.selection.viewer.read == r {
+		r.selection.viewer.read = nil
+	}
 	if !h.files.retire(r, remember) {
 		return
 	}
@@ -100,9 +108,25 @@ func (h *Hub) sweepWorkspaceFiles() {
 	h.filesMu.Lock()
 	defer h.filesMu.Unlock()
 	h.files.sweep(h.files.now())
+	for _, socket := range h.files.sockets {
+		for _, record := range socket.active {
+			if record.viewer != nil && record.snapshot.ResourceID != "" && !record.viewer.checking && !h.files.now().Before(record.viewer.nextCheck) {
+				record.viewer.checking = true
+				go h.filesCheckViewer(record)
+			}
+		}
+	}
 }
 
 func (c *Client) handleWorkspaceFilesClientFrame(event string, raw json.RawMessage) {
+	if event == protocol.EventWorkspaceFilesViewerSelect || event == protocol.EventWorkspaceFilesViewerRead {
+		c.handleWorkspaceFilesViewerFrame(event, raw)
+		return
+	}
+	c.handleWorkspaceFilesRequest(event, raw, nil)
+}
+
+func (c *Client) handleWorkspaceFilesRequest(event string, raw json.RawMessage, selection *filesRecord) {
 	h := c.hub
 	req, err := protocol.DecodeWorkspaceFilesRequest(event, raw)
 	if err != nil {
@@ -132,26 +156,69 @@ func (c *Client) handleWorkspaceFilesClientFrame(event string, raw json.RawMessa
 		return
 	}
 	auth := h.files.auth
+	var reserved *filesRecord
+	if selection != nil {
+		if !h.files.contains(selection) || selection.viewer == nil || selection.viewer.read != nil || selection.ctx.Err() != nil || !h.files.enabled {
+			h.filesErrorLocked(c, req.ClientReqID, "", "forbidden")
+			h.filesMu.Unlock()
+			return
+		}
+		var code string
+		reserved, code = h.files.accept(c, event, req, selection.snapshot)
+		if code != "" {
+			h.filesErrorLocked(c, req.ClientReqID, "", code)
+			h.filesMu.Unlock()
+			return
+		}
+		reserved.selection = selection
+		selection.viewer.read = reserved
+		reserved.timer = time.AfterFunc(filesBudget, func() { h.filesTimeout(reserved) })
+	}
 	h.filesMu.Unlock()
 	if auth == nil {
 		h.filesMu.Lock()
+		if reserved != nil {
+			h.filesFinishLocked(reserved, "unavailable", true, true)
+			h.filesMu.Unlock()
+			return
+		}
 		h.filesErrorLocked(c, req.ClientReqID, "", "unavailable")
 		h.filesMu.Unlock()
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), filesBudget)
 	snapshot, code := auth.AuthorizeWorkspaceFiles(ctx, c.userID, c.workspaceID, req.Context, req.ResourceID)
+	if code == "" && req.BindingGeneration > 0 && snapshot.BindingGeneration != req.BindingGeneration {
+		code = "forbidden"
+	}
+	if reserved != nil {
+		snapshot, code = h.filesViewerAuthorization(reserved)
+	}
 	cancel()
 	h.filesMu.Lock()
 	defer h.filesMu.Unlock()
 	if !h.filesAliveLocked(c) {
 		return
 	}
+	if reserved != nil && (!h.files.contains(reserved) || !h.files.contains(selection)) {
+		return
+	}
+	if reserved != nil && code == "" && snapshot != selection.snapshot {
+		code = "forbidden"
+	}
 	if code != "" {
+		if reserved != nil {
+			h.filesFinishLocked(reserved, filesAuthCode(code), true, true)
+			return
+		}
 		h.filesErrorLocked(c, req.ClientReqID, "", filesAuthCode(code))
 		return
 	}
 	if !h.files.enabled {
+		if reserved != nil {
+			h.filesFinishLocked(reserved, "unavailable", true, true)
+			return
+		}
 		h.filesErrorLocked(c, req.ClientReqID, "", "unavailable")
 		return
 	}
@@ -159,16 +226,25 @@ func (c *Client) handleWorkspaceFilesClientFrame(event string, raw json.RawMessa
 	if event != protocol.EventWorkspaceFilesResources {
 		target, code = h.files.relay.SelectWorkspaceFilesTarget(snapshot.DaemonID, snapshot.WorkspaceID, h.files.newID())
 		if code != "" {
+			if reserved != nil {
+				h.filesFinishLocked(reserved, filesRouteCode(code), true, true)
+				return
+			}
 			h.filesErrorLocked(c, req.ClientReqID, snapshot.ResourceID, filesRouteCode(code))
 			return
 		}
 	}
-	r, code := h.files.accept(c, event, req, snapshot)
+	r := reserved
+	if r == nil {
+		r, code = h.files.accept(c, event, req, snapshot)
+	}
 	if code != "" {
 		h.filesErrorLocked(c, req.ClientReqID, snapshot.ResourceID, code)
 		return
 	}
-	r.timer = time.AfterFunc(filesBudget, func() { h.filesTimeout(r) })
+	if r.timer == nil {
+		r.timer = time.AfterFunc(filesBudget, func() { h.filesTimeout(r) })
+	}
 	if event == protocol.EventWorkspaceFilesResources {
 		go h.filesResources(r)
 		return
@@ -213,7 +289,7 @@ func filesDaemonCode(code string) string {
 	switch code {
 	case "unsupported":
 		return "daemon_upgrade_required"
-	case "invalid_path", "symlink_denied", "not_regular", "not_directory", "too_large", "invalid_utf8", "timeout", "busy", "invalid_cursor":
+	case "invalid_path", "symlink_denied", "not_regular", "not_directory", "too_large", "invalid_utf8", "binary_content", "timeout", "busy", "invalid_cursor":
 		return code
 	default:
 		return "unavailable"
@@ -375,9 +451,16 @@ func (h *Hub) DeliverWorkspaceFilesFromDaemon(source protocol.WorkspaceFilesConn
 	}
 	h.filesMu.Unlock()
 	snapshot, code := r.auth.AuthorizeWorkspaceFiles(r.ctx, r.owner.userID, r.owner.workspaceID, r.request.Context, r.snapshot.ResourceID)
+	if r.selection != nil {
+		snapshot, code = h.filesViewerAuthorization(r)
+	}
 	h.filesMu.Lock()
 	defer h.filesMu.Unlock()
 	if !h.files.contains(r) {
+		return
+	}
+	if r.selection != nil && (!h.files.contains(r.selection) || r.selection.ctx.Err() != nil) {
+		h.filesFinishLocked(r, "forbidden", true, true)
 		return
 	}
 	if code != "" {
@@ -421,6 +504,10 @@ func (h *Hub) DeliverWorkspaceFilesFromDaemon(source protocol.WorkspaceFilesConn
 	case protocol.EventWorkspaceFilesReadChunk:
 		if len(p.Data) > 32*1024 || !utf8.Valid(p.Data) || r.readBytes+len(p.Data) > 1048576 || r.nextSeq >= 33 {
 			h.filesFinishLocked(r, "unavailable", true, true)
+			return
+		}
+		if protocol.WorkspaceFilesBinaryContent(p.Data) {
+			h.filesFinishLocked(r, "binary_content", true, true)
 			return
 		}
 		r.readBytes += len(p.Data)

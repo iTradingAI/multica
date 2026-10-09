@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -33,6 +34,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dbid"
+	"github.com/multica-ai/multica/server/pkg/filetouch"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/skillbundle"
@@ -2137,6 +2139,21 @@ func (h *Handler) finalizeClaimDelivery(
 		// its current owner as the task-token identity rather than the stale
 		// claim-time snapshot captured by the caller.
 		tokenParams.UserID = locked.OwnerID
+		if response != nil && filetouch.Ready(ctx, h.DB) && middleware.DaemonIDFromContext(ctx) == locked.DaemonID.String && locked.DaemonID.String != "" {
+			claim := h.fileTouchClaim(*task, locked, *response)
+			snapshot, marshalErr := json.Marshal(claim)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			rows, snapshotErr := qtx.SetTaskFileClaimSnapshot(ctx, db.SetTaskFileClaimSnapshotParams{Snapshot: snapshot, TaskID: task.ID, RuntimeID: task.RuntimeID, DispatchedAt: task.DispatchedAt})
+			if snapshotErr != nil {
+				return snapshotErr
+			}
+			if rows != 1 {
+				return fmt.Errorf("file claim changed before delivery")
+			}
+			response.FileTouchProofVersion = filetouch.ProofVersion
+		}
 		return nil
 	}
 
@@ -5159,6 +5176,9 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 // ---------------------------------------------------------------------------
 
 type TaskMessageRequest struct {
+	PathIntegrity   *filetouch.Integrity `json:"path_integrity,omitempty"`
+	SourceEventID   string               `json:"source_event_id,omitempty"`
+	FileExecutionID string               `json:"file_execution_id,omitempty"`
 	// CallID is an opaque tool-call identity scoped to one backend execution.
 	CallID  string         `json:"call_id,omitempty"`
 	Seq     int            `json:"seq"`
@@ -5186,7 +5206,8 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
 	var req TaskMessageBatchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	raw, readErr := io.ReadAll(io.LimitReader(r.Body, (32<<20)+1))
+	if readErr != nil || len(raw) > 32<<20 || json.Unmarshal(raw, &req) != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -5241,6 +5262,9 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 		OutputTruncations: make([]string, 0, n),
 	}
 	createdAts := taskMessageCreatedAts(req.Messages, time.Now().UTC())
+	// Pausing projection must retain the atomic source + pending record. New
+	// claims still capture evidence while the worker is paused.
+	params.CollectFileTouches = filetouch.Ready(r.Context(), h.DB)
 	for i, msg := range req.Messages {
 		id, err := uuid.NewV7()
 		if err != nil {
@@ -5250,6 +5274,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Redact sensitive information before persisting or broadcasting.
+		beforeInput, beforeTool, beforeType := msg.Input, msg.Tool, msg.Type
 		msg.Content = redact.Text(msg.Content)
 		msg.Output = redact.Text(msg.Output)
 		msg.Input = redact.InputMap(msg.Input)
@@ -5274,6 +5299,23 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		proof, executionID, sourceEventID := h.terminalFileTouchProof(r.Context(), task, wsID, msg, beforeTool, beforeInput, beforeType == "tool_use" && filetouch.LosslessJSON(raw))
+		if msg.Type == "tool_use" {
+			filetouch.Protect(msg.Tool, msg.Input, proof)
+		}
+		proofJSON := ""
+		if msg.Type == "tool_use" {
+			encoded, _ := json.Marshal(proof)
+			proofJSON = string(encoded)
+		}
+		params.FileExecutionIds = append(params.FileExecutionIds, executionID)
+		params.SourceEventIds = append(params.SourceEventIds, sourceEventID)
+		params.PathIntegrities = append(params.PathIntegrities, proofJSON)
+		proofVersion := ""
+		if proofJSON != "" {
+			proofVersion = strconv.Itoa(filetouch.ProofVersion)
+		}
+		params.ProofVersions = append(params.ProofVersions, proofVersion)
 		inputJSON := ""
 		if msg.Input != nil {
 			// Fail loud rather than dropping the field: a tool call whose
