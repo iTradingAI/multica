@@ -15,7 +15,7 @@ const state = vi.hoisted(() => ({
 vi.mock("@multica/core/config", () => ({ useFeatureEnabled: () => state.enabled }));
 vi.mock("../platform/local-directory", () => ({ isDesktopShell: () => state.desktop }));
 vi.mock("@multica/core/api", () => ({ api: { listPluginInstallations: (...args: unknown[]) => state.list(...args), getPluginSurfaceLaunch: (...args: unknown[]) => state.launch(...args) } }));
-vi.mock("@multica/core/realtime", () => ({ useWS: () => ({ send: state.send, subscribe: state.subscribe, onReconnect: state.onReconnect }) }));
+vi.mock("@multica/core/realtime", () => ({ useWS: () => ({ send: state.send, subscribe: state.subscribe, onReconnect: state.onReconnect, onReady: state.onReconnect }) }));
 vi.mock("../plugins/surface-bridge", () => ({ createSurfaceBridge: (options: unknown) => { state.bridgeOptions(options); return { close: state.close, connect: state.connect }; } }));
 
 function setup(context: React.ComponentProps<typeof WorkbenchDrawer>["context"] = { kind: "issue", issue_id: "issue-1" }) {

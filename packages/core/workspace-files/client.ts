@@ -7,7 +7,7 @@ export type WorkbenchContext =
   | { kind: "project"; project_id: string; issue_id?: never };
 
 export interface WorkspaceFilesTransport {
-  send(message: WSMessage): void;
+  send(message: WSMessage): boolean | void;
   subscribe(event: WSEventType, handler: (payload: unknown) => void,
   ): () => void;
 }
@@ -224,7 +224,7 @@ export function requestWorkspaceFiles(ws: WorkspaceFilesTransport, request: Requ
     );
     signal?.addEventListener("abort", abort, { once: true });
     try {
-      ws.send({
+      const sent = ws.send({
         type: event,
         payload:
           request.operation === "viewer_read"
@@ -252,6 +252,7 @@ export function requestWorkspaceFiles(ws: WorkspaceFilesTransport, request: Requ
                     }),
               },
       });
+      if (sent === false) fail("unavailable");
     } catch {
       fail("unavailable");
     }

@@ -63,7 +63,7 @@ function WorkbenchBody({ wsId, context, hasProject = true }: Props) {
   const panel = panels.find((entry) => entry.id === active);
   const ws = useWS();
   const queryClient = useQueryClient();
-  const { send, subscribe, onReconnect } = ws;
+  const { send, subscribe, onReady } = ws;
   useEffect(() => {
     let mounted = true;
     const refresh = async () => {
@@ -72,9 +72,9 @@ function WorkbenchBody({ wsId, context, hasProject = true }: Props) {
       if (mounted) await queryClient.invalidateQueries({ queryKey });
     };
     void refresh();
-    const unsubscribe = onReconnect(() => { void refresh(); });
+    const unsubscribe = onReady(() => { void refresh(); });
     return () => { mounted = false; unsubscribe(); };
-  }, [send, subscribe, onReconnect, wsId, scope, queryClient]);
+  }, [send, subscribe, onReady, wsId, scope, queryClient]);
   return (
     <Tabs value={active} onValueChange={(value) => setSelected(String(value))} className="min-h-0 flex-1 px-4 pb-4">
     <TabsList aria-label={t(($) => $.workbench.title)} className="max-w-full shrink-0 overflow-x-auto justify-start">{tabs.map((tab) => (

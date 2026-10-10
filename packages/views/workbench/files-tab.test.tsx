@@ -10,6 +10,8 @@ const state = vi.hoisted(() => ({
   reconnect: () => {},
   holdRead: false,
   badCursor: false,
+  connected: true,
+  ready: () => {},
 }));
 function emit(type: string, payload: unknown) {
   state.handlers.get(type)?.forEach((handler) => handler(payload));
@@ -26,8 +28,12 @@ const onReconnect = (callback: () => void) => {
   state.reconnect = callback;
   return () => {};
 };
+const onReady = (callback: () => void) => {
+  state.ready = callback;
+  return () => { state.ready = () => {}; };
+};
 vi.mock("@multica/core/realtime", () => ({
-  useWS: () => ({ send: state.send, subscribe, onReconnect }),
+  useWS: () => ({ send: state.send, subscribe, onReconnect, onReady }),
 }));
 vi.mock("@multica/core/config", () => ({ useFeatureEnabled: () => false }));
 vi.mock("../platform/local-directory", () => ({ isDesktopShell: () => false }));
@@ -37,8 +43,11 @@ beforeEach(() => {
   state.send.mockReset();
   state.holdRead = false;
   state.badCursor = false;
+  state.connected = true;
+  state.ready = () => {};
   state.send.mockImplementation(
-    ({ type, payload }: { type: string; payload: Record<string, unknown> }) =>
+    ({ type, payload }: { type: string; payload: Record<string, unknown> }) => {
+      if (!state.connected) return false;
       queueMicrotask(() => {
         if (type === "workspace_files.resources")
           emit("workspace_files.resources_result", {
@@ -86,7 +95,9 @@ beforeEach(() => {
             data: btoa("selected evidence"),
             eof: true,
           });
-      }),
+      });
+      return true;
+    },
   );
 });
 function setup() {
@@ -109,6 +120,18 @@ const requests = (type: string) =>
     .filter((frame) => frame.type === type);
 
 describe("Files tree lifecycle (renderer A only)", () => {
+  it("recovers a resource request made before the first authenticated connection without manual retry", async () => {
+    state.connected = false;
+    setup();
+    await waitFor(() => expect(requests("workspace_files.resources")).toHaveLength(1));
+    act(() => {
+      state.connected = true;
+      state.ready();
+    });
+    await screen.findByRole("button", { name: "note.txt" });
+    expect(requests("workspace_files.resources")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+  });
   it("loads only expanded nodes and pages with the returned cursor", async () => {
     setup();
     await screen.findByRole("button", { name: "note.txt" });
@@ -169,6 +192,23 @@ describe("Files tree lifecycle (renderer A only)", () => {
       }),
     );
     expect(screen.queryByText("late private content")).not.toBeInTheDocument();
+  });
+  it("authenticated reconnection clears selection and ignores the retired preview response", async () => {
+    setup();
+    await screen.findByRole("button", { name: "note.txt" });
+    state.holdRead = true;
+    fireEvent.click(screen.getByRole("button", { name: "note.txt" }));
+    await waitFor(() => expect(requests("workspace_files.read")).toHaveLength(1));
+    const id = requests("workspace_files.read")[0].payload.client_req_id;
+    act(() => state.ready());
+    await screen.findByRole("button", { name: "note.txt" });
+    expect(requests("workspace_files.cancel").some(frame => frame.payload.client_req_id === id)).toBe(true);
+    act(() => emit("workspace_files.read_chunk", {
+      client_req_id: id, resource_id: "resource", seq: 0,
+      data: btoa("retired preview content"), eof: true,
+    }));
+    expect(screen.queryByText("retired preview content")).not.toBeInTheDocument();
+    expect(requests("workspace_files.read")).toHaveLength(1);
   });
   it("refresh retires an active preview instead of reusing its buffer", async () => {
     setup();

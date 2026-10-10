@@ -22,13 +22,13 @@ interface Props {
 }
 
 export function FilesTab(props: Props) {
-  const { send, subscribe, onReconnect } = useWS();
+  const { send, subscribe, onReady } = useWS();
   const ws = useMemo(() => ({ send, subscribe }), [send, subscribe]);
   const [epoch, setEpoch] = useState(0);
   useEffect(() => {
     const invalidate = () => setEpoch((value) => value + 1);
     const cleanups = [
-      onReconnect(invalidate),
+      onReady(invalidate),
       ...(
         [
           "member:removed",
@@ -43,7 +43,7 @@ export function FilesTab(props: Props) {
       ).map((event) => subscribe(event, invalidate)),
     ];
     return () => cleanups.forEach((cleanup) => cleanup());
-  }, [subscribe, onReconnect]);
+  }, [subscribe, onReady]);
   return <FilesSession key={epoch} {...props} ws={ws} />;
 }
 

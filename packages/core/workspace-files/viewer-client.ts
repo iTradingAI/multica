@@ -91,10 +91,11 @@ export function selectFileViewer(
     );
     signal.addEventListener("abort", abort, { once: true });
     try {
-      ws.send({
+      const sent = ws.send({
         type: "workspace_files.viewer_select",
         payload: { client_req_id: id, ...request },
       });
+      if (sent === false) fail("unavailable");
     } catch {
       fail("unavailable");
     }
