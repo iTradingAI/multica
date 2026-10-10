@@ -39,7 +39,7 @@ export function pluginSurfaceLaunchOptions(
     // the same mounted panel to another issue also needs a fresh launch because
     // the issue-scoped bridge is replaced with it.
     queryKey: [...pluginKeys.all(wsId), installationId, "surface-launch", surfaceKey, packageVersionId, launchInstance, issueId ?? ""] as const,
-    queryFn: () => api.getPluginSurfaceLaunch(wsId, installationId, surfaceKey),
+    queryFn: ({ signal }) => api.getPluginSurfaceLaunch(wsId, installationId, surfaceKey, { signal }),
     enabled: wsId.length > 0 && installationId.length > 0 && surfaceKey.length > 0,
     staleTime: 0,
     gcTime: 0,

@@ -1,3 +1,4 @@
+import { FileTouchSelectionSchema, IssueFileTouchesSchema, type IssueFileTouches, type FileTouchSelection } from "../workspace-files/touches";
 import type { ZodType } from "zod";
 import type { IssueWakeup, IssueWakeupInput, IssueWakeupSummaryRow, PausedWakeup, SystemWakeup, WakeupRun, WorkspaceSystemWakeup } from "../types/issue-wakeup";
 import type { WorkspaceWakeupPage, WorkspaceWakeupFilters } from "../types/issue-wakeup";
@@ -1401,6 +1402,34 @@ export class ApiClient {
       throw new Error("GET /api/issues/:id returned a malformed issue");
     }
     return issue;
+  }
+
+  async listIssueFileTouches(
+    id: string,
+    cursor = "",
+    signal?: AbortSignal,
+  ): Promise<IssueFileTouches> {
+    const raw = await this.fetch<unknown>(
+        `/api/issues/${encodeURIComponent(id)}/file-touches${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+        { signal },
+      );
+    const value = parseWithFallback<IssueFileTouches | null>(raw, IssueFileTouchesSchema, null, { endpoint: "GET /api/issues/:id/file-touches" });
+    if (!value) throw new Error("Malformed file touches response");
+    return value;
+  }
+
+  async resolveIssueFileTouch(
+    id: string,
+    touchId: string,
+    signal?: AbortSignal,
+  ): Promise<FileTouchSelection> {
+    const raw = await this.fetch<unknown>(
+        `/api/issues/${encodeURIComponent(id)}/file-touches/${encodeURIComponent(touchId)}/selection`,
+        { signal },
+      );
+    const value = parseWithFallback<FileTouchSelection | null>(raw, FileTouchSelectionSchema, null, { endpoint: "GET /api/issues/:id/file-touches/:touchId/selection" });
+    if (!value) throw new Error("Malformed file touch selection");
+    return value;
   }
 
   async createIssue(data: CreateIssueRequest): Promise<Issue> {
@@ -3189,9 +3218,10 @@ export class ApiClient {
   }
 
   /** Mint one hosted document URL and its single-use bridge proof. */
-  async getPluginSurfaceLaunch(workspaceId: string, installationId: string, surfaceKey: string): Promise<PluginSurfaceLaunch> {
+  async getPluginSurfaceLaunch(workspaceId: string, installationId: string, surfaceKey: string, options?: { signal?: AbortSignal }): Promise<PluginSurfaceLaunch> {
     const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/plugins/${installationId}/surfaces/${encodeURIComponent(surfaceKey)}/launch`,
+      { signal: options?.signal },
     );
     return parseWithFallback(raw, PluginSurfaceLaunchSchema, EMPTY_PLUGIN_SURFACE_LAUNCH, {
       endpoint: "GET /api/workspaces/{id}/plugins/{installationId}/surfaces/{surfaceKey}/launch",

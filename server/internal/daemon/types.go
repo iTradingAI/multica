@@ -45,10 +45,11 @@ type RepoData struct {
 // ProjectResourceData mirrors handler.ProjectResourceData — a single project
 // resource as delivered to the daemon. resource_ref is type-specific JSON.
 type ProjectResourceData struct {
-	ID           string          `json:"id"`
-	ResourceType string          `json:"resource_type"`
-	ResourceRef  json.RawMessage `json:"resource_ref"`
-	Label        string          `json:"label,omitempty"`
+	BindingGeneration int64           `json:"binding_generation,omitempty"`
+	ID                string          `json:"id"`
+	ResourceType      string          `json:"resource_type"`
+	ResourceRef       json.RawMessage `json:"resource_ref"`
+	Label             string          `json:"label,omitempty"`
 }
 
 // ConnectedAppData keeps the claim-response field local to daemon types while
@@ -68,6 +69,9 @@ type IssueStatusData struct {
 // Task represents a claimed task from the server.
 // Agent data (name, skills) is populated by the claim endpoint.
 type Task struct {
+	// Never inject this task-bound machine credential into provider env/config.
+	FileTouchDaemonToken  string `json:"file_touch_daemon_token,omitempty"`
+	FileTouchProofVersion int    `json:"file_touch_proof_version,omitempty"`
 	// StartClaimSupported gates retries when talking to older servers.
 	StartClaimSupported  bool                   `json:"start_claim_supported,omitempty"`
 	DispatchedAt         string                 `json:"dispatched_at,omitempty"`

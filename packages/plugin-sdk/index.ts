@@ -152,17 +152,44 @@ class Bridge {
     else this.queued.push(request);
   }
 
-  async request<T>(method: BridgeMethod, path: string, body?: unknown): Promise<T> {
+  async request<T>(method: BridgeMethod, path: string, body?: unknown,
+  ): Promise<T> {
     await this.ready;
     const id = `r${++this.sequence}`;
     const request: BridgeRequest = { id, kind: "action", method, path, body };
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new MulticaPluginError(408, `Multica did not answer ${method} ${path} in time`));
+        reject(
+          new MulticaPluginError(
+            408,
+            `Multica did not answer ${method} ${path} in time`,
+          ),
+        );
       }, DEFAULT_TIMEOUT_MS);
-      this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timer });
+      this.pending.set(id, {
+        resolve: resolve as (value: unknown) => void,
+        reject,
+        timer,
+      });
       this.port?.postMessage(request);
+    });
+  }
+
+  async readSelected(): Promise<{ text: string }> {
+    await this.ready;
+    const id = `r${++this.sequence}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new MulticaPluginError(408, "Selected file read timed out"));
+      }, 10_000);
+      this.pending.set(id, {
+        resolve: resolve as (value: unknown) => void,
+        reject,
+        timer,
+      });
+      this.port?.postMessage({ id, kind: "files.readSelected" });
     });
   }
 }
@@ -172,24 +199,38 @@ const bridge = new Bridge();
 function storageApi(scope: "workspace" | "user") {
   return {
     async list(): Promise<StorageKey[]> {
-      const result = await bridge.request<{ keys: StorageKey[] }>("GET", `/storage/${scope}`);
+      const result = await bridge.request<{ keys: StorageKey[] }>(
+        "GET",
+        `/storage/${scope}`,
+      );
       return result.keys ?? [];
     },
     async get(key: string): Promise<string | null> {
       try {
-        const result = await bridge.request<{ value: string }>("GET", `/storage/${scope}/${encodeURIComponent(key)}`);
+        const result = await bridge.request<{ value: string }>(
+          "GET",
+          `/storage/${scope}/${encodeURIComponent(key)}`,
+        );
         return result.value;
       } catch (error) {
         // A missing key is an ordinary outcome, not an error to handle.
-        if (error instanceof MulticaPluginError && error.status === 404) return null;
+        if (error instanceof MulticaPluginError && error.status === 404)
+          return null;
         throw error;
       }
     },
     async set(key: string, value: string): Promise<void> {
-      await bridge.request<void>("PUT", `/storage/${scope}/${encodeURIComponent(key)}`, { value });
+      await bridge.request<void>(
+        "PUT",
+        `/storage/${scope}/${encodeURIComponent(key)}`,
+        { value },
+      );
     },
     async delete(key: string): Promise<void> {
-      await bridge.request<void>("DELETE", `/storage/${scope}/${encodeURIComponent(key)}`);
+      await bridge.request<void>(
+        "DELETE",
+        `/storage/${scope}/${encodeURIComponent(key)}`,
+      );
     },
   };
 }
@@ -197,6 +238,10 @@ function storageApi(scope: "workspace" | "user") {
 let cachedContext: PluginContext | null = null;
 
 export const multica = {
+  files: {
+    /** Only available in a file_viewer. No path, resource, token or Action API. */
+    readSelected: () => bridge.readSelected(),
+  },
   context: {
     /** Who is looking, where, and which issue this surface is mounted on. */
     async get(force = false): Promise<PluginContext> {
@@ -212,21 +257,38 @@ export const multica = {
       const id = issueId ?? (await requireIssueId());
       return bridge.request<Issue>("GET", `/issues/${encodeURIComponent(id)}`);
     },
-    async update(patch: { title?: string; description?: string }, issueId?: string): Promise<Issue> {
+    async update(
+      patch: { title?: string; description?: string },
+      issueId?: string,
+    ): Promise<Issue> {
       const id = issueId ?? (await requireIssueId());
-      return bridge.request<Issue>("PATCH", `/issues/${encodeURIComponent(id)}`, patch);
+      return bridge.request<Issue>(
+        "PATCH",
+        `/issues/${encodeURIComponent(id)}`,
+        patch,
+      );
     },
     async comments(issueId?: string): Promise<Comment[]> {
       const id = issueId ?? (await requireIssueId());
-      const result = await bridge.request<{ comments: Comment[] }>("GET", `/issues/${encodeURIComponent(id)}/comments`);
+      const result = await bridge.request<{ comments: Comment[] }>(
+        "GET",
+        `/issues/${encodeURIComponent(id)}/comments`,
+      );
       return result.comments ?? [];
     },
-    async comment(input: { body: string; parentId?: string }, issueId?: string): Promise<Comment> {
+    async comment(
+      input: { body: string; parentId?: string },
+      issueId?: string,
+    ): Promise<Comment> {
       const id = issueId ?? (await requireIssueId());
-      return bridge.request<Comment>("POST", `/issues/${encodeURIComponent(id)}/comments`, {
-        content: input.body,
-        parent_id: input.parentId,
-      });
+      return bridge.request<Comment>(
+        "POST",
+        `/issues/${encodeURIComponent(id)}/comments`,
+        {
+          content: input.body,
+          parent_id: input.parentId,
+        },
+      );
     },
   },
 
@@ -250,18 +312,26 @@ export const multica = {
      */
     async invoke(hookKey: string, input?: unknown): Promise<HookResult> {
       const issue = (await multica.context.get()).issue;
-      return bridge.request<HookResult>("POST", `/hooks/${encodeURIComponent(hookKey)}`, {
-        trigger: "ui",
-        issue_id: issue?.id,
-        input,
-      });
+      return bridge.request<HookResult>(
+        "POST",
+        `/hooks/${encodeURIComponent(hookKey)}`,
+        {
+          trigger: "ui",
+          issue_id: issue?.id,
+          input,
+        },
+      );
     },
   },
 
   ui: {
     /** Ask the host for a different frame height, in CSS pixels. */
     resize(height: number) {
-      bridge.notify({ id: `resize${Date.now()}`, kind: "ui.resize", height: Math.max(0, Math.round(height)) });
+      bridge.notify({
+        id: `resize${Date.now()}`,
+        kind: "ui.resize",
+        height: Math.max(0, Math.round(height)),
+      });
     },
     /** Current design tokens, and a subscription for theme switches. */
     onThemeChange(listener: (theme: ThemeTokens) => void): () => void {
@@ -273,7 +343,10 @@ export const multica = {
 async function requireIssueId(): Promise<string> {
   const context = await multica.context.get();
   if (!context.issue) {
-    throw new MulticaPluginError(400, "This surface is not mounted on an issue; pass an issue id explicitly.");
+    throw new MulticaPluginError(
+      400,
+      "This surface is not mounted on an issue; pass an issue id explicitly.",
+    );
   }
   return context.issue.id;
 }

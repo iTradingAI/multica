@@ -1405,6 +1405,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	hub.SetTerminalAuthorizer(h)
 	hub.SetTerminalRelay(daemonHub)
 	daemonHub.SetTerminalBridge(hub)
+	hub.ConfigureWorkspaceFiles(os.Getenv("MULTICA_WORKSPACE_FILES_ENABLED") == "true", os.Getenv("MULTICA_WORKSPACE_FILES_SINGLE_API") == "true", realtime.WorkspaceFilesStore{DB: pool}, daemonHub)
+	hub.ConfigureWorkspaceFilesViewer(h)
+	daemonHub.SetWorkspaceFilesBridge(hub)
 	health := newServerHealth(pool)
 
 	r := chi.NewRouter()
@@ -1602,6 +1605,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/fail", h.FailTask)
 		r.Post("/tasks/{taskId}/usage", h.ReportTaskUsage)
 		r.Post("/tasks/{taskId}/messages", h.ReportTaskMessages)
+		r.Post("/tasks/{taskId}/file-executions", h.RegisterTaskFileExecution)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
 		r.Post("/tasks/{taskId}/cancel-ack", h.AckTaskCancelled)
 
@@ -2033,6 +2037,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/comments", h.CreateComment)
 					r.Get("/comments", h.ListComments)
 					r.Get("/timeline", h.ListTimeline)
+					r.Get("/file-touches", h.ListIssueFileTouches)
+					r.Get("/file-touches/{touchId}/selection", h.ResolveIssueFileTouch)
 					r.Get("/subscribers", h.ListIssueSubscribers)
 					r.Post("/subscribe", h.SubscribeToIssue)
 					r.Post("/unsubscribe", h.UnsubscribeFromIssue)

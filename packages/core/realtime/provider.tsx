@@ -28,11 +28,13 @@ type EventHandler = (payload: unknown, actorId?: string, actorType?: string) => 
 interface WSContextValue {
   subscribe: (event: WSEventType, handler: EventHandler) => () => void;
   onReconnect: (callback: () => void) => () => void;
+  onReady: (callback: () => void) => () => void;
   /**
    * Send a client frame (e.g. `{type:"subscribe",...}` or a terminal.* frame)
-   * on the shared connection. No-op while the socket is not open.
+   * on the shared connection. Returns false unless it is authenticated.
+   * Frames are never queued across connection/workspace lifetimes.
    */
-  send: (message: WSMessage) => void;
+  send: (message: WSMessage) => boolean;
 }
 
 const WSContext = createContext<WSContextValue | null>(null);
@@ -153,13 +155,21 @@ export function WSProvider({
 
   const send = useCallback(
     (message: WSMessage) => {
-      wsClient?.send(message);
+      return wsClient?.send(message) ?? false;
+    },
+    [wsClient],
+  );
+
+  const onReady = useCallback(
+    (callback: () => void) => {
+      if (!wsClient) return () => {};
+      return wsClient.onReady(callback);
     },
     [wsClient],
   );
 
   return (
-    <WSContext.Provider value={{ subscribe, onReconnect: onReconnectCb, send }}>
+    <WSContext.Provider value={{ subscribe, onReconnect: onReconnectCb, onReady, send }}>
       {children}
     </WSContext.Provider>
   );

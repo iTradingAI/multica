@@ -4,7 +4,10 @@ package protocol
 // browser-facing request identifier is translated by the server; the daemon
 // only sees daemon_req_id so it cannot correlate work across client sockets.
 const (
-	DaemonCapabilityWorkspaceFilesV1 = "workspace-files-v1"
+	DaemonCapabilityWorkspaceFilesV1   = "workspace-files-v1"
+	DaemonCapabilityWorkspaceFilesV2   = "workspace-files-v2"
+	EventWorkspaceFilesResources       = "workspace_files.resources"
+	EventWorkspaceFilesResourcesResult = "workspace_files.resources_result"
 
 	EventWorkspaceFilesList       = "workspace_files.list"
 	EventWorkspaceFilesRead       = "workspace_files.read"
@@ -19,6 +22,7 @@ const (
 	WorkspaceFilesErrorNotDirectory  = "not_directory"
 	WorkspaceFilesErrorTooLarge      = "too_large"
 	WorkspaceFilesErrorInvalidUTF8   = "invalid_utf8"
+	WorkspaceFilesErrorBinaryContent = "binary_content"
 	WorkspaceFilesErrorTimeout       = "timeout"
 	WorkspaceFilesErrorBusy          = "busy"
 	WorkspaceFilesErrorUnsupported   = "unsupported"
@@ -30,17 +34,20 @@ const (
 // accepts a filesystem root; the server resolves the resource and creates a
 // separate daemon request with a fresh daemon_req_id.
 type WorkspaceFilesClientListPayload struct {
-	ClientReqID string `json:"client_req_id"`
-	ResourceID  string `json:"resource_id"`
-	Path        string `json:"path"`
-	Cursor      string `json:"cursor,omitempty"`
-	PageSize    int    `json:"page_size,omitempty"`
+	ClientReqID string                `json:"client_req_id"`
+	Context     WorkspaceFilesContext `json:"context"`
+	ResourceID  string                `json:"resource_id"`
+	Path        string                `json:"path"`
+	Cursor      string                `json:"cursor,omitempty"`
+	PageSize    int                   `json:"page_size,omitempty"`
 }
 
 type WorkspaceFilesClientReadPayload struct {
-	ClientReqID string `json:"client_req_id"`
-	ResourceID  string `json:"resource_id"`
-	Path        string `json:"path"`
+	BindingGeneration int64                 `json:"binding_generation,omitempty"`
+	ClientReqID       string                `json:"client_req_id"`
+	Context           WorkspaceFilesContext `json:"context"`
+	ResourceID        string                `json:"resource_id"`
+	Path              string                `json:"path"`
 }
 
 type WorkspaceFilesClientCancelPayload struct {
@@ -76,6 +83,7 @@ type WorkspaceFilesClientErrorPayload struct {
 // WorkspaceFilesListPayload is sent server-to-daemon after the server has
 // authorized the resource and filled RootPath. RootPath is never returned.
 type WorkspaceFilesListPayload struct {
+	WorkspaceFilesGeneration
 	DaemonReqID string `json:"daemon_req_id"`
 	RuntimeID   string `json:"runtime_id"`
 	ResourceID  string `json:"resource_id"`
@@ -88,6 +96,7 @@ type WorkspaceFilesListPayload struct {
 
 // WorkspaceFilesReadPayload is sent server-to-daemon after authorization.
 type WorkspaceFilesReadPayload struct {
+	WorkspaceFilesGeneration
 	DaemonReqID string `json:"daemon_req_id"`
 	RuntimeID   string `json:"runtime_id"`
 	ResourceID  string `json:"resource_id"`
@@ -98,6 +107,7 @@ type WorkspaceFilesReadPayload struct {
 
 // WorkspaceFilesCancelPayload cancels a server-owned daemon request.
 type WorkspaceFilesCancelPayload struct {
+	WorkspaceFilesGeneration
 	DaemonReqID string `json:"daemon_req_id"`
 	RuntimeID   string `json:"runtime_id"`
 }
@@ -111,6 +121,7 @@ type WorkspaceFilesEntry struct {
 // be split into several frames to keep the complete JSON envelope below the
 // daemon control-channel frame limit.
 type WorkspaceFilesListResultPayload struct {
+	WorkspaceFilesGeneration
 	DaemonReqID string                `json:"daemon_req_id"`
 	RuntimeID   string                `json:"runtime_id,omitempty"`
 	ResourceID  string                `json:"resource_id"`
@@ -125,6 +136,7 @@ type WorkspaceFilesListResultPayload struct {
 // is base64 encoded by encoding/json, so frame builders must account for the
 // encoded size rather than the raw text size.
 type WorkspaceFilesReadChunkPayload struct {
+	WorkspaceFilesGeneration
 	DaemonReqID string `json:"daemon_req_id"`
 	RuntimeID   string `json:"runtime_id,omitempty"`
 	ResourceID  string `json:"resource_id"`
@@ -134,8 +146,53 @@ type WorkspaceFilesReadChunkPayload struct {
 }
 
 type WorkspaceFilesErrorPayload struct {
+	WorkspaceFilesGeneration
 	DaemonReqID string `json:"daemon_req_id"`
 	RuntimeID   string `json:"runtime_id,omitempty"`
 	ResourceID  string `json:"resource_id,omitempty"`
 	Code        string `json:"code"`
+}
+
+// WorkspaceFilesGeneration is server-owned and echoed by v2 daemons. Zero is
+// reserved for the v1 wire format and is never accepted by the v2 relay.
+type WorkspaceFilesGeneration struct {
+	ConnectionEpoch uint64 `json:"connection_epoch,omitempty"`
+	RelaySeq        uint64 `json:"relay_seq,omitempty"`
+}
+
+// WorkspaceFilesConnectionIdentity is a nonzero-sized server-only socket
+// token. Browser input can never manufacture this pointer identity.
+type WorkspaceFilesConnectionIdentity struct{ reserved byte }
+type WorkspaceFilesConnection struct {
+	Identity *WorkspaceFilesConnectionIdentity
+	Epoch    uint64
+}
+
+func (c WorkspaceFilesConnection) Equal(other WorkspaceFilesConnection) bool {
+	return c.Identity != nil && c.Identity == other.Identity && c.Epoch == other.Epoch
+}
+
+type WorkspaceFilesTarget struct {
+	Connection                                  WorkspaceFilesConnection
+	Generation                                  WorkspaceFilesGeneration
+	RuntimeID, RequestID, WorkspaceID, DaemonID string
+}
+type WorkspaceFilesContext struct {
+	Kind      string `json:"kind"`
+	IssueID   string `json:"issue_id,omitempty"`
+	ProjectID string `json:"project_id,omitempty"`
+}
+type WorkspaceFilesClientResourcesPayload struct {
+	ClientReqID string                `json:"client_req_id"`
+	Context     WorkspaceFilesContext `json:"context"`
+}
+type WorkspaceFilesResource struct {
+	ResourceID  string `json:"resource_id"`
+	DisplayName string `json:"display_name"`
+	Access      string `json:"access"`
+}
+type WorkspaceFilesClientResourcesResultPayload struct {
+	ClientReqID string                   `json:"client_req_id"`
+	Context     WorkspaceFilesContext    `json:"context"`
+	Resources   []WorkspaceFilesResource `json:"resources"`
 }

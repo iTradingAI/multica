@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/filetouch"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
 
@@ -227,7 +229,7 @@ func daemonCommonCapabilities() []string {
 		caps = append(caps, protocol.DaemonCapabilityTerminalV1)
 	}
 	if workspaceFilesCapabilityEnabled {
-		caps = append(caps, protocol.DaemonCapabilityWorkspaceFilesV1)
+		caps = append(caps, protocol.DaemonCapabilityWorkspaceFilesV1, protocol.DaemonCapabilityWorkspaceFilesV2)
 	}
 	return caps
 }
@@ -609,6 +611,9 @@ func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, ste
 
 // TaskMessageData represents a single agent execution message for batch reporting.
 type TaskMessageData struct {
+	FileExecutionID string               `json:"file_execution_id,omitempty"`
+	PathIntegrity   *filetouch.Integrity `json:"path_integrity,omitempty"`
+	SourceEventID   string               `json:"source_event_id,omitempty"`
 	// CallID is an opaque tool-call identity scoped to one backend execution.
 	CallID  string         `json:"call_id,omitempty"`
 	Seq     int            `json:"seq"`
@@ -631,6 +636,40 @@ func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), map[string]any{
 		"messages": messages,
 	}, nil)
+}
+
+func (c *Client) RegisterTaskFileExecution(ctx context.Context, taskID, credential string, evidence filetouch.Execution) error {
+	path := fmt.Sprintf("/api/daemon/tasks/%s/file-executions", taskID)
+	if credential == "" {
+		// Existing machine MDT configurations still work; a PAT cannot prove
+		// machine identity and is rejected by the unchanged server guard.
+		return c.postJSON(ctx, path, evidence, nil)
+	}
+	return c.postJSONWithToken(ctx, path, credential, evidence, nil)
+}
+
+func (c *Client) ReportTaskMessagesWithFileEvidence(ctx context.Context, taskID, credential string, messages []TaskMessageData) error {
+	if credential == "" {
+		return c.ReportTaskMessages(ctx, taskID, messages)
+	}
+	if err := c.postJSONWithToken(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), credential, map[string]any{"messages": messages}, nil); err == nil {
+		return nil
+	}
+	// Evidence authority can expire/rebind without losing the transcript.
+	// Copy before removing proof so concurrent task reports and retries cannot
+	// mutate another batch. The ordinary credential conveys no machine proof.
+	fallback := append([]TaskMessageData(nil), messages...)
+	for i := range fallback {
+		fallback[i].PathIntegrity = nil
+		fallback[i].FileExecutionID = ""
+		fallback[i].SourceEventID = ""
+		if fallback[i].Type == "tool_use" {
+			input := redact.InputMap(fallback[i].Input)
+			filetouch.Protect(fallback[i].Tool, input, filetouch.Integrity{})
+			fallback[i].Input = input
+		}
+	}
+	return c.ReportTaskMessages(ctx, taskID, fallback)
 }
 
 func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) error {

@@ -427,6 +427,7 @@ func main() {
 
 	bus := events.New()
 	hub := realtime.NewHub()
+	defer hub.ShutdownWorkspaceFiles()
 	go hub.Run()
 	daemonHub := daemonws.NewHub()
 	var daemonWakeup interface {
@@ -760,6 +761,7 @@ func main() {
 	// Source-context cleanup is object-store work, so it gets its own goroutine
 	// instead of a slot in the runtime sweep tick.
 	go runSourceContextSweeper(sweepCtx, taskSvc)
+	go h.RunFileTouchProjection(sweepCtx)
 	go heartbeatScheduler.Run(sweepCtx)
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
 	if autopilotSvc.QuotaEnabled() {
@@ -909,6 +911,7 @@ func main() {
 			}
 		},
 		DrainHTTP: func() {
+			hub.ShutdownWorkspaceFiles()
 			apiShutdownCtx, apiShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if err := srv.Shutdown(apiShutdownCtx); err != nil {
 				apiShutdownCancel()

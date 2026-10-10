@@ -128,5 +128,37 @@
   },
   "navigation": {
     "open_in_new_tab": "新しいタブで開く"
+  },
+  "workbench": {
+    "files": {
+      "title": "ファイル",
+      "resource": "ディレクトリ",
+      "breadcrumb": "ファイルの場所",
+      "root": "ルート",
+      "refresh": "更新",
+      "more": "さらに読み込む",
+      "empty": "このディレクトリは空です。",
+      "expand": "展開",
+      "collapse": "折りたたむ",
+      "loading": "ファイルを読み込み中…",
+      "too_large": "1 MiB を超えるファイルはプレビューできません。",
+      "binary": "バイナリまたは無効な UTF-8 はプレビューできません。",
+      "touches": "ファイル操作",
+      "touch_counts": "書き込みツールの呼び出し数です。失敗した呼び出しも含み、Bash は対象外です。",
+      "coverage": "不明 {{unknown}} · アクセス不可 {{unavailable}} · 不確実 {{uncertain}} · 競合 {{conflicting}} · 処理待ち {{pending}}"
+    },
+    "title": "ワークベンチ",
+    "diagnostics": "ディレクトリの状態",
+    "loading": "ディレクトリへのアクセスを確認中…",
+    "no_project": "この課題にはプロジェクトがありません。",
+    "no_resources": "このプロジェクトにローカルディレクトリはありません。",
+    "forbidden": "このディレクトリにアクセスできません。",
+    "unavailable": "ディレクトリ接続は利用できません。",
+    "daemon_offline": "ディレクトリのデーモンはオフラインです。",
+    "daemon_upgrade_required": "デーモンを更新してください。",
+    "timeout": "ディレクトリの確認がタイムアウトしました。",
+    "ready": "ディレクトリは利用可能です。",
+    "retry": "再試行",
+    "directory": "ディレクトリ {{number}}"
   }
 }

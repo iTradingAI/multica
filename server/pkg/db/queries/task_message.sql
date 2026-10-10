@@ -63,9 +63,13 @@ WITH incoming AS (
         unnest(sqlc.arg('inputs')::text[]) AS input,
         unnest(sqlc.arg('outputs')::text[]) AS output,
         unnest(sqlc.arg('created_ats')::text[]) AS created_at,
-        unnest(sqlc.arg('output_truncations')::text[]) AS output_truncated
+        unnest(sqlc.arg('output_truncations')::text[]) AS output_truncated,
+        unnest(sqlc.arg('file_execution_ids')::text[]) AS file_execution_id,
+        unnest(sqlc.arg('source_event_ids')::text[]) AS source_event_id,
+        unnest(sqlc.arg('path_integrities')::text[]) AS path_integrity,
+        unnest(sqlc.arg('proof_versions')::text[]) AS proof_version
 ), inserted AS (
-    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id)
+    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, file_execution_id, source_event_id, path_integrity, proof_version)
     SELECT
         m.id,
         sqlc.arg('task_id')::uuid,
@@ -77,9 +81,20 @@ WITH incoming AS (
         NULLIF(m.output, ''),
         COALESCE(NULLIF(m.created_at, '')::timestamptz, now()),
         NULLIF(m.output_truncated, '')::bool,
-        NULLIF(m.call_id, '')
+        NULLIF(m.call_id, ''),
+        NULLIF(m.file_execution_id, '')::uuid,
+        NULLIF(m.source_event_id, '')::uuid,
+        NULLIF(m.path_integrity, '')::jsonb,
+        NULLIF(m.proof_version, '')::integer
     FROM incoming AS m
     RETURNING *
+), pending AS (
+    INSERT INTO issue_file_touch_pending (source_message_id,workspace_id,issue_id,run_id)
+    SELECT m.id,i.workspace_id,i.id,m.task_id FROM inserted m
+    JOIN agent_task_queue t ON t.id=m.task_id
+    JOIN issue i ON i.id=t.issue_id
+    WHERE m.type='tool_use' AND sqlc.arg('collect_file_touches')::boolean
+    ON CONFLICT (source_message_id) DO NOTHING
 )
 SELECT * FROM inserted ORDER BY seq ASC;
 
@@ -94,5 +109,20 @@ WHERE task_id = $1 AND seq > $2
 ORDER BY seq ASC;
 
 -- name: DeleteTaskMessages :exec
+WITH cleared_file_touch_execution AS (
+ DELETE FROM file_touch_execution WHERE file_touch_execution.task_id = $1
+),
+cleared_issue_file_touch_pending AS (
+ DELETE FROM issue_file_touch_pending WHERE issue_file_touch_pending.run_id = $1
+),
+cleared_issue_file_touch_event AS (
+ DELETE FROM issue_file_touch_event WHERE issue_file_touch_event.run_id = $1
+),
+cleared_issue_file_touches AS (
+ DELETE FROM issue_file_touches WHERE issue_file_touches.run_id = $1
+),
+cleared_issue_file_touch_backfill AS (
+ DELETE FROM issue_file_touch_backfill WHERE issue_file_touch_backfill.run_id = $1
+)
 DELETE FROM task_message
-WHERE task_id = $1;
+WHERE task_message.task_id = $1;

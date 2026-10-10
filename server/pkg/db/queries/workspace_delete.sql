@@ -203,6 +203,21 @@ WITH
 batch AS MATERIALIZED (
     SELECT id FROM unnest(@task_ids::uuid[]) AS t(id)
 ),
+cleared_file_touch_execution AS (
+ DELETE FROM file_touch_execution WHERE file_touch_execution.task_id IN (SELECT id FROM batch)
+),
+cleared_issue_file_touch_pending AS (
+ DELETE FROM issue_file_touch_pending WHERE issue_file_touch_pending.run_id IN (SELECT id FROM batch)
+),
+cleared_issue_file_touch_event AS (
+ DELETE FROM issue_file_touch_event WHERE issue_file_touch_event.run_id IN (SELECT id FROM batch)
+),
+cleared_issue_file_touches AS (
+ DELETE FROM issue_file_touches WHERE issue_file_touches.run_id IN (SELECT id FROM batch)
+),
+cleared_issue_file_touch_backfill AS (
+ DELETE FROM issue_file_touch_backfill WHERE issue_file_touch_backfill.run_id IN (SELECT id FROM batch)
+),
 deleted_task_usage AS (
     DELETE FROM task_usage WHERE task_id IN (SELECT id FROM batch)
 ),
@@ -551,7 +566,22 @@ DELETE FROM lark_installation WHERE lark_installation.workspace_id = $1;
 DELETE FROM comment WHERE comment.workspace_id = $1;
 
 -- name: DeleteWorkspaceIssueRoots :exec
-WITH deleted_wakeup_receipts AS (
+WITH cleared_file_touch_execution AS (
+ DELETE FROM file_touch_execution WHERE file_touch_execution.workspace_id = $1
+),
+cleared_issue_file_touch_pending AS (
+ DELETE FROM issue_file_touch_pending WHERE issue_file_touch_pending.workspace_id = $1
+),
+cleared_issue_file_touch_event AS (
+ DELETE FROM issue_file_touch_event WHERE issue_file_touch_event.workspace_id = $1
+),
+cleared_issue_file_touches AS (
+ DELETE FROM issue_file_touches WHERE issue_file_touches.workspace_id = $1
+),
+cleared_issue_file_touch_backfill AS (
+ DELETE FROM issue_file_touch_backfill WHERE issue_file_touch_backfill.workspace_id = $1
+),
+deleted_wakeup_receipts AS (
  DELETE FROM issue_wakeup_receipt WHERE wakeup_id IN (SELECT id FROM issue_wakeup WHERE workspace_id=$1)
 ), deleted_wakeups AS (
  DELETE FROM issue_wakeup WHERE workspace_id=$1

@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/multica-ai/multica/server/pkg/filetouch"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
@@ -252,11 +253,13 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			}
 
 			var msg claudeSDKMessage
+			pathJSONLossless := filetouch.LosslessJSON([]byte(line))
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
 				invalidEventCount++
 				continue
 			}
 			eventCount++
+			msg.pathJSONLossless = pathJSONLossless
 
 			switch msg.Type {
 			case "assistant":
@@ -551,10 +554,11 @@ func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message,
 				_ = json.Unmarshal(block.Input, &input)
 			}
 			trySend(ch, Message{
-				Type:   MessageToolUse,
-				Tool:   block.Name,
-				CallID: block.ID,
-				Input:  input,
+				Type:          MessageToolUse,
+				Tool:          block.Name,
+				CallID:        block.ID,
+				Input:         input,
+				PathIntegrity: filetouch.Origin("claude", block.Name, runtime.GOOS, input, msg.pathJSONLossless && filetouch.LosslessJSON(block.Input)),
 			})
 		default:
 			// A block type we do not render may be carrying the model's answer
@@ -686,12 +690,13 @@ func claudeMapHasAsyncLaunchStatus(value map[string]any) bool {
 // ── Claude SDK JSON types ──
 
 type claudeSDKMessage struct {
-	Type            string          `json:"type"`
-	Message         json.RawMessage `json:"message,omitempty"`
-	Subtype         string          `json:"subtype,omitempty"`
-	SessionID       string          `json:"session_id,omitempty"`
-	Model           string          `json:"model,omitempty"`
-	ParentToolUseID string          `json:"parent_tool_use_id,omitempty"`
+	pathJSONLossless bool
+	Type             string          `json:"type"`
+	Message          json.RawMessage `json:"message,omitempty"`
+	Subtype          string          `json:"subtype,omitempty"`
+	SessionID        string          `json:"session_id,omitempty"`
+	Model            string          `json:"model,omitempty"`
+	ParentToolUseID  string          `json:"parent_tool_use_id,omitempty"`
 
 	// result fields
 	ResultText string `json:"result,omitempty"`

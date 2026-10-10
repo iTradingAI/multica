@@ -66,6 +66,9 @@ export type WSEventType =
   | "chat:session_updated"
   | "project:created"
   | "project:updated"
+  | "project_resource:created"
+  | "project_resource:updated"
+  | "project_resource:deleted"
   | "project:deleted"
   | "squad:created"
   | "squad:updated"
@@ -100,7 +103,18 @@ export type WSEventType =
   | "terminal.open_result"
   | "terminal.data"
   | "terminal.exit"
-  | "terminal.error";
+  | "terminal.error"
+  | "workspace_files.resources"
+  | "workspace_files.viewer_select"
+  | "workspace_files.viewer_select_result"
+  | "workspace_files.viewer_read"
+  | "workspace_files.resources_result"
+  | "workspace_files.list"
+  | "workspace_files.list_result"
+  | "workspace_files.read"
+  | "workspace_files.read_chunk"
+  | "workspace_files.cancel"
+  | "workspace_files.error";
 
 export interface WSMessage<T = unknown> {
   type: WSEventType;
@@ -661,12 +675,23 @@ export interface WSEventPayloadMap {
   "pull_request:linked": unknown;
   "pull_request:updated": unknown;
   "pull_request:unlinked": unknown;
-  "subscribe_ack": unknown;
-  "subscribe_error": unknown;
+  subscribe_ack: unknown;
+  subscribe_error: unknown;
   "terminal.open_result": unknown;
   "terminal.data": unknown;
   "terminal.exit": unknown;
   "terminal.error": unknown;
+  "workspace_files.resources": unknown;
+  "workspace_files.viewer_select": unknown;
+  "workspace_files.viewer_select_result": unknown;
+  "workspace_files.viewer_read": unknown;
+  "workspace_files.resources_result": unknown;
+  "workspace_files.list": unknown;
+  "workspace_files.list_result": unknown;
+  "workspace_files.read": unknown;
+  "workspace_files.read_chunk": unknown;
+  "workspace_files.cancel": unknown;
+  "workspace_files.error": unknown;
 }
 
 /**
