@@ -7,15 +7,64 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/redis/go-redis/v9"
 )
 
+// Exercise the real auth/cache path without a database or Redis service. Only
+// the cache's GET/SET transport is substituted; token validation is unchanged.
+type fileEvidenceCacheClient struct {
+	redis.UniversalClient
+	mu      sync.Mutex
+	entries map[string]struct {
+		data    string
+		expires time.Time
+	}
+}
+
+func newFileEvidenceCacheClient() *fileEvidenceCacheClient {
+	return &fileEvidenceCacheClient{entries: make(map[string]struct {
+		data    string
+		expires time.Time
+	})}
+}
+
+func (c *fileEvidenceCacheClient) Get(_ context.Context, key string) *redis.StringCmd {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.entries[key]
+	if !ok || time.Now().After(entry.expires) {
+		return redis.NewStringResult("", redis.Nil)
+	}
+	return redis.NewStringResult(entry.data, nil)
+}
+
+func (c *fileEvidenceCacheClient) Set(_ context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var data string
+	switch v := value.(type) {
+	case string:
+		data = v
+	case []byte:
+		data = string(v)
+	default:
+		panic("unsupported test cache value")
+	}
+	c.entries[key] = struct {
+		data    string
+		expires time.Time
+	}{data, time.Now().Add(expiration)}
+	return redis.NewStatusResult("OK", nil)
+}
+
 func TestFileEvidenceCredentialScopeAndCache(t *testing.T) {
-	cache := auth.NewDaemonTokenCache(newRedisTestClient(t))
+	cache := auth.NewDaemonTokenCache(newFileEvidenceCacheClient())
 	digest, _ := auth.FileEvidenceClaimDigest([]byte(`{"proof_version":1}`))
 	scope := auth.FileEvidenceScope{WorkspaceID: uuid.NewString(), DaemonID: uuid.NewString(), TaskID: uuid.NewString(), RuntimeID: uuid.NewString(), DispatchedAt: time.Now().UTC().Format(time.RFC3339Nano), ClaimDigest: digest, ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	token, err := auth.GenerateFileEvidenceToken(scope)
@@ -67,7 +116,7 @@ func TestFileEvidenceCredentialScopeAndCache(t *testing.T) {
 		{"tampered-hash", token + "0", id, 401},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fresh := auth.NewDaemonTokenCache(newRedisTestClient(t))
+			fresh := auth.NewDaemonTokenCache(newFileEvidenceCacheClient())
 			// Only the original persisted hash authenticates; a caller cannot
 			// rewrite metadata while retaining that authority.
 			fresh.Set(context.Background(), auth.HashToken(token), tc.identity, time.Hour)
@@ -96,7 +145,7 @@ func TestFileEvidenceCredentialScopeAndCache(t *testing.T) {
 }
 
 func TestDaemonPATIdentityIsNotMachineEvidence(t *testing.T) {
-	cache := auth.NewPATCache(newRedisTestClient(t))
+	cache := auth.NewPATCache(newFileEvidenceCacheClient())
 	owner := uuid.NewString()
 	cache.Set(context.Background(), auth.HashToken("mul_owner"), owner, time.Hour)
 	r := httptest.NewRequest("POST", "/api/daemon/tasks/claim", nil)
