@@ -164,6 +164,16 @@ func (h *Handler) requireDaemonTaskAccessWithWorkspace(w http.ResponseWriter, r 
 	if !h.requireDaemonWorkspaceAccess(w, r, wsID) {
 		return db.AgentTaskQueue{}, "", false
 	}
+	if scope := middleware.FileEvidenceScopeFromContext(r.Context()); scope != nil {
+		digest, digestErr := auth.FileEvidenceClaimDigest(task.FileClaimSnapshot)
+		dispatched, timeErr := time.Parse(time.RFC3339Nano, scope.DispatchedAt)
+		if digestErr != nil || timeErr != nil || scope.WorkspaceID != wsID || scope.TaskID != taskID ||
+			scope.RuntimeID != uuidToString(task.RuntimeID) || !task.DispatchedAt.Valid ||
+			!task.DispatchedAt.Time.Equal(dispatched) || digest != scope.ClaimDigest {
+			writeError(w, http.StatusConflict, "file evidence claim changed")
+			return db.AgentTaskQueue{}, "", false
+		}
+	}
 	return task, wsID, true
 }
 
@@ -2139,7 +2149,12 @@ func (h *Handler) finalizeClaimDelivery(
 		// its current owner as the task-token identity rather than the stale
 		// claim-time snapshot captured by the caller.
 		tokenParams.UserID = locked.OwnerID
-		if response != nil && filetouch.Ready(ctx, h.DB) && middleware.DaemonIDFromContext(ctx) == locked.DaemonID.String && locked.DaemonID.String != "" {
+		if response != nil && task.IssueID.Valid && filetouch.Ready(ctx, h.DB) && fileEvidenceClaimCaller(ctx, locked) {
+			// Only the registered runtime identity, re-read under this lock, may
+			// deliver proof authority. A rebind cannot mint for the old machine.
+			if locked.DaemonID != runtime.DaemonID || locked.WorkspaceID != runtime.WorkspaceID || locked.Provider != runtime.Provider {
+				return errors.New("file evidence runtime changed before delivery")
+			}
 			claim := h.fileTouchClaim(*task, locked, *response)
 			snapshot, marshalErr := json.Marshal(claim)
 			if marshalErr != nil {
@@ -2152,7 +2167,30 @@ func (h *Handler) finalizeClaimDelivery(
 			if rows != 1 {
 				return fmt.Errorf("file claim changed before delivery")
 			}
+			digest, digestErr := auth.FileEvidenceClaimDigest(snapshot)
+			if digestErr != nil {
+				return digestErr
+			}
+			expires := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+			credential, mintErr := auth.GenerateFileEvidenceToken(auth.FileEvidenceScope{
+				WorkspaceID: claim.WorkspaceID, DaemonID: claim.DaemonID,
+				TaskID: uuidToString(task.ID), RuntimeID: claim.RuntimeID,
+				DispatchedAt: claim.DispatchedAt, ClaimDigest: digest, ExpiresAt: expires.Unix(),
+			})
+			if mintErr != nil {
+				return mintErr
+			}
+			if cleanupErr := qtx.DeleteExpiredDaemonTokens(ctx); cleanupErr != nil {
+				return cleanupErr
+			}
+			if _, persistErr := qtx.CreateDaemonToken(ctx, db.CreateDaemonTokenParams{
+				TokenHash: auth.HashToken(credential), WorkspaceID: locked.WorkspaceID,
+				DaemonID: locked.DaemonID.String, ExpiresAt: pgtype.Timestamptz{Time: expires, Valid: true},
+			}); persistErr != nil {
+				return persistErr
+			}
 			response.FileTouchProofVersion = filetouch.ProofVersion
+			response.FileTouchDaemonToken = credential
 		}
 		return nil
 	}

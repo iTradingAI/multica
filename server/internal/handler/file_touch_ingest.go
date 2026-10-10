@@ -19,6 +19,19 @@ func (h *Handler) fileTouchCollectionEnabled() bool {
 	return os.Getenv("MULTICA_FILE_TOUCHES_ENABLED") == "true"
 }
 
+// Bootstrap through an already authorized claim, using the registered owner
+// rather than a caller-supplied daemon_id. PAT transcript reports alone never
+// gain machine identity. Legacy machine MDTs remain supported on their daemon.
+func fileEvidenceClaimCaller(ctx context.Context, runtime db.AgentRuntime) bool {
+	if !runtime.DaemonID.Valid || runtime.DaemonID.String == "" {
+		return false
+	}
+	if daemon := middleware.DaemonIDFromContext(ctx); daemon != "" {
+		return daemon == runtime.DaemonID.String
+	}
+	return runtime.OwnerID.Valid && middleware.DaemonUserIDFromContext(ctx) == uuidToString(runtime.OwnerID)
+}
+
 func (h *Handler) fileTouchClaim(task db.AgentTaskQueue, runtime db.AgentRuntime, response AgentTaskResponse) filetouch.Claim {
 	claim := filetouch.Claim{ProofVersion: filetouch.ProofVersion, WorkspaceID: response.WorkspaceID, ProjectID: response.ProjectID, RuntimeID: uuidToString(runtime.ID), DaemonID: runtime.DaemonID.String, Provider: runtime.Provider, DispatchedAt: task.DispatchedAt.Time.UTC().Format(time.RFC3339Nano)}
 	for _, resource := range response.ProjectResources {

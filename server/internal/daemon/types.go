@@ -69,7 +69,9 @@ type IssueStatusData struct {
 // Task represents a claimed task from the server.
 // Agent data (name, skills) is populated by the claim endpoint.
 type Task struct {
-	FileTouchProofVersion int `json:"file_touch_proof_version,omitempty"`
+	// Never inject this task-bound machine credential into provider env/config.
+	FileTouchDaemonToken  string `json:"file_touch_daemon_token,omitempty"`
+	FileTouchProofVersion int    `json:"file_touch_proof_version,omitempty"`
 	// StartClaimSupported gates retries when talking to older servers.
 	StartClaimSupported  bool                   `json:"start_claim_supported,omitempty"`
 	DispatchedAt         string                 `json:"dispatched_at,omitempty"`

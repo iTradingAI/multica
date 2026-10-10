@@ -359,6 +359,8 @@ type TaskCancellationActor struct {
 }
 
 type AgentTaskResponse struct {
+	// FileTouchDaemonToken is delivered only to the authorized claiming daemon.
+	FileTouchDaemonToken     string                 `json:"file_touch_daemon_token,omitempty"`
 	FileTouchProofVersion    int                    `json:"file_touch_proof_version,omitempty"`
 	StartClaimSupported      bool                   `json:"start_claim_supported,omitempty"`
 	CancelledByCommentChange bool                   `json:"cancelled_by_comment_change,omitempty"`

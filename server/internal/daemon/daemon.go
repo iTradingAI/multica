@@ -8823,7 +8823,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Shared across the resume-retry below so the retry's transcript rows
 	// keep ascending seq values for the same task.
 	var msgSeq atomic.Int32
-	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
+	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq, task.FileTouchDaemonToken)
 	if err != nil {
 		return TaskResult{}, err
 	}
@@ -8879,7 +8879,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 		freshPrompt := BuildPrompt(task, provider, promptOptions...)
 
-		retryResult, retryTools, retryErr := d.executeAndDrain(ctx, backend, freshPrompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
+		retryResult, retryTools, retryErr := d.executeAndDrain(ctx, backend, freshPrompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq, task.FileTouchDaemonToken)
 		if retryErr != nil {
 			taskLog.Error("fresh session also failed to start; keeping the original poisoned result", "error", retryErr)
 		} else if retryResult.Status != "completed" && retryResult.SessionID == "" {
@@ -9334,12 +9334,17 @@ func freshSessionMayHelp(errText string) bool {
 // messages and is owned by the caller so a same-task retry continues the
 // sequence instead of restarting at 1 — the server orders the transcript by
 // seq alone, and duplicate seqs would interleave the two attempts' rows.
-func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, prompt string, opts agent.ExecOptions, taskLog *slog.Logger, taskID, codexHome string, msgSeq *atomic.Int32) (agent.Result, int32, error) {
+func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, prompt string, opts agent.ExecOptions, taskLog *slog.Logger, taskID, codexHome string, msgSeq *atomic.Int32, fileEvidenceTokens ...string) (agent.Result, int32, error) {
+	// Task-local state, never Client.SetToken or provider ExecOptions/Env.
+	fileEvidenceToken := ""
+	if len(fileEvidenceTokens) > 0 {
+		fileEvidenceToken = fileEvidenceTokens[0]
+	}
 	executionID := ""
 	if opts.FileTouchExecution != nil {
 		evidence := *opts.FileTouchExecution
 		evidence.ID = uuid.NewString()
-		if err := d.client.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/file-executions", taskID), evidence, nil); err != nil {
+		if err := d.client.RegisterTaskFileExecution(ctx, taskID, fileEvidenceToken, evidence); err != nil {
 			// An evidence outage does not turn a provider's file operation into
 			// a task failure. No execution association means unknown coverage.
 			taskLog.Warn("file execution evidence unavailable; coverage is unknown")
@@ -9541,7 +9546,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 
 			if len(toSend) > 0 {
 				sendCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				if err := d.client.ReportTaskMessages(sendCtx, taskID, toSend); err != nil {
+				if err := d.client.ReportTaskMessagesWithFileEvidence(sendCtx, taskID, fileEvidenceToken, toSend); err != nil {
 					taskLog.Debug("failed to report task messages", "error", err)
 				} else {
 					taskLog.Debug("reported task messages", "count", len(toSend), "last_seq", toSend[len(toSend)-1].Seq)

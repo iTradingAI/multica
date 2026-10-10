@@ -46,6 +46,17 @@ func TestPathIntegritySourceFixtureProcess(t *testing.T) {
 }
 
 func TestPathIntegrityFullIngestRejectsSanitizedAlias(t *testing.T) {
+	testPathIntegrityFullIngest(t, "legacy")
+}
+
+func TestFileEvidenceNormalClaimIngest(t *testing.T) {
+	for _, mode := range []string{"single", "batch"} {
+		t.Run(mode, func(t *testing.T) { testPathIntegrityFullIngest(t, mode) })
+	}
+}
+
+func testPathIntegrityFullIngest(t *testing.T, mode string) {
+	t.Helper()
 	if os.Getenv("MULTICA_FILE_TOUCH_TESTS_APPROVED") != "true" || os.Getenv("DATABASE_URL") == "" {
 		t.Skip("C-only: approved dev window and explicit dedicated database required")
 	}
@@ -82,12 +93,27 @@ func TestPathIntegrityFullIngestRejectsSanitizedAlias(t *testing.T) {
 	dispatched := time.Now().UTC().Truncate(time.Microsecond)
 	claim := filetouch.Claim{ProofVersion: 1, WorkspaceID: workspace, ProjectID: project, RuntimeID: runtimeID, DaemonID: daemon, Provider: "claude", DispatchedAt: dispatched.Format(time.RFC3339Nano), Bindings: []filetouch.Binding{{ResourceID: resource, Generation: 1, Root: root, DaemonID: daemon, Mode: "in_place"}}}
 	snapshot, _ := json.Marshal(claim)
-	task := fixture.Task(t, actor, testutil.Cols{"runtime_id": runtimeID, "issue_id": issue, "status": "running", "started_at": dispatched, "dispatched_at": dispatched, "file_claim_snapshot": string(snapshot)})
-	token, err := auth.GenerateDaemonToken()
+	cols := testutil.Cols{"runtime_id": runtimeID, "issue_id": issue}
+	if mode == "legacy" {
+		cols["status"], cols["started_at"], cols["dispatched_at"], cols["file_claim_snapshot"] = "running", dispatched, dispatched, string(snapshot)
+	}
+	task := fixture.Task(t, actor, cols)
+	var token string
+	if mode == "legacy" {
+		token, err = auth.GenerateDaemonToken()
+	} else {
+		token, err = auth.GeneratePATToken()
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture.Insert(t, "daemon_token", testutil.Cols{"workspace_id": workspace, "daemon_id": daemon, "token_hash": auth.HashToken(token), "expires_at": time.Now().Add(time.Hour)})
+	if mode == "legacy" {
+		fixture.Insert(t, "daemon_token", testutil.Cols{"workspace_id": workspace, "daemon_id": daemon, "token_hash": auth.HashToken(token), "expires_at": time.Now().Add(time.Hour)})
+	} else {
+		fixture.Insert(t, "personal_access_token", testutil.Cols{"user_id": user, "name": "file evidence claim fixture", "token_hash": auth.HashToken(token), "token_prefix": token[:8], "expires_at": time.Now().Add(time.Hour)})
+		fixture.Cleanup(t, `DELETE FROM daemon_registration_identity WHERE workspace_id=$1 AND daemon_id=$2`, workspace, daemon)
+		fixture.Cleanup(t, `DELETE FROM daemon_token WHERE workspace_id=$1 AND daemon_id=$2`, workspace, daemon)
+	}
 	t.Cleanup(func() {
 		for _, table := range []string{"issue_file_touches", "issue_file_touch_event", "issue_file_touch_pending", "issue_file_touch_backfill"} {
 			if _, err := pool.Exec(context.Background(), `DELETE FROM `+table+` WHERE run_id=$1`, task); err != nil {
@@ -102,6 +128,10 @@ func TestPathIntegrityFullIngestRejectsSanitizedAlias(t *testing.T) {
 	h := handler.New(queries, pool, nil, events.New(), nil, nil, nil, nil, handler.Config{})
 	router := chi.NewRouter()
 	router.Use(middleware.DaemonAuth(queries, nil, nil, nil))
+	router.Post("/api/daemon/register", h.DaemonRegister)
+	router.Post("/api/daemon/tasks/claim", h.ClaimTasksByRuntime)
+	router.Post("/api/daemon/runtimes/{runtimeId}/tasks/claim", h.ClaimTaskByRuntime)
+	router.Post("/api/daemon/tasks/{taskId}/start", h.StartTask)
 	router.Post("/api/daemon/tasks/{taskId}/file-executions", h.RegisterTaskFileExecution)
 	router.Post("/api/daemon/tasks/{taskId}/messages", h.ReportTaskMessages)
 	server := httptest.NewServer(router)
@@ -109,6 +139,43 @@ func TestPathIntegrityFullIngestRejectsSanitizedAlias(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	client := NewClient(server.URL)
 	client.SetToken(token)
+	credential := ""
+	if mode != "legacy" {
+		registered, registerErr := client.Register(ctx, map[string]any{"workspace_id": workspace, "daemon_id": daemon, "runtimes": []map[string]string{{"name": "fixture", "type": "claude", "status": "online"}}})
+		if registerErr != nil || registered == nil || len(registered.Runtimes) != 1 || registered.Runtimes[0].ID != runtimeID {
+			t.Fatalf("PAT registration did not preserve the runtime: %v", registerErr)
+		}
+		var delivered *Task
+		if mode == "batch" {
+			tasks, claimErr := client.ClaimTasks(ctx, daemon, []string{runtimeID}, 1)
+			if claimErr != nil || len(tasks) != 1 {
+				t.Fatalf("PAT batch claim: %v, count=%d", claimErr, len(tasks))
+			}
+			delivered = tasks[0]
+		} else {
+			delivered, err = client.ClaimTask(ctx, runtimeID)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if delivered == nil || delivered.ID != task || delivered.FileTouchDaemonToken == "" || delivered.RemoteMCPDaemonToken != "" || len(delivered.RemoteMCPConnections) != 0 || delivered.FileTouchProofVersion != filetouch.ProofVersion {
+			t.Fatal("normal claim without Remote MCP did not deliver isolated proof authority")
+		}
+		credential = delivered.FileTouchDaemonToken
+		stored, readErr := queries.GetAgentTask(ctx, util.MustParseUUID(task))
+		if readErr != nil || json.Unmarshal(stored.FileClaimSnapshot, &claim) != nil || len(claim.Bindings) != 1 || claim.Bindings[0].ResourceID != resource {
+			t.Fatal("normal claim did not persist the resource binding")
+		}
+		if _, startErr := client.StartTask(ctx, *delivered); startErr != nil {
+			t.Fatal(startErr)
+		}
+		if client.Token() != token {
+			t.Fatal("claim replaced the shared PAT")
+		}
+		if registerErr := client.RegisterTaskFileExecution(ctx, task, "", filetouch.Execution{}); registerErr == nil {
+			t.Fatal("ordinary PAT gained execution authority")
+		}
+	}
 	d := &Daemon{client: client, logger: logger}
 	executable, err := os.Executable()
 	if err != nil {
@@ -118,7 +185,7 @@ func TestPathIntegrityFullIngestRejectsSanitizedAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = d.executeAndDrain(ctx, backend, "source fixture", agent.ExecOptions{Cwd: root, FilePathProvider: "claude", FileTouchExecution: &filetouch.Execution{DispatchedAt: claim.DispatchedAt, Cwd: root, Platform: runtime.GOOS, ResourceID: resource}, Timeout: 10 * time.Second}, logger, task, "", new(atomic.Int32))
+	_, _, err = d.executeAndDrain(ctx, backend, "source fixture", agent.ExecOptions{Cwd: root, FilePathProvider: "claude", FileTouchExecution: &filetouch.Execution{DispatchedAt: claim.DispatchedAt, Cwd: root, Platform: runtime.GOOS, ResourceID: resource}, Timeout: 10 * time.Second}, logger, task, "", new(atomic.Int32), credential)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,6 +234,34 @@ func TestPathIntegrityFullIngestRejectsSanitizedAlias(t *testing.T) {
 	if err = client.ReportTaskMessages(ctx, task, []TaskMessageData{old}); err != nil {
 		t.Fatal(err)
 	}
+	wantUnknown := 2
+	if mode != "legacy" {
+		// Reusing an authentic execution ID and forged verified metadata does
+		// not turn an ordinary PAT report into machine evidence.
+		input := map[string]any{"file_path": "safe.txt"}
+		proof := filetouch.Origin("claude", "Write", runtime.GOOS, input, true)
+		forged := TaskMessageData{Seq: 101, Type: "tool_use", Tool: "Write", CallID: uuid.NewString(), Input: input, PathIntegrity: &proof, CreatedAt: time.Now()}
+		for _, message := range messages {
+			if message.FileExecutionID.Valid {
+				forged.FileExecutionID = util.UUIDToString(message.FileExecutionID)
+				break
+			}
+		}
+		if forged.FileExecutionID == "" {
+			t.Fatal("normal execution registration did not persist its association")
+		}
+		if err = client.ReportTaskMessages(ctx, task, []TaskMessageData{forged}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = pool.Exec(ctx, `UPDATE daemon_token SET expires_at=now()-interval '1 minute' WHERE token_hash=$1 AND workspace_id=$2 AND daemon_id=$3`, auth.HashToken(credential), workspace, daemon); err != nil {
+			t.Fatal(err)
+		}
+		forged.Seq, forged.CallID = 102, uuid.NewString()
+		if err = client.ReportTaskMessagesWithFileEvidence(ctx, task, credential, []TaskMessageData{forged}); err != nil {
+			t.Fatal("expired evidence credential lost the ordinary transcript")
+		}
+		wantUnknown += 2
+	}
 	preview, err := service.PreviewFileTouchRun(ctx, pool, workspace, task, "")
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +276,7 @@ func TestPathIntegrityFullIngestRejectsSanitizedAlias(t *testing.T) {
 	if err = pool.QueryRow(ctx, `SELECT count(*) FILTER(WHERE mapping_status='mapped' AND relative_path='safe.txt'),count(*) FILTER(WHERE mapping_status='unknown') FROM issue_file_touches WHERE run_id=$1`, task).Scan(&mapped, &unknown); err != nil {
 		t.Fatal(err)
 	}
-	if mapped != 1 || unknown != 2 {
+	if mapped != 1 || unknown != wantUnknown {
 		t.Fatal("illegal/old aliases joined valid file or repeat backfill double counted")
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/issues/"+issue+"/file-touches", nil)
