@@ -36,7 +36,10 @@ function WorkbenchSession({ wsId, context, hasProject = true }: Props) {
   const [open, setOpen] = useState(false);
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-    <SheetTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t(($) => $.workbench.title)} title={t(($) => $.workbench.title)} />}><PanelRightOpen /></SheetTrigger>
+    <SheetTrigger render={<Button variant="outline" size="sm" className="shrink-0" aria-label={t(($) => $.workbench.title)} title={t(($) => $.workbench.title)} />}>
+      <PanelRightOpen />
+      {t(($) => $.workbench.title)}
+    </SheetTrigger>
     <SheetContent side="right" className="w-full sm:max-w-lg overflow-hidden">
       <SheetHeader><SheetTitle>{t(($) => $.workbench.title)}</SheetTitle></SheetHeader>
       {open && (
@@ -77,8 +80,10 @@ function WorkbenchBody({ wsId, context, hasProject = true }: Props) {
   }, [send, subscribe, onReady, wsId, scope, queryClient]);
   return (
     <Tabs value={active} onValueChange={(value) => setSelected(String(value))} className="min-h-0 flex-1 px-4 pb-4">
-    <TabsList aria-label={t(($) => $.workbench.title)} className="max-w-full shrink-0 overflow-x-auto justify-start">{tabs.map((tab) => (
-          <TabsTrigger key={tab.id} value={tab.id}>{tab.label}</TabsTrigger>))}</TabsList>
+    <div className="shrink-0 overflow-x-auto overflow-y-hidden">
+      <TabsList aria-label={t(($) => $.workbench.title)} className="flex w-max max-w-none justify-start">{tabs.map((tab) => (
+          <TabsTrigger key={tab.id} value={tab.id} className="shrink-0 whitespace-nowrap">{tab.label}</TabsTrigger>))}</TabsList>
+    </div>
     <TabsContent key={active} value={active} className="min-h-0 overflow-y-auto text-muted-foreground">
       {panel ? (
           <SidebarPanel wsId={wsId} context={context} panel={panel} />
