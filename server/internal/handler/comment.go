@@ -1726,7 +1726,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	// opaque 500 the CLI renders as "server unavailable" and retries forever —
 	// the plausible cause of GH #5388. Mirrors the skill-import sanitization;
 	// normalizing first means all-NUL content is correctly treated as empty.
-	req.Content = sanitizeNullBytes(req.Content)
+	req.Content = util.NormalizeNewlines(sanitizeNullBytes(req.Content))
 	if req.Content == "" {
 		writeError(w, http.StatusBadRequest, "content is required")
 		return
@@ -3421,7 +3421,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	// See CreateComment: strip NUL / invalid-UTF-8 bytes PostgreSQL's TEXT column
 	// rejects before the empty check, so an edit that introduces such a byte
 	// can't 500 (GH #5388).
-	req.Content = sanitizeNullBytes(req.Content)
+	req.Content = util.NormalizeNewlines(sanitizeNullBytes(req.Content))
 	if req.ContentBase != nil {
 		sanitized := sanitizeNullBytes(*req.ContentBase)
 		req.ContentBase = &sanitized
