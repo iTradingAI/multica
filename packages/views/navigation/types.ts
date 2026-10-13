@@ -1,6 +1,7 @@
 export interface NavigationAdapter {
   push(path: string): void;
-  replace(path: string): void;
+  /** preservePage is only for another URL spelling of the current resource. */
+  replace(path: string, options?: { preservePage: boolean }): void;
   back(): void;
   pathname: string;
   searchParams: URLSearchParams;

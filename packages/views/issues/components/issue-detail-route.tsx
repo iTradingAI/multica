@@ -41,7 +41,7 @@ export function useCanonicalIssueUrl(
     if (!canonicalHref || routeId === identifier) return;
     if (replacedRef.current === canonicalHref) return;
     replacedRef.current = canonicalHref;
-    navigation.replace(canonicalHref);
+    navigation.replace(canonicalHref, { preservePage: true });
   }, [canonicalHref, identifier, routeId, navigation]);
 }
 
