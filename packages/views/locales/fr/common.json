@@ -130,6 +130,10 @@
     "open_in_new_tab": "Ouvrir dans un nouvel onglet"
   },
   "workbench": {
+    "sub_issues": {
+      "empty": "Aucune sous-tâche.",
+      "load_failed": "Impossible de charger les sous-tâches."
+    },
     "files": {
       "title": "Fichiers",
       "resource": "Répertoire",

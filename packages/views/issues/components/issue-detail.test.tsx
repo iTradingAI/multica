@@ -21,8 +21,9 @@ const TEST_RESOURCES = { en: { agents: enAgents, common: enCommon, issues: enIss
 
 const mockViewport = vi.hoisted(() => ({ isMobile: false }));
 const mockWorkbench = vi.hoisted(() => vi.fn());
+const workbenchState = vi.hoisted(() => ({ showSubIssues: false }));
 vi.mock("../../workbench", () => ({
-  WorkbenchDrawer: (props: unknown) => { mockWorkbench(props); return <button>Workbench</button>; },
+  WorkbenchDrawer: (props: { issueSubIssues?: React.ReactNode }) => { mockWorkbench(props); return <><button>Workbench</button>{workbenchState.showSubIssues && <section data-testid="workbench-sub-issues">{props.issueSubIssues}</section>}</>; },
 }));
 
 // Counts MockContentEditor mounts. This pins the description to exactly one
@@ -713,10 +714,11 @@ function hasHighlightedCommentBackground(root: ParentNode | null): boolean {
 describe("IssueDetail (shared)", () => {
   it("wires the shared workbench with the actual Issue and no project field", async () => {
     renderIssueDetail();
-    await waitFor(() => expect(mockWorkbench).toHaveBeenCalledWith({ wsId: "ws-1", context: { kind: "issue", issue_id: mockIssue.id }, hasProject: Boolean(mockIssue.project_id) }));
+    await waitFor(() => expect(mockWorkbench).toHaveBeenCalledWith({ wsId: "ws-1", context: { kind: "issue", issue_id: mockIssue.id }, hasProject: Boolean(mockIssue.project_id), issueSubIssues: expect.anything() }));
   });
   beforeEach(() => {
     vi.clearAllMocks();
+    workbenchState.showSubIssues = false;
     contentEditorMounts.count = 0;
     readonlyContentRenders.length = 0;
     descriptionSelectionAction.current = undefined;
@@ -744,6 +746,69 @@ describe("IssueDetail (shared)", () => {
     // Reset project mock — individual tests override per case. Default fixture
     // has project_id: null so getProject is not invoked.
     mockApiObj.getProject.mockReset();
+  });
+
+  describe("workbench sub-issues", () => {
+    const child: Issue = { ...mockIssue, id: "child-1", identifier: "TES-2", title: "Child task", parent_issue_id: mockIssue.id, status: "todo", stage: 1, due_date: null };
+    beforeEach(() => { workbenchState.showSubIssues = true; });
+
+    it("shares the existing rows, stage grouping and child links with the workbench", async () => {
+      mockApiObj.listChildIssues.mockResolvedValue({ issues: [child] });
+      renderIssueDetail();
+      const panel = within(await screen.findByTestId("workbench-sub-issues"));
+      expect(await panel.findByRole("link", { name: /TES-2.*Child task/ })).toHaveAttribute("href", "/test/issues/child-1");
+      expect(panel.getByText("Stage 1")).toBeInTheDocument();
+      expect(mockApiObj.listChildIssues).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not show an empty state before children finish loading", async () => {
+      mockApiObj.listChildIssues.mockReturnValue(new Promise(() => {}));
+      renderIssueDetail();
+      const panel = within(await screen.findByTestId("workbench-sub-issues"));
+      expect(panel.getByRole("status")).toHaveTextContent("Loading");
+      expect(panel.queryByText("No sub-issues.")).not.toBeInTheDocument();
+    });
+
+    it("shows query failure and retries to the successful empty state", async () => {
+      mockApiObj.listChildIssues.mockRejectedValueOnce(new Error("offline"));
+      renderIssueDetail();
+      const panel = within(await screen.findByTestId("workbench-sub-issues"));
+      expect(await panel.findByRole("alert")).toHaveTextContent("Could not load sub-issues.");
+      fireEvent.click(panel.getByRole("button", { name: "Retry" }));
+      expect(await panel.findByText("No sub-issues.")).toBeInTheDocument();
+      expect(mockApiObj.listChildIssues).toHaveBeenCalledTimes(2);
+    });
+
+    it("updates the child through the existing mutation and reconciles both copies", async () => {
+      mockApiObj.listChildIssues.mockResolvedValue({ issues: [child] });
+      mockApiObj.updateIssue.mockImplementation(async (_id: string, updates: Partial<Issue>) => {
+        const updated = { ...child, ...updates, revision: 4 };
+        mockApiObj.listChildIssues.mockResolvedValue({ issues: [updated] });
+        return updated;
+      });
+      renderIssueDetail();
+      const panel = within(await screen.findByTestId("workbench-sub-issues"));
+      const link = await panel.findByRole("link", { name: /TES-2.*Child task/ });
+      const row = link.parentElement!;
+      fireEvent.click(row.querySelector('button[data-slot="popover-trigger"]')!);
+      fireEvent.click(await screen.findByRole("button", { name: "Done" }));
+      await waitFor(() => expect(mockApiObj.updateIssue).toHaveBeenCalledWith("child-1", { status: "done" }));
+      expect(link).toHaveAttribute("href", "/test/issues/child-1");
+      await waitFor(() => expect(screen.getAllByText("1/1")).toHaveLength(2));
+    });
+
+    it("rolls a failed child status write back and shows the error", async () => {
+      mockApiObj.listChildIssues.mockResolvedValue({ issues: [child] });
+      mockApiObj.updateIssue.mockRejectedValueOnce(new Error("Permission denied"));
+      renderIssueDetail();
+      const panel = within(await screen.findByTestId("workbench-sub-issues"));
+      const link = await panel.findByRole("link", { name: /TES-2.*Child task/ });
+      fireEvent.click(link.parentElement!.querySelector('button[data-slot="popover-trigger"]')!);
+      fireEvent.click(await screen.findByRole("button", { name: "Done" }));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Permission denied"));
+      await waitFor(() => expect(screen.getAllByText("0/1")).toHaveLength(2));
+      expect(link).toHaveAttribute("href", "/test/issues/child-1");
+    });
   });
 
   it("counts comment files as deliverables, a re-upload once as v2, never the description's (MUL-7649)", async () => {

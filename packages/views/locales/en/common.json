@@ -130,6 +130,10 @@
     "open_in_new_tab": "Open in new tab"
   },
   "workbench": {
+    "sub_issues": {
+      "empty": "No sub-issues.",
+      "load_failed": "Could not load sub-issues."
+    },
     "files": {
       "title": "Files",
       "resource": "Directory",

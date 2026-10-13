@@ -1305,6 +1305,7 @@ export function IssueDetailSkeleton({
 export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = true, layoutId = "multica_issue_detail_layout", highlightCommentId, highlightRequestToken, leadingAction, variant = "page", trailingActions }: IssueDetailProps) {
   const isPeek = variant === "peek";
   const { t } = useT("issues");
+  const { t: commonT } = useT("common");
   const locale = useLocale();
   const timeAgo = useTimeAgo();
   const id = issueId;
@@ -2059,6 +2060,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     data: childIssues = [],
     isSuccess: childIssuesLoaded,
     isFetching: childIssuesFetching,
+    isError: childIssuesError,
+    refetch: refetchChildIssues,
   } = useQuery({
     ...childIssuesOptions(wsId, id),
     enabled: !!issue,
@@ -3127,6 +3130,145 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
   const titleSizeClass = isPeek ? "text-title-lg font-semibold" : "text-display-sm font-bold";
 
+  // Both surfaces render the same section and share the Query cache,
+  // display preferences, selection and collapse state. No second data owner.
+  const renderSubIssues = (inWorkbench = false) => (
+    <>
+      {/* Sub-issues — Linear-style */}
+      {childIssues.length === 0 && (
+        <div className={inWorkbench ? undefined : "mt-6"}>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 text-caption text-muted-foreground hover:text-foreground transition-colors"
+            onClick={() => actions.openCreateSubIssue()}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span>{t(($) => $.detail.add_sub_issues)}</span>
+          </button>
+        </div>
+      )}
+      {childIssues.length > 0 && (() => {
+        const doneCount = childIssues.filter((c) => issueBehavesAs(c, "done")).length;
+        return (
+          // Provider hosts the shared right-click actions menu the rows
+          // delegate to (one singleton menu, not one per row).
+          <IssueContextMenuProvider>
+          <div className={cn("group/sub-issues", !inWorkbench && "mt-10")}>
+            {/* Header */}
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <button
+                type="button"
+                onClick={() => setSubIssuesCollapsed((v) => !v)}
+                className="flex items-center gap-1.5 text-body font-medium text-foreground hover:text-foreground/80 transition-colors"
+              >
+                <ChevronDown
+                  className={cn(
+                    "h-3.5 w-3.5 text-muted-foreground transition-transform",
+                    subIssuesCollapsed && "-rotate-90",
+                  )}
+                />
+                <span>{t(($) => $.detail.sub_issues_label)}</span>
+              </button>
+              <div className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5">
+                <ProgressRing done={doneCount} total={childIssues.length} size={11} />
+                <span className="text-micro text-muted-foreground tabular-nums font-medium">
+                  {doneCount}/{childIssues.length}
+                </span>
+              </div>
+              {/* issue.id, not the route param — the endpoint takes a
+                  UUID and the route may carry a human-readable id. */}
+              <SubIssuesAgentWorkingChip parentIssueId={issue.id} />
+              <input
+                type="checkbox"
+                checked={allChildrenSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someChildrenSelected && !allChildrenSelected;
+                }}
+                onChange={handleToggleSelectAllChildren}
+                aria-label={t(($) => $.detail.select_all_sub_issues_aria)}
+                className={cn(
+                  "ml-1 cursor-pointer accent-primary transition-opacity",
+                  someChildrenSelected
+                    ? "opacity-100"
+                    : "opacity-0 group-hover/sub-issues:opacity-100 focus-visible:opacity-100",
+                )}
+              />
+              <div className="ml-auto flex items-center gap-0.5">
+                <SubIssueDisplayPopover workspaceProperties={activeWorkspaceProperties} />
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                        onClick={() => actions.openCreateSubIssue()}
+                        aria-label={t(($) => $.detail.add_sub_issue_aria)}
+                      >
+                        <Plus className="h-4 w-4" />
+                      </button>
+                    }
+                  />
+                  <TooltipContent side="bottom">{t(($) => $.detail.add_sub_issue_tooltip)}</TooltipContent>
+                </Tooltip>
+              </div>
+            </div>
+
+            {/* Inline batch toolbar — appears next to the rows when
+                selections exist, instead of as a far-away fixed bar. */}
+            <BatchActionToolbar issues={childIssues} placement="inline" />
+
+            {/* List */}
+            {!subIssuesCollapsed && (() => {
+              const groups = groupSubIssuesByStage(childIssues);
+              const staged = childIssues.some((c) => c.stage != null);
+              return (
+                <div className="overflow-hidden rounded-lg border bg-card/30 divide-y divide-border/60">
+                  {groups.map(({ stage: groupStage, items }) => (
+                    <Fragment key={groupStage ?? "unstaged"}>
+                      {staged && (
+                        <div className="bg-muted/40 px-3 py-1 text-micro font-medium uppercase tracking-wider text-muted-foreground">
+                          {groupStage == null
+                            ? t(($) => $.stage.none)
+                            : t(($) => $.stage.value, { n: groupStage })}
+                        </div>
+                      )}
+                      {items.map((child) => (
+                        <SubIssueRow
+                          key={child.id}
+                          child={child}
+                          childProgress={subIssueProgress?.get(child.id)}
+                          rowProps={subIssueRowProps}
+                          customProperties={subIssueCustomProps}
+                        />
+                      ))}
+                    </Fragment>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+          </IssueContextMenuProvider>
+        );
+      })()}
+    </>
+  );
+
+  const workbenchSubIssues = childIssuesError ? (
+    <div role="alert" className="space-y-2 text-body">
+      <p>{commonT(($) => $.workbench.sub_issues.load_failed)}</p>
+      <Button variant="outline" size="sm" onClick={() => { void refetchChildIssues(); }}>
+        {commonT(($) => $.workbench.retry)}
+      </Button>
+    </div>
+  ) : !childIssuesLoaded ? (
+    <p role="status" className="text-body">{commonT(($) => $.loading)}</p>
+  ) : (
+    <>
+      {childIssues.length === 0 && <p className="mb-2 text-body">{commonT(($) => $.workbench.sub_issues.empty)}</p>}
+      {renderSubIssues(true)}
+    </>
+  );
+
   const detailContent = (
     <CurrentIssueRenderContextProvider value={currentIssueRenderContext}>
     <div className="relative flex h-full min-w-0 flex-1 flex-col">
@@ -3165,7 +3307,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 It self-hides when no agent is active. */}
             <IssueAgentHeaderChip issueId={id} />
             <IssueWakeupHeaderChip issueId={id} onOpen={openWakeups} />
-            <WorkbenchDrawer key={`${wsId}:${issue.id}:${issue.project_id ?? ""}`} wsId={wsId} context={{ kind: "issue", issue_id: issue.id }} hasProject={Boolean(issue.project_id)} />
+            <WorkbenchDrawer key={`${wsId}:${issue.id}:${issue.project_id ?? ""}`} wsId={wsId} context={{ kind: "issue", issue_id: issue.id }} hasProject={Boolean(issue.project_id)} issueSubIssues={workbenchSubIssues} />
             {onDone && !issueBehavesAsAny(issue, ["done", "closed"]) && (
               <Tooltip>
                 <TooltipTrigger
@@ -3526,122 +3668,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             {descDragOver && <FileDropOverlay />}
           </div>
 
-          {/* Sub-issues — Linear-style */}
-          {childIssues.length === 0 && (
-            <div className="mt-6">
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 text-caption text-muted-foreground hover:text-foreground transition-colors"
-                onClick={() => actions.openCreateSubIssue()}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>{t(($) => $.detail.add_sub_issues)}</span>
-              </button>
-            </div>
-          )}
-          {childIssues.length > 0 && (() => {
-            const doneCount = childIssues.filter((c) => issueBehavesAs(c, "done")).length;
-            return (
-              // Provider hosts the shared right-click actions menu the rows
-              // delegate to (one singleton menu, not one per row).
-              <IssueContextMenuProvider>
-              <div className="mt-10 group/sub-issues">
-                {/* Header */}
-                <div className="flex items-center gap-2 mb-2">
-                  <button
-                    type="button"
-                    onClick={() => setSubIssuesCollapsed((v) => !v)}
-                    className="flex items-center gap-1.5 text-body font-medium text-foreground hover:text-foreground/80 transition-colors"
-                  >
-                    <ChevronDown
-                      className={cn(
-                        "h-3.5 w-3.5 text-muted-foreground transition-transform",
-                        subIssuesCollapsed && "-rotate-90",
-                      )}
-                    />
-                    <span>{t(($) => $.detail.sub_issues_label)}</span>
-                  </button>
-                  <div className="inline-flex items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5">
-                    <ProgressRing done={doneCount} total={childIssues.length} size={11} />
-                    <span className="text-micro text-muted-foreground tabular-nums font-medium">
-                      {doneCount}/{childIssues.length}
-                    </span>
-                  </div>
-                  {/* issue.id, not the route param — the endpoint takes a
-                      UUID and the route may carry a human-readable id. */}
-                  <SubIssuesAgentWorkingChip parentIssueId={issue.id} />
-                  <input
-                    type="checkbox"
-                    checked={allChildrenSelected}
-                    ref={(el) => {
-                      if (el) el.indeterminate = someChildrenSelected && !allChildrenSelected;
-                    }}
-                    onChange={handleToggleSelectAllChildren}
-                    aria-label={t(($) => $.detail.select_all_sub_issues_aria)}
-                    className={cn(
-                      "ml-1 cursor-pointer accent-primary transition-opacity",
-                      someChildrenSelected
-                        ? "opacity-100"
-                        : "opacity-0 group-hover/sub-issues:opacity-100 focus-visible:opacity-100",
-                    )}
-                  />
-                  <div className="ml-auto flex items-center gap-0.5">
-                    <SubIssueDisplayPopover workspaceProperties={activeWorkspaceProperties} />
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                            onClick={() => actions.openCreateSubIssue()}
-                            aria-label={t(($) => $.detail.add_sub_issue_aria)}
-                          >
-                            <Plus className="h-4 w-4" />
-                          </button>
-                        }
-                      />
-                      <TooltipContent side="bottom">{t(($) => $.detail.add_sub_issue_tooltip)}</TooltipContent>
-                    </Tooltip>
-                  </div>
-                </div>
-
-                {/* Inline batch toolbar — appears next to the rows when
-                    selections exist, instead of as a far-away fixed bar. */}
-                <BatchActionToolbar issues={childIssues} placement="inline" />
-
-                {/* List */}
-                {!subIssuesCollapsed && (() => {
-                  const groups = groupSubIssuesByStage(childIssues);
-                  const staged = childIssues.some((c) => c.stage != null);
-                  return (
-                    <div className="overflow-hidden rounded-lg border bg-card/30 divide-y divide-border/60">
-                      {groups.map(({ stage: groupStage, items }) => (
-                        <Fragment key={groupStage ?? "unstaged"}>
-                          {staged && (
-                            <div className="bg-muted/40 px-3 py-1 text-micro font-medium uppercase tracking-wider text-muted-foreground">
-                              {groupStage == null
-                                ? t(($) => $.stage.none)
-                                : t(($) => $.stage.value, { n: groupStage })}
-                            </div>
-                          )}
-                          {items.map((child) => (
-                            <SubIssueRow
-                              key={child.id}
-                              child={child}
-                              childProgress={subIssueProgress?.get(child.id)}
-                              rowProps={subIssueRowProps}
-                              customProperties={subIssueCustomProps}
-                            />
-                          ))}
-                        </Fragment>
-                      ))}
-                    </div>
-                  );
-                })()}
-              </div>
-              </IssueContextMenuProvider>
-            );
-          })()}
+          {renderSubIssues()}
 
           <div className="my-8 border-t" />
 

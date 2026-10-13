@@ -130,6 +130,10 @@
     "open_in_new_tab": "새 탭에서 열기"
   },
   "workbench": {
+    "sub_issues": {
+      "empty": "하위 작업이 없습니다.",
+      "load_failed": "하위 작업을 불러오지 못했습니다."
+    },
     "files": {
       "title": "파일",
       "resource": "디렉터리",
