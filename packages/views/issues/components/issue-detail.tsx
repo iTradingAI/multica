@@ -124,7 +124,7 @@ import {
 } from "./deliverables/deliverable-details";
 import { collectDeliverableFiles } from "@multica/core/attachments/deliverables";
 import { AttachmentVersionsProvider } from "./deliverables/attachment-versions";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
@@ -844,6 +844,7 @@ function SubIssueRow({
   const locale = useLocale();
   const paths = useWorkspacePaths();
   const updateIssue = useUpdateIssue();
+  const queryClient = useQueryClient();
   const selected = useIssueSelectionStore((s) => s.selectedIds.has(child.id));
   const childStatusCatalog = useIssueStatuses(useWorkspaceId());
   const toggleSelected = useIssueSelectionStore((s) => s.toggle);
@@ -857,6 +858,16 @@ function SubIssueRow({
 
   const handleUpdate = useCallback(
     (updates: Partial<UpdateIssueRequest>) => {
+      // Read synchronously: a second click can precede a React render, and
+      // this child is mounted in both the body and the workbench drawer.
+      if (updates.status !== undefined && queryClient.isMutating({
+        predicate: (mutation) => {
+          const variables = mutation.state.variables;
+          return typeof variables === "object" && variables !== null &&
+            "id" in variables && variables.id === child.id &&
+            "status" in variables && variables.status !== undefined;
+        },
+      }) > 0) return;
       updateIssue.mutate(
         {
           id: child.id,
@@ -872,7 +883,7 @@ function SubIssueRow({
         },
       );
     },
-    [child.id, updateIssue, t],
+    [child.id, queryClient, updateIssue, t],
   );
 
   // AppLink wraps only the title/identifier area. Pickers and checkbox are

@@ -797,6 +797,59 @@ describe("IssueDetail (shared)", () => {
       await waitFor(() => expect(screen.getAllByText("1/1")).toHaveLength(2));
     });
 
+    for (const surface of ["body", "panel"] as const) {
+      for (const outcome of ["success", "failure"] as const) {
+        it(`F01 blocks repeated child writes in ${surface} while pending and unlocks after ${outcome}`, async () => {
+          let currentChild = child;
+          let resolveFirst!: (issue: Issue) => void;
+          let rejectFirst!: (error: Error) => void;
+          const firstWrite = new Promise<Issue>((resolve, reject) => {
+            resolveFirst = resolve;
+            rejectFirst = reject;
+          });
+          mockApiObj.listChildIssues.mockImplementation(async () => ({ issues: [currentChild] }));
+          mockApiObj.updateIssue.mockReset();
+          mockApiObj.updateIssue.mockImplementationOnce(() => firstWrite);
+          mockApiObj.updateIssue.mockImplementation(async (_id: string, updates: Partial<Issue>) => {
+            currentChild = { ...currentChild, ...updates, revision: (currentChild.revision ?? 0) + 1 };
+            return currentChild;
+          });
+          renderIssueDetail();
+          const panel = await screen.findByTestId("workbench-sub-issues");
+          await within(panel).findByRole("link", { name: /TES-2.*Child task/ });
+          const childLink = (inPanel: boolean) => screen.getAllByRole("link", { name: /TES-2.*Child task/ })
+            .find((link) => panel.contains(link) === inPanel)!;
+          const choose = async (inPanel: boolean, status: "Done" | "Todo") => {
+            const row = childLink(inPanel).parentElement!;
+            fireEvent.click(row.querySelector('button[data-slot="popover-trigger"]')!);
+            fireEvent.click(await screen.findByRole("button", { name: status }));
+          };
+          const inPanel = surface === "panel";
+          await choose(inPanel, "Done");
+          await waitFor(() => expect(mockApiObj.updateIssue).toHaveBeenCalledTimes(1));
+          await choose(inPanel, "Todo");
+          // The second mounted copy must not bypass the same child lock.
+          await choose(!inPanel, "Todo");
+          expect(mockApiObj.updateIssue).toHaveBeenCalledTimes(1);
+          expect(mockApiObj.updateIssue).toHaveBeenNthCalledWith(1, "child-1", { status: "done" });
+
+          if (outcome === "success") {
+            currentChild = { ...child, status: "done", revision: (child.revision ?? 0) + 1 };
+            await act(async () => { resolveFirst(currentChild); await firstWrite; });
+            await waitFor(() => expect(screen.getAllByText("1/1")).toHaveLength(2));
+          } else {
+            await act(async () => { rejectFirst(new Error("Permission denied")); await firstWrite.catch(() => {}); });
+            await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Permission denied"));
+            await waitFor(() => expect(screen.getAllByText("0/1")).toHaveLength(2));
+          }
+          // A settled request allows another intentional update in either copy.
+          await choose(inPanel, outcome === "success" ? "Todo" : "Done");
+          await waitFor(() => expect(mockApiObj.updateIssue).toHaveBeenCalledTimes(2));
+          await waitFor(() => expect(screen.getAllByText(outcome === "success" ? "0/1" : "1/1")).toHaveLength(2));
+        });
+      }
+    }
+
     it("rolls a failed child status write back and shows the error", async () => {
       mockApiObj.listChildIssues.mockResolvedValue({ issues: [child] });
       mockApiObj.updateIssue.mockRejectedValueOnce(new Error("Permission denied"));
