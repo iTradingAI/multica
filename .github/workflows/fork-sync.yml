@@ -3,7 +3,7 @@ name: Fork sync (upstream candidate)
 
 on:
   schedule:
-    - cron: "17 3 * * *"
+    - cron: "18 3 * * *"
   workflow_dispatch:
 
 permissions:
