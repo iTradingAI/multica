@@ -21,9 +21,8 @@ const TEST_RESOURCES = { en: { agents: enAgents, common: enCommon, issues: enIss
 
 const mockViewport = vi.hoisted(() => ({ isMobile: false }));
 const mockWorkbench = vi.hoisted(() => vi.fn());
-const workbenchState = vi.hoisted(() => ({ showSubIssues: false }));
 vi.mock("../../workbench", () => ({
-  WorkbenchDrawer: (props: { issueSubIssues?: React.ReactNode }) => { mockWorkbench(props); return <><button>Workbench</button>{workbenchState.showSubIssues && <section data-testid="workbench-sub-issues">{props.issueSubIssues}</section>}</>; },
+  WorkbenchDrawer: (props: Record<string, unknown>) => { mockWorkbench(props); return <button>Workbench</button>; },
 }));
 
 // Counts MockContentEditor mounts. This pins the description to exactly one
@@ -714,11 +713,10 @@ function hasHighlightedCommentBackground(root: ParentNode | null): boolean {
 describe("IssueDetail (shared)", () => {
   it("wires the shared workbench with the actual Issue and no project field", async () => {
     renderIssueDetail();
-    await waitFor(() => expect(mockWorkbench).toHaveBeenCalledWith({ wsId: "ws-1", context: { kind: "issue", issue_id: mockIssue.id }, hasProject: Boolean(mockIssue.project_id), issueSubIssues: expect.anything() }));
+    await waitFor(() => expect(mockWorkbench).toHaveBeenCalledWith({ wsId: "ws-1", context: { kind: "issue", issue_id: mockIssue.id }, hasProject: Boolean(mockIssue.project_id) }));
   });
   beforeEach(() => {
     vi.clearAllMocks();
-    workbenchState.showSubIssues = false;
     contentEditorMounts.count = 0;
     readonlyContentRenders.length = 0;
     descriptionSelectionAction.current = undefined;
@@ -748,23 +746,37 @@ describe("IssueDetail (shared)", () => {
     mockApiObj.getProject.mockReset();
   });
 
-  describe("workbench sub-issues", () => {
+  describe("properties sidebar sub-issues", () => {
     const child: Issue = { ...mockIssue, id: "child-1", identifier: "TES-2", title: "Child task", parent_issue_id: mockIssue.id, status: "todo", stage: 1, due_date: null };
-    beforeEach(() => { workbenchState.showSubIssues = true; });
 
-    it("shares the existing rows, stage grouping and child links with the workbench", async () => {
+    it("lists shared child rows and links in the properties sidebar without a workbench slot", async () => {
       mockApiObj.listChildIssues.mockResolvedValue({ issues: [child] });
       renderIssueDetail();
-      const panel = within(await screen.findByTestId("workbench-sub-issues"));
+      const panel = within(await screen.findByTestId("sidebar-sub-issues"));
       expect(await panel.findByRole("link", { name: /TES-2.*Child task/ })).toHaveAttribute("href", "/test/issues/child-1");
       expect(panel.getByText("Stage 1")).toBeInTheDocument();
       expect(mockApiObj.listChildIssues).toHaveBeenCalledTimes(1);
+      expect(panel.queryByRole("checkbox")).not.toBeInTheDocument();
+      expect(mockWorkbench.mock.calls.at(-1)?.[0]).not.toHaveProperty("issueSubIssues");
+    });
+
+    it("keeps the sidebar list available when the body's sub-issues are collapsed", async () => {
+      mockApiObj.listChildIssues.mockResolvedValue({ issues: [child] });
+      renderIssueDetail();
+      const panel = within(await screen.findByTestId("sidebar-sub-issues"));
+      await panel.findByRole("link", { name: /TES-2.*Child task/ });
+      expect(screen.getAllByRole("link", { name: /TES-2.*Child task/ })).toHaveLength(2);
+      fireEvent.click(screen.getByRole("button", { name: "Sub-issues" }));
+      expect(panel.getByRole("link", { name: /TES-2.*Child task/ })).toBeInTheDocument();
+      expect(screen.getAllByRole("link", { name: /TES-2.*Child task/ })).toHaveLength(1);
+      fireEvent.click(screen.getByRole("button", { name: "Sub-issues" }));
+      expect(screen.getAllByRole("link", { name: /TES-2.*Child task/ })).toHaveLength(2);
     });
 
     it("does not show an empty state before children finish loading", async () => {
       mockApiObj.listChildIssues.mockReturnValue(new Promise(() => {}));
       renderIssueDetail();
-      const panel = within(await screen.findByTestId("workbench-sub-issues"));
+      const panel = within(await screen.findByTestId("sidebar-sub-issues"));
       expect(panel.getByRole("status")).toHaveTextContent("Loading");
       expect(panel.queryByText("No sub-issues.")).not.toBeInTheDocument();
     });
@@ -772,7 +784,7 @@ describe("IssueDetail (shared)", () => {
     it("shows query failure and retries to the successful empty state", async () => {
       mockApiObj.listChildIssues.mockRejectedValueOnce(new Error("offline"));
       renderIssueDetail();
-      const panel = within(await screen.findByTestId("workbench-sub-issues"));
+      const panel = within(await screen.findByTestId("sidebar-sub-issues"));
       expect(await panel.findByRole("alert")).toHaveTextContent("Could not load sub-issues.");
       fireEvent.click(panel.getByRole("button", { name: "Retry" }));
       expect(await panel.findByText("No sub-issues.")).toBeInTheDocument();
@@ -787,7 +799,7 @@ describe("IssueDetail (shared)", () => {
         return updated;
       });
       renderIssueDetail();
-      const panel = within(await screen.findByTestId("workbench-sub-issues"));
+      const panel = within(await screen.findByTestId("sidebar-sub-issues"));
       const link = await panel.findByRole("link", { name: /TES-2.*Child task/ });
       const row = link.parentElement!;
       fireEvent.click(row.querySelector('button[data-slot="popover-trigger"]')!);
@@ -815,7 +827,7 @@ describe("IssueDetail (shared)", () => {
             return currentChild;
           });
           renderIssueDetail();
-          const panel = await screen.findByTestId("workbench-sub-issues");
+          const panel = await screen.findByTestId("sidebar-sub-issues");
           await within(panel).findByRole("link", { name: /TES-2.*Child task/ });
           const childLink = (inPanel: boolean) => screen.getAllByRole("link", { name: /TES-2.*Child task/ })
             .find((link) => panel.contains(link) === inPanel)!;
@@ -854,7 +866,7 @@ describe("IssueDetail (shared)", () => {
       mockApiObj.listChildIssues.mockResolvedValue({ issues: [child] });
       mockApiObj.updateIssue.mockRejectedValueOnce(new Error("Permission denied"));
       renderIssueDetail();
-      const panel = within(await screen.findByTestId("workbench-sub-issues"));
+      const panel = within(await screen.findByTestId("sidebar-sub-issues"));
       const link = await panel.findByRole("link", { name: /TES-2.*Child task/ });
       fireEvent.click(link.parentElement!.querySelector('button[data-slot="popover-trigger"]')!);
       fireEvent.click(await screen.findByRole("button", { name: "Done" }));
@@ -3112,7 +3124,7 @@ describe("IssueDetail (shared)", () => {
 
       renderIssueDetail();
 
-      await screen.findByText("Fix login flow");
+      await screen.findAllByText("Fix login flow");
       // Label chips ride inside the row link.
       expect(screen.getByText("backend")).toBeInTheDocument();
       expect(screen.getByText("auth")).toBeInTheDocument();
@@ -3122,7 +3134,7 @@ describe("IssueDetail (shared)", () => {
       const due = screen.getByText("Jan 1");
       expect(due.closest("span")?.className).toContain("text-destructive");
       // Bare row shows no due date / no progress chip of its own.
-      const bareRow = screen.getByText("Ship dashboards").closest("a");
+      const bareRow = screen.getAllByText("Ship dashboards").find((node) => !screen.getByTestId("sidebar-sub-issues").contains(node))!.closest("a");
       expect(bareRow?.textContent).not.toContain("/");
     });
 
@@ -3149,7 +3161,7 @@ describe("IssueDetail (shared)", () => {
 
       renderIssueDetail();
 
-      await screen.findByText("Fix login flow");
+      await screen.findAllByText("Fix login flow");
       expect(screen.queryByText("backend")).not.toBeInTheDocument();
       expect(screen.queryByText("Jan 1")).not.toBeInTheDocument();
     });
@@ -3191,7 +3203,7 @@ describe("IssueDetail (shared)", () => {
 
       renderIssueDetail();
 
-      await screen.findByText("Fix login flow");
+      await screen.findAllByText("Fix login flow");
       // Chip renders only on the row that has a value for the property.
       expect(await screen.findByText("Sprint 3")).toBeInTheDocument();
       expect(screen.getAllByText("Sprint 3")).toHaveLength(1);
@@ -3213,7 +3225,7 @@ describe("IssueDetail (shared)", () => {
 
       renderIssueDetail();
 
-      await screen.findByText("Wrapped up");
+      await screen.findAllByText("Wrapped up");
       const due = screen.getByText("Jan 1");
       expect(due.closest("span")?.className).not.toContain("text-destructive");
       expect(due.closest("span")?.className).toContain("text-muted-foreground");

@@ -374,6 +374,8 @@
     "close": "プレビューを閉じる"
   },
   "detail": {
+    "sub_issues_empty": "サブタスクはありません。",
+    "sub_issues_load_failed": "サブタスクを読み込めませんでした。",
     "not_found": "このタスクはこのワークスペースに存在しないか、削除されています。",
     "breadcrumb_project_unknown": "不明なプロジェクト",
     "back": "戻る",

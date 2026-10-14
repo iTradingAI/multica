@@ -18,10 +18,10 @@ vi.mock("@multica/core/api", () => ({ api: { listPluginInstallations: (...args: 
 vi.mock("@multica/core/realtime", () => ({ useWS: () => ({ send: state.send, subscribe: state.subscribe, onReconnect: state.onReconnect, onReady: state.onReconnect }) }));
 vi.mock("../plugins/surface-bridge", () => ({ createSurfaceBridge: (options: unknown) => { state.bridgeOptions(options); return { close: state.close, connect: state.connect }; } }));
 
-function setup(context: React.ComponentProps<typeof WorkbenchDrawer>["context"] = { kind: "issue", issue_id: "issue-1" }, issueSubIssues?: React.ReactNode) {
+function setup(context: React.ComponentProps<typeof WorkbenchDrawer>["context"] = { kind: "issue", issue_id: "issue-1" }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const view = renderWithI18n(<QueryClientProvider client={client}><WorkbenchDrawer wsId="ws-1" context={context} hasProject={false} issueSubIssues={issueSubIssues} /></QueryClientProvider>);
-  return { ...view, client, rerenderEntry: (wsId: string, next: React.ComponentProps<typeof WorkbenchDrawer>["context"]) => view.rerender(<QueryClientProvider client={client}><WorkbenchDrawer wsId={wsId} context={next} hasProject={false} issueSubIssues={issueSubIssues} /></QueryClientProvider>) };
+  const view = renderWithI18n(<QueryClientProvider client={client}><WorkbenchDrawer wsId="ws-1" context={context} hasProject={false} /></QueryClientProvider>);
+  return { ...view, client, rerenderEntry: (wsId: string, next: React.ComponentProps<typeof WorkbenchDrawer>["context"]) => view.rerender(<QueryClientProvider client={client}><WorkbenchDrawer wsId={wsId} context={next} hasProject={false} /></QueryClientProvider>) };
 }
 beforeEach(() => {
   vi.clearAllMocks();
@@ -137,39 +137,33 @@ describe("workbench lifecycle", () => {
   });
 });
 
-describe("issue sub-issues slot", () => {
+describe("workbench without the removed sub-issues slot", () => {
   for (const desktop of [false, true]) {
-    it(`opens sub-issues without project/resources/plugins on ${desktop ? "desktop" : "web"}`, async () => {
-      state.desktop = desktop;
-      state.enabled = false;
-      setup(undefined, <div>TES-2 Child task</div>);
-      const user = userEvent.setup();
-      await user.click(screen.getByRole("button", { name: "Workbench" }));
-      expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
-      await user.click(screen.getByRole("tab", { name: "Sub-issues" }));
-      expect(screen.getByText("TES-2 Child task")).toBeInTheDocument();
-      expect(state.launch).not.toHaveBeenCalled();
-      await user.keyboard("{Escape}");
-      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-      expect(screen.getByRole("button", { name: "Workbench" })).toHaveFocus();
-    });
+    for (const context of [{ kind: "issue", issue_id: "issue-1" }, { kind: "project", project_id: "project-1" }] as const) {
+      it(`keeps Files and directory status without a sub-issues tab on ${desktop ? "desktop" : "web"}/${context.kind}`, async () => {
+        state.desktop = desktop;
+        state.enabled = false;
+        setup(context);
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("button", { name: "Workbench" }));
+        expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
+        expect(screen.queryByRole("tab", { name: "Sub-issues" })).not.toBeInTheDocument();
+        await user.click(screen.getByRole("tab", { name: "Directory status" }));
+        expect(screen.getByRole("tab", { name: "Directory status" })).toHaveAttribute("aria-selected", "true");
+        expect(state.launch).not.toHaveBeenCalled();
+      });
+    }
   }
-  it("does not expose the issue slot at the project entry", async () => {
-    setup({ kind: "project", project_id: "project-1" }, <div>TES-2 Child task</div>);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Workbench" }));
-    expect(screen.queryByRole("tab", { name: "Sub-issues" })).not.toBeInTheDocument();
-    expect(screen.queryByText("TES-2 Child task")).not.toBeInTheDocument();
-  });
-  it("resets the sub-issues session on issue and workspace changes", async () => {
-    const { rerenderEntry } = setup(undefined, <div>TES-2 Child task</div>);
+  it("resets the selected tab and open session on real issue and workspace changes", async () => {
+    const { rerenderEntry } = setup();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Workbench" }));
-    await user.click(screen.getByRole("tab", { name: "Sub-issues" }));
+    await user.click(screen.getByRole("tab", { name: "Directory status" }));
     rerenderEntry("ws-1", { kind: "issue", issue_id: "issue-2" });
-    expect(screen.queryByText("TES-2 Child task")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Workbench" }));
     expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
-    await user.click(screen.getByRole("tab", { name: "Sub-issues" }));
+    await user.click(screen.getByRole("tab", { name: "Directory status" }));
     rerenderEntry("ws-2", { kind: "issue", issue_id: "issue-2" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });

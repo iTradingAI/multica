@@ -130,10 +130,6 @@
     "open_in_new_tab": "新しいタブで開く"
   },
   "workbench": {
-    "sub_issues": {
-      "empty": "サブタスクはありません。",
-      "load_failed": "サブタスクを読み込めませんでした。"
-    },
     "files": {
       "title": "ファイル",
       "resource": "ディレクトリ",

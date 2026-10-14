@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFeatureEnabled } from "@multica/core/config";
 import { PLUGINS_V1_FLAG } from "@multica/core/feature-flags";
@@ -20,8 +20,6 @@ import { WorkbenchResourceState } from "./workbench-resource-state";
 import { FilesTab } from "./files-tab";
 
 interface Props { wsId: string; context: WorkbenchContext; hasProject?: boolean;
-  /** IssueDetail owns the existing sub-issue view and its server data. */
-  issueSubIssues?: ReactNode;
 }
 interface WorkbenchTab { id: string; label: string;
 }
@@ -33,7 +31,7 @@ export function WorkbenchDrawer(props: Props) {
     <WorkbenchSession key={JSON.stringify([props.wsId, props.context])} {...props} />
   );
 }
-function WorkbenchSession({ wsId, context, hasProject = true, issueSubIssues }: Props) {
+function WorkbenchSession({ wsId, context, hasProject = true }: Props) {
   const { t } = useT("common");
   const [open, setOpen] = useState(false);
   return (
@@ -45,16 +43,14 @@ function WorkbenchSession({ wsId, context, hasProject = true, issueSubIssues }: 
     <SheetContent side="right" className="w-full sm:max-w-lg overflow-hidden">
       <SheetHeader><SheetTitle>{t(($) => $.workbench.title)}</SheetTitle></SheetHeader>
       {open && (
-          <WorkbenchBody wsId={wsId} context={context} hasProject={hasProject} issueSubIssues={issueSubIssues} />
+          <WorkbenchBody wsId={wsId} context={context} hasProject={hasProject} />
         )}
     </SheetContent>
   </Sheet>
   );
 }
-function WorkbenchBody({ wsId, context, hasProject = true, issueSubIssues }: Props) {
+function WorkbenchBody({ wsId, context, hasProject = true }: Props) {
   const scope = useId();
-  const { t: issuesT } = useT("issues");
-  const hasSubIssuesTab = context.kind === "issue" && issueSubIssues != null;
   const { t } = useT("common");
   const enabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
   const installed = useQuery({ ...pluginInstallationsOptions(wsId), enabled: enabled && Boolean(wsId), refetchInterval: 5_000, refetchIntervalInBackground: false, refetchOnWindowFocus: "always", refetchOnMount: "always", retry: false,
@@ -63,7 +59,6 @@ function WorkbenchBody({ wsId, context, hasProject = true, issueSubIssues }: Pro
         ) : [];
   const tabs: WorkbenchTab[] = [
     { id: "files", label: t(($) => $.workbench.files.title) },
-    ...(hasSubIssuesTab ? [{ id: "sub-issues", label: issuesT(($) => $.detail.sub_issues_label) }] : []),
     { id: "diagnostics", label: t(($) => $.workbench.diagnostics) }, ...panels,
   ];
   const [selected, setSelected] = useState("files");
@@ -90,7 +85,7 @@ function WorkbenchBody({ wsId, context, hasProject = true, issueSubIssues }: Pro
           <TabsTrigger key={tab.id} value={tab.id} className="shrink-0 whitespace-nowrap">{tab.label}</TabsTrigger>))}</TabsList>
     </div>
     <TabsContent key={active} value={active} className="min-h-0 overflow-y-auto text-muted-foreground">
-      {active === "sub-issues" ? issueSubIssues : panel ? (
+      {panel ? (
           <SidebarPanel wsId={wsId} context={context} panel={panel} />
         ) : active === "files" ? (
           <FilesTab wsId={wsId} context={context} hasProject={hasProject} />

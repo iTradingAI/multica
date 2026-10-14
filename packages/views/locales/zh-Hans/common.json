@@ -130,10 +130,6 @@
     "open_in_new_tab": "在新标签页打开"
   },
   "workbench": {
-    "sub_issues": {
-      "empty": "暂无子任务。",
-      "load_failed": "无法加载子任务。"
-    },
     "files": {
       "title": "文件",
       "resource": "目录",

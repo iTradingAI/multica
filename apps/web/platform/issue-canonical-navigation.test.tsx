@@ -27,7 +27,7 @@ vi.mock("@multica/core/realtime", () => ({
 const uuid = "cb240efb-154c-42a8-ae92-42b02676feca";
 
 describe("issue URL canonicalization preserves the web page session", () => {
-  it("keeps the open drawer and selected sub-issues tab during UUID → identifier replace", async () => {
+  it("keeps the open drawer and selected directory status tab during UUID → identifier replace", async () => {
     window.history.replaceState(null, "", `/acme/issues/${uuid}#comment-c1`);
     const historyLength = window.history.length;
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -36,7 +36,7 @@ describe("issue URL canonicalization preserves the web page session", () => {
       const [identifier, setIdentifier] = useState<string>();
       resolveIdentifier = () => setIdentifier("TES-1");
       useCanonicalIssueUrl(uuid, identifier, "#comment-c1");
-      return <WorkbenchDrawer wsId="ws-1" context={{ kind: "issue", issue_id: uuid }} hasProject={false} issueSubIssues={<div>TES-2 Child</div>} />;
+      return <WorkbenchDrawer wsId="ws-1" context={{ kind: "issue", issue_id: uuid }} hasProject={false} />;
     }
     function Route() {
       const [segment, setSegment] = useState(uuid);
@@ -48,12 +48,12 @@ describe("issue URL canonicalization preserves the web page session", () => {
     renderWithI18n(<QueryClientProvider client={client}><WebNavigationProvider><Route /></WebNavigationProvider></QueryClientProvider>);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Workbench" }));
-    await user.click(screen.getByRole("tab", { name: "Sub-issues" }));
+    await user.click(screen.getByRole("tab", { name: "Directory status" }));
     act(() => resolveIdentifier());
 
     expect(screen.getByRole("dialog", { name: "Workbench" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Sub-issues" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("TES-2 Child")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Directory status" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("This issue has no project.")).toBeInTheDocument();
     expect(window.location.pathname + window.location.hash).toBe("/acme/issues/TES-1#comment-c1");
     expect(window.history.length).toBe(historyLength);
     expect(router.replace).not.toHaveBeenCalled();
