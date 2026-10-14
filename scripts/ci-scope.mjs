@@ -7,8 +7,8 @@ export const filters = JSON.parse(
   readFileSync(new URL("../.github/ci-paths.json", import.meta.url), "utf8"),
 );
 
-export function decideScopes(event, filtered) {
-  const full = event === "schedule" || event === "workflow_dispatch";
+export function decideScopes(event, filtered, branch = "") {
+  const full = event === "schedule" || event === "workflow_dispatch" || branch.startsWith("sync/upstream-");
   if (!full && event !== "push" && event !== "pull_request") {
     throw new Error(`Unsupported CI event: ${event}`);
   }
@@ -47,15 +47,39 @@ export function checkGate(needs, jobScopes) {
   }
 }
 
+export function checkRequired(needs, event, branch = "") {
+  for (const job of ["changes", "frontend", "backend"]) {
+    if (needs[job]?.result !== "success") throw new Error(`${job} did not succeed`);
+  }
+  const scopes = {
+    "sqlc-check": "sqlc", "windows-execenv": "runtime", "macos-runtime": "full",
+    installer: "installer", "script-checks": "scripts", "image-budget": "images",
+  };
+  for (const [job, scope] of Object.entries(scopes)) {
+    const selected = needs.changes.outputs?.[scope];
+    if (!["true", "false"].includes(selected)) throw new Error(`Invalid scope: ${scope}`);
+    const expected = selected === "true" && (job !== "image-budget" || event === "pull_request" || branch.startsWith("sync/upstream-"))
+      ? "success" : "skipped";
+    if (needs[job]?.result !== expected) throw new Error(`${job}: expected ${expected}`);
+  }
+  const allowed = new Set(["changes", "frontend", "backend", ...Object.keys(scopes)]);
+  for (const job of Object.keys(needs)) {
+    if (!allowed.has(job)) throw new Error(`Unchecked dependency: ${job}`);
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     switch (process.argv[2]) {
       case "decide": {
-        const outputs = decideScopes(process.env.EVENT_NAME, JSON.parse(process.env.FILTER_RESULTS));
+        const outputs = decideScopes(process.env.EVENT_NAME, JSON.parse(process.env.FILTER_RESULTS), process.env.CANDIDATE_BRANCH);
         appendFileSync(process.env.GITHUB_OUTPUT,
           Object.entries(outputs).map(([key, value]) => `${key}=${value}\n`).join(""));
         break;
       }
+      case "required":
+        checkRequired(JSON.parse(process.env.NEEDS_JSON), process.env.EVENT_NAME, process.env.CANDIDATE_BRANCH);
+        break;
       case "gate":
         checkGate(JSON.parse(process.env.NEEDS_JSON), JSON.parse(process.env.JOB_SCOPES));
         console.log("All selected CI jobs succeeded; only unselected jobs were skipped.");

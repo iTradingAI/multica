@@ -1,35 +1,27 @@
-# Downstream-only: keep this fork's main tracking the upstream repository.
-#
-# Design constraints (do not weaken):
-# - main carries downstream features, so this MUST be a merge (never
-#   fast-forward-only, never rebase) — gh's "Sync fork" cannot do this.
-# - Never force-push: release tags point into main's history.
-# - On conflict, abort and fail loudly for manual resolution. Silent
-#   partial automation is worse than a red workflow.
-#
-# The schedule only fires on the default branch while this file exists
-# there; nothing runs from feature branches.
-
-name: Fork sync (upstream → main)
+# Downstream-only: propose merges; never write main or auto-merge a PR.
+name: Fork sync (upstream candidate)
 
 on:
   schedule:
-    # Daily at 03:17 UTC — off the whole-hour GitHub cron congestion.
     - cron: "17 3 * * *"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: fork-sync
   cancel-in-progress: false
 
 jobs:
-  merge-upstream:
-    # Guard so a fork-of-the-fork doesn't try to sync from us.
-    if: github.repository == 'iTradingAI/multica'
+  propose-upstream:
+    if: github.repository == 'iTradingAI/multica' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
     steps:
       - name: Checkout main (full history)
         uses: actions/checkout@v4
@@ -37,24 +29,21 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Merge upstream/main
+      - name: Prepare candidate and request validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          set -euo pipefail
-          git remote add upstream https://github.com/multica-ai/multica.git
-          git fetch upstream main
+          # Bash reads incrementally: merging must not replace the privileged
+          # script while it is still running.
+          cp scripts/fork-sync.sh "$RUNNER_TEMP/fork-sync.sh"
+          bash "$RUNNER_TEMP/fork-sync.sh"
 
-          if git merge-base --is-ancestor upstream/main HEAD; then
-            echo "main already contains upstream/main — nothing to do."
-            exit 0
-          fi
-
-          git config user.name "fork-sync[bot]"
-          git config user.email "actions@github.com"
-
-          if ! git merge upstream/main --no-edit; then
-            git merge --abort
-            echo "::error::Conflict merging upstream/main into main. Resolve locally: git fetch upstream && git merge upstream/main, then push."
-            exit 1
-          fi
-
-          git push origin main
+      - name: Preserve merge diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fork-sync-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fork-sync-diagnostics
+          if-no-files-found: ignore
+          retention-days: 30
