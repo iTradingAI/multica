@@ -100,6 +100,10 @@ deleted_pins AS (
 deleted_daemon_tokens AS (
     DELETE FROM daemon_token WHERE daemon_token.workspace_id = $1
 ),
+deleted_daemon_registration_identities AS (
+    DELETE FROM daemon_registration_identity
+    WHERE daemon_registration_identity.workspace_id = $1
+),
 detached_feedback AS (
     UPDATE feedback
     SET workspace_id = NULL

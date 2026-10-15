@@ -57,6 +57,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"comment_reaction":                   workspaceDelete,
 	"contact_sales_inquiry":              workspaceDeleteKeep,
 	"daemon_connection":                  workspaceDelete,
+	"daemon_registration_identity":       workspaceDelete,
 	"daemon_token":                       workspaceDelete,
 	"dingtalk_group_presence":            workspaceDelete,
 	"dingtalk_bot_identity":              workspaceDelete,
