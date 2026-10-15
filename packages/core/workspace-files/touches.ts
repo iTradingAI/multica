@@ -6,7 +6,8 @@ const relativePath = z
   .max(4096)
   .refine(
     (value) =>
-      !/[\\:\u0000]/.test(value) &&
+      !/[\\:]/.test(value) &&
+      !value.includes("\0") &&
       value
         .split("/")
         .every((part) => part !== "" && part !== "." && part !== ".."),
