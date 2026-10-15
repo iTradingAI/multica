@@ -77,7 +77,16 @@ function NavigationProviderInner({
 
   const adapter: NavigationAdapter = {
     push: router.push,
-    replace: router.replace,
+    replace: (path, options) => {
+      if (options?.preservePage) {
+        // Next's native history integration updates the URL while retaining
+        // the current route tree. router.replace remounts dynamic segments,
+        // destroying local UI even when UUID and identifier name one issue.
+        window.history.replaceState(null, "", path);
+      } else {
+        router.replace(path);
+      }
+    },
     back: router.back,
     forward: router.forward,
     canGoBack: canGoBackInApp,

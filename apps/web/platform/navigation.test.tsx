@@ -47,9 +47,15 @@ function renderAdapter(): () => NavigationAdapter {
 
 beforeEach(() => {
   router.push.mockReset();
+  router.replace.mockReset();
 });
 
 describe("WebNavigationProvider internal link bridge", () => {
+  it("still navigates for a normal replacement to another resource", () => {
+    const adapter = renderAdapter();
+    act(() => adapter().replace("/acme/issues/MUL-2"));
+    expect(router.replace).toHaveBeenCalledWith("/acme/issues/MUL-2");
+  });
   it("pushes the path a content link resolved to", () => {
     render(<WebNavigationProvider>{null}</WebNavigationProvider>);
 

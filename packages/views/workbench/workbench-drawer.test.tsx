@@ -136,3 +136,35 @@ describe("workbench lifecycle", () => {
     expect(state.launch).not.toHaveBeenCalled();
   });
 });
+
+describe("workbench without the removed sub-issues slot", () => {
+  for (const desktop of [false, true]) {
+    for (const context of [{ kind: "issue", issue_id: "issue-1" }, { kind: "project", project_id: "project-1" }] as const) {
+      it(`keeps Files and directory status without a sub-issues tab on ${desktop ? "desktop" : "web"}/${context.kind}`, async () => {
+        state.desktop = desktop;
+        state.enabled = false;
+        setup(context);
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("button", { name: "Workbench" }));
+        expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
+        expect(screen.queryByRole("tab", { name: "Sub-issues" })).not.toBeInTheDocument();
+        await user.click(screen.getByRole("tab", { name: "Directory status" }));
+        expect(screen.getByRole("tab", { name: "Directory status" })).toHaveAttribute("aria-selected", "true");
+        expect(state.launch).not.toHaveBeenCalled();
+      });
+    }
+  }
+  it("resets the selected tab and open session on real issue and workspace changes", async () => {
+    const { rerenderEntry } = setup();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Workbench" }));
+    await user.click(screen.getByRole("tab", { name: "Directory status" }));
+    rerenderEntry("ws-1", { kind: "issue", issue_id: "issue-2" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Workbench" }));
+    expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
+    await user.click(screen.getByRole("tab", { name: "Directory status" }));
+    rerenderEntry("ws-2", { kind: "issue", issue_id: "issue-2" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});

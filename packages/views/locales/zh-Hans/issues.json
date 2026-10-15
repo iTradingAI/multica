@@ -377,6 +377,8 @@
     "close": "关闭预览"
   },
   "detail": {
+    "sub_issues_empty": "暂无子任务。",
+    "sub_issues_load_failed": "无法加载子任务。",
     "not_found": "这个任务不存在或已在该工作区被删除。",
     "breadcrumb_project_unknown": "未知项目",
     "back": "返回",

@@ -381,6 +381,8 @@
     "close": "Close preview"
   },
   "detail": {
+    "sub_issues_empty": "No sub-issues.",
+    "sub_issues_load_failed": "Could not load sub-issues.",
     "not_found": "This issue does not exist or has been deleted in this workspace.",
     "breadcrumb_project_unknown": "Unknown project",
     "back": "Back",

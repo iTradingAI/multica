@@ -60,7 +60,7 @@ describe("useCanonicalIssueUrl", () => {
     expect(replace).not.toHaveBeenCalled();
 
     rerender({ identifier: "TRS-134" });
-    expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134");
+    expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134", { preservePage: true });
     expect(push).not.toHaveBeenCalled();
   });
 
@@ -87,7 +87,7 @@ describe("useCanonicalIssueUrl", () => {
   // to the issue's real identifier rather than left as typed.
   it("normalizes a differently-cased identifier segment", () => {
     renderHook(() => useCanonicalIssueUrl("trs-134", "TRS-134"), { wrapper });
-    expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134");
+    expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134", { preservePage: true });
   });
 
   it("preserves a source-comment deep link while canonicalizing a UUID", () => {
@@ -99,7 +99,7 @@ describe("useCanonicalIssueUrl", () => {
       ),
       { wrapper },
     );
-    expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134#comment-comment-7");
+    expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134#comment-comment-7", { preservePage: true });
   });
 });
 

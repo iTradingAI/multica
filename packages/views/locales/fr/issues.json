@@ -381,6 +381,8 @@
     "close": "Fermer l'aperçu"
   },
   "detail": {
+    "sub_issues_empty": "Aucune sous-tâche.",
+    "sub_issues_load_failed": "Impossible de charger les sous-tâches.",
     "not_found": "Cette tâche n'existe pas ou a été supprimée dans cet espace de travail.",
     "breadcrumb_project_unknown": "Projet inconnu",
     "back": "Retour",
