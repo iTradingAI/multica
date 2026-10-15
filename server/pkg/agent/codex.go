@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/multica-ai/multica/server/pkg/filetouch"
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
@@ -2449,6 +2450,7 @@ type codexClient struct {
 	agentMessageOrder   []string
 
 	notificationProtocol string // "unknown", "legacy", "raw"
+	pathJSONLossless     bool   // set only while dispatching a validated original stream event
 	turnCompleted        bool
 
 	usageMu sync.Mutex
@@ -2884,6 +2886,8 @@ func isCodexTransportError(err error) bool {
 }
 
 func (c *codexClient) handleLine(line string) {
+	c.pathJSONLossless = filetouch.LosslessJSON([]byte(line))
+	defer func() { c.pathJSONLossless = false }()
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
 		return
@@ -3443,12 +3447,9 @@ func (c *codexClient) handleEvent(msg map[string]any) {
 	case "patch_apply_begin":
 		callID, _ := msg["call_id"].(string)
 		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolUse,
-				Tool:   "patch_apply",
-				CallID: callID,
-				Input:  codexPatchInput(codexNormalizeLegacyChanges(msg["changes"])),
-			})
+			message := codexPatchMessage(msg["changes"], true, c.pathJSONLossless)
+			message.CallID = callID
+			c.onMessage(message)
 		}
 	case "patch_apply_end":
 		callID, _ := msg["call_id"].(string)
@@ -3769,12 +3770,9 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 
 	case method == "item/started" && itemType == "fileChange":
 		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolUse,
-				Tool:   "patch_apply",
-				CallID: itemID,
-				Input:  codexPatchInput(codexNormalizeRawChanges(item["changes"])),
-			})
+			message := codexPatchMessage(item["changes"], false, c.pathJSONLossless)
+			message.CallID = itemID
+			c.onMessage(message)
 		}
 
 	case method == "item/completed" && itemType == "fileChange":

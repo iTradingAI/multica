@@ -22,6 +22,7 @@ const (
 	WorkspaceFilesErrorNotDirectory  = "not_directory"
 	WorkspaceFilesErrorTooLarge      = "too_large"
 	WorkspaceFilesErrorInvalidUTF8   = "invalid_utf8"
+	WorkspaceFilesErrorBinaryContent = "binary_content"
 	WorkspaceFilesErrorTimeout       = "timeout"
 	WorkspaceFilesErrorBusy          = "busy"
 	WorkspaceFilesErrorUnsupported   = "unsupported"
@@ -42,10 +43,11 @@ type WorkspaceFilesClientListPayload struct {
 }
 
 type WorkspaceFilesClientReadPayload struct {
-	ClientReqID string                `json:"client_req_id"`
-	Context     WorkspaceFilesContext `json:"context"`
-	ResourceID  string                `json:"resource_id"`
-	Path        string                `json:"path"`
+	BindingGeneration int64                 `json:"binding_generation,omitempty"`
+	ClientReqID       string                `json:"client_req_id"`
+	Context           WorkspaceFilesContext `json:"context"`
+	ResourceID        string                `json:"resource_id"`
+	Path              string                `json:"path"`
 }
 
 type WorkspaceFilesClientCancelPayload struct {

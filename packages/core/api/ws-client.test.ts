@@ -6,6 +6,7 @@ import type { WSMessage } from "../types/events";
 // query string.  We don't simulate the full WS lifecycle here — only the
 // upgrade URL construction, which is what carries client identity.
 class FakeWebSocket {
+  static OPEN = 1;
   static lastUrl: string | null = null;
   static lastInstance: FakeWebSocket | null = null;
   // Fields read by WSClient.connect()/disconnect(), all no-op here.
@@ -51,6 +52,82 @@ describe("WSClient", () => {
     // Token must never appear in the URL — it is delivered as the first
     // WS message in token mode.
     expect(url.searchParams.has("token")).toBe(false);
+  });
+
+  it.each([false, true])("notifies first authentication and late ready subscribers (cookieAuth=%s)", (cookieAuth) => {
+    const ws = new WSClient("ws://example.test/ws", { cookieAuth });
+    ws.setAuth(cookieAuth ? null : "test-token", "acme");
+    const ready = vi.fn();
+    const reconnect = vi.fn();
+    ws.onReady(ready);
+    ws.onReconnect(reconnect);
+    ws.connect();
+    const socket = FakeWebSocket.lastInstance!;
+    const frame: WSMessage = { type: "workspace_files.resources", payload: {} };
+    expect(ws.send(frame)).toBe(false);
+    socket.readyState = FakeWebSocket.OPEN;
+    if (!cookieAuth) expect(ws.send(frame)).toBe(false);
+    socket.onopen!();
+    if (!cookieAuth) {
+      expect(ready).not.toHaveBeenCalled();
+      expect(ws.send(frame)).toBe(false);
+      socket.onmessage!({ data: JSON.stringify({ type: "auth_ack" }) });
+    }
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(reconnect).not.toHaveBeenCalled();
+    expect(ws.send(frame)).toBe(true);
+    expect(JSON.parse(socket.sent.at(-1)!)).toEqual(frame);
+    const late = vi.fn();
+    ws.onReady(late);
+    expect(late).toHaveBeenCalledTimes(1);
+    socket.onmessage!({ data: JSON.stringify({ type: "auth_ack" }) });
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(late).toHaveBeenCalledTimes(1);
+    ws.disconnect();
+  });
+
+  it("ignores retired authentication/message callbacks and does not replay rejected frames", () => {
+    const ws = new WSClient("ws://example.test/ws");
+    ws.setAuth("test-token", "acme");
+    const ready = vi.fn();
+    const received = vi.fn();
+    ws.onReady(ready);
+    ws.onAny(received);
+    ws.connect();
+    const retired = FakeWebSocket.lastInstance!;
+    const oldMessage = retired.onmessage!;
+    expect(ws.send({ type: "workspace_files.viewer_read", payload: { client_req_id: "retired" } })).toBe(false);
+    ws.connect();
+    oldMessage({ data: JSON.stringify({ type: "auth_ack" }) });
+    oldMessage({ data: JSON.stringify({ type: "workspace_files.read_chunk", payload: {} }) });
+    expect(ready).not.toHaveBeenCalled();
+    expect(received).not.toHaveBeenCalled();
+    const current = FakeWebSocket.lastInstance!;
+    current.readyState = FakeWebSocket.OPEN;
+    current.onopen!();
+    current.onmessage!({ data: JSON.stringify({ type: "auth_ack" }) });
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(current.sent.map(frame => JSON.parse(frame).type)).toEqual(["auth"]);
+    ws.disconnect();
+    oldMessage({ data: JSON.stringify({ type: "auth_ack" }) });
+    expect(ready).toHaveBeenCalledTimes(1);
+  });
+
+  it("notifies a subscriber added during readiness once and stops after disconnect", () => {
+    const ws = new WSClient("ws://example.test/ws", { cookieAuth: true });
+    const late = vi.fn();
+    ws.onReady(() => ws.onReady(late));
+    ws.connect();
+    const socket = FakeWebSocket.lastInstance!;
+    socket.readyState = FakeWebSocket.OPEN;
+    socket.onopen!();
+    expect(late).toHaveBeenCalledTimes(1);
+    const retired = socket.onmessage!;
+    socket.onclose!();
+    retired({ data: JSON.stringify({ type: "auth_ack" }) });
+    expect(late).toHaveBeenCalledTimes(1);
+    expect(ws.send({ type: "workspace_files.resources", payload: {} })).toBe(false);
+    ws.disconnect();
   });
 
   it("omits client_* params when identity is not configured", () => {

@@ -16,6 +16,13 @@ function transport() {
 const context = { kind: "project", project_id: "00000000-0000-4000-8000-000000000001" } as const;
 
 describe("workspace files client", () => {
+  it("retires an unsent request immediately instead of leaving a silent timeout", async () => {
+    const ws = transport();
+    ws.send.mockReturnValue(false);
+    await expect(requestWorkspaceFiles(ws, { operation: "resources", context })).rejects.toMatchObject({ code: "unavailable" });
+    expect(ws.handlers.size).toBe(0);
+    expect(ws.send).toHaveBeenLastCalledWith(expect.objectContaining({ type: "workspace_files.cancel" }));
+  });
   it("scopes results by request and context and strips unknown resource fields", async () => {
     const ws = transport();
     const pending = requestWorkspaceFiles(ws, { operation: "resources", context });

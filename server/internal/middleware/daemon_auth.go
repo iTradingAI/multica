@@ -20,6 +20,8 @@ const (
 	ctxKeyDaemonWorkspaceID daemonContextKey = iota
 	ctxKeyDaemonID
 	ctxKeyDaemonAuthPath
+	ctxKeyFileEvidenceScope
+	ctxKeyDaemonUserID
 )
 
 // Daemon auth path labels exposed via context for slow-log attribution.
@@ -40,6 +42,39 @@ func DaemonWorkspaceIDFromContext(ctx context.Context) string {
 func DaemonIDFromContext(ctx context.Context) string {
 	id, _ := ctx.Value(ctxKeyDaemonID).(string)
 	return id
+}
+
+func FileEvidenceScopeFromContext(ctx context.Context) *auth.FileEvidenceScope {
+	scope, _ := ctx.Value(ctxKeyFileEvidenceScope).(*auth.FileEvidenceScope)
+	return scope
+}
+
+// DaemonUserIDFromContext is populated only after PAT/cloud/JWT validation.
+// It is distinct from caller-supplied identity headers and from machine MDTs.
+func DaemonUserIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(ctxKeyDaemonUserID).(string)
+	return id
+}
+
+// The scope is meaningful only after the full token hash has authenticated.
+// These credentials cannot be used for other tasks, control-plane APIs or MCP.
+func daemonTokenContext(w http.ResponseWriter, r *http.Request, token string, id auth.DaemonTokenIdentity) (context.Context, bool) {
+	scope, err := auth.ParseFileEvidenceToken(token)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid daemon token")
+		return nil, false
+	}
+	ctx := WithDaemonContext(r.Context(), id.WorkspaceID, id.DaemonID)
+	if scope != nil {
+		base := "/api/daemon/tasks/" + scope.TaskID
+		if scope.WorkspaceID != id.WorkspaceID || scope.DaemonID != id.DaemonID || r.Method != http.MethodPost ||
+			(r.URL.Path != base+"/file-executions" && r.URL.Path != base+"/messages") {
+			writeError(w, http.StatusForbidden, "file evidence scope mismatch")
+			return nil, false
+		}
+		ctx = context.WithValue(ctx, ctxKeyFileEvidenceScope, scope)
+	}
+	return ctx, true
 }
 
 // DaemonAuthPathFromContext returns which token kind authenticated this
@@ -116,10 +151,9 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 				hash := auth.HashToken(tokenString)
 
 				if id, ok := daemonCache.Get(r.Context(), hash); ok {
-					ctx := context.WithValue(r.Context(), ctxKeyDaemonWorkspaceID, id.WorkspaceID)
-					ctx = context.WithValue(ctx, ctxKeyDaemonID, id.DaemonID)
-					ctx = context.WithValue(ctx, ctxKeyDaemonAuthPath, DaemonAuthPathDaemonToken)
-					next.ServeHTTP(w, r.WithContext(ctx))
+					if ctx, allowed := daemonTokenContext(w, r, tokenString, id); allowed {
+						next.ServeHTTP(w, r.WithContext(ctx))
+					}
 					return
 				}
 
@@ -146,10 +180,9 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 				}
 				daemonCache.Set(r.Context(), hash, identity, auth.TTLForExpiry(time.Now(), expiresAt))
 
-				ctx := context.WithValue(r.Context(), ctxKeyDaemonWorkspaceID, identity.WorkspaceID)
-				ctx = context.WithValue(ctx, ctxKeyDaemonID, identity.DaemonID)
-				ctx = context.WithValue(ctx, ctxKeyDaemonAuthPath, DaemonAuthPathDaemonToken)
-				next.ServeHTTP(w, r.WithContext(ctx))
+				if ctx, allowed := daemonTokenContext(w, r, tokenString, identity); allowed {
+					next.ServeHTTP(w, r.WithContext(ctx))
+				}
 				return
 			}
 
@@ -193,6 +226,7 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 				// differently depending on which one routed it.
 				r.Header.Set("X-Actor-Source", "cloud_pat")
 				ctx := context.WithValue(r.Context(), ctxKeyDaemonAuthPath, DaemonAuthPathCloudPAT)
+				ctx = context.WithValue(ctx, ctxKeyDaemonUserID, identity.OwnerID)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -207,6 +241,7 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 					}
 					r.Header.Set("X-User-ID", userID)
 					ctx := context.WithValue(r.Context(), ctxKeyDaemonAuthPath, DaemonAuthPathPAT)
+					ctx = context.WithValue(ctx, ctxKeyDaemonUserID, userID)
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
@@ -239,6 +274,7 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 				go queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID)
 
 				ctx := context.WithValue(r.Context(), ctxKeyDaemonAuthPath, DaemonAuthPathPAT)
+				ctx = context.WithValue(ctx, ctxKeyDaemonUserID, userID)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -272,6 +308,7 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 			}
 			r.Header.Set("X-User-ID", sub)
 			ctx := context.WithValue(r.Context(), ctxKeyDaemonAuthPath, DaemonAuthPathJWT)
+			ctx = context.WithValue(ctx, ctxKeyDaemonUserID, sub)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

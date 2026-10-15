@@ -109,6 +109,7 @@ export const PluginSurfaceSchema = z.object({
   name: z.string().default(""),
   entry: z.string().default(""),
   platforms: z.array(z.string()).default([]),
+  extensions: z.array(z.string().regex(/^[a-z0-9]+$/).max(32)).max(64).default([]),
 }).loose();
 
 export const PluginHookSchema = z.object({

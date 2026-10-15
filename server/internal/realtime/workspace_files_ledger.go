@@ -52,6 +52,8 @@ type filesTombstone struct {
 	expires                               time.Time
 	class                                 filesClass
 	global, socket, principal, classified *list.Element
+	viewerMount                           string
+	viewerGeneration                      uint64
 }
 type filesRecord struct {
 	opMu                        sync.Mutex
@@ -68,6 +70,8 @@ type filesRecord struct {
 	cancel                      context.CancelFunc
 	timer                       *time.Timer
 	nextSeq, readBytes, entries int
+	viewer                      *filesViewerSelection
+	selection                   *filesRecord
 }
 type workspaceFilesState struct {
 	enabled              bool
@@ -86,6 +90,7 @@ type workspaceFilesState struct {
 	incumbent, reserve   int
 	// corruption counts fail-closed invariant violations without recording data.
 	corruption uint64
+	viewerAuth WorkspaceFilesViewerAuthorizer
 }
 
 func newWorkspaceFilesState() *workspaceFilesState {
@@ -256,6 +261,10 @@ func (s *workspaceFilesState) addTombstone(r *filesRecord) {
 	p = s.principal(r.owner)
 	s.sequence++
 	t := &filesTombstone{owner: r.owner, id: r.request.ClientReqID, nonce: r.nonce, generation: r.generation, sequence: s.sequence, expires: now.Add(filesTTL), class: class}
+	if r.viewer != nil {
+		t.viewerMount = r.viewer.request.MountID
+		t.viewerGeneration = r.viewer.request.Generation
+	}
 	sock.terminal[t.id] = t
 	t.socket = sock.order.PushBack(t)
 	t.principal = p.order.PushBack(t)

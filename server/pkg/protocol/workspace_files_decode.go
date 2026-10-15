@@ -13,12 +13,13 @@ import (
 
 // WorkspaceFilesRequest contains only browser-controlled, validated fields.
 type WorkspaceFilesRequest struct {
-	ClientReqID string                `json:"client_req_id"`
-	Context     WorkspaceFilesContext `json:"context"`
-	ResourceID  string                `json:"resource_id"`
-	Path        string                `json:"path"`
-	Cursor      string                `json:"cursor,omitempty"`
-	PageSize    int                   `json:"page_size,omitempty"`
+	BindingGeneration int64                 `json:"binding_generation,omitempty"`
+	ClientReqID       string                `json:"client_req_id"`
+	Context           WorkspaceFilesContext `json:"context"`
+	ResourceID        string                `json:"resource_id"`
+	Path              string                `json:"path"`
+	Cursor            string                `json:"cursor,omitempty"`
+	PageSize          int                   `json:"page_size,omitempty"`
 }
 
 // StrictWorkspaceFilesJSON rejects duplicate keys as well as unknown fields.
@@ -105,7 +106,7 @@ func DecodeWorkspaceFilesRequest(event string, raw json.RawMessage) (WorkspaceFi
 			allowed[key] = true
 		}
 	case EventWorkspaceFilesRead:
-		for _, key := range []string{"context", "resource_id", "path"} {
+		for _, key := range []string{"context", "resource_id", "path", "binding_generation"} {
 			allowed[key] = true
 		}
 	case EventWorkspaceFilesCancel:
@@ -167,6 +168,9 @@ func DecodeWorkspaceFilesRequest(event string, raw json.RawMessage) (WorkspaceFi
 		}
 	}
 	if req.PageSize < 0 || req.PageSize > 200 || len(req.Cursor) > 4096 {
+		return req, invalid
+	}
+	if rawGeneration, present := fields["binding_generation"]; present && (string(rawGeneration) == "0" || req.BindingGeneration < 1 || req.BindingGeneration > 9007199254740991) {
 		return req, invalid
 	}
 	return req, nil

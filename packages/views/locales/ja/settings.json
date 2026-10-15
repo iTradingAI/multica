@@ -472,6 +472,7 @@
       "secret_set": "保存済み — 新しい値を入力すると置き換わります"
     },
     "scopes": {
+      "files_read": "ファイルタブで選択したファイルを読み取る",
       "issues_read": "タスクを読み取る",
       "issues_write": "タスクを作成・編集する",
       "comments_read": "コメントを読み取る",

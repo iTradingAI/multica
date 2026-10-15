@@ -14,7 +14,7 @@ import (
 const createTaskMessage = `-- name: CreateTaskMessage :one
 INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, output_truncated, call_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id
+RETURNING id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, file_execution_id, source_event_id, path_integrity, proof_version
 `
 
 type CreateTaskMessageParams struct {
@@ -56,6 +56,10 @@ func (q *Queries) CreateTaskMessage(ctx context.Context, arg CreateTaskMessagePa
 		&i.CreatedAt,
 		&i.OutputTruncated,
 		&i.CallID,
+		&i.FileExecutionID,
+		&i.SourceEventID,
+		&i.PathIntegrity,
+		&i.ProofVersion,
 	)
 	return i, err
 }
@@ -77,12 +81,16 @@ WITH incoming AS (
         unnest($7::text[]) AS input,
         unnest($8::text[]) AS output,
         unnest($9::text[]) AS created_at,
-        unnest($10::text[]) AS output_truncated
+        unnest($10::text[]) AS output_truncated,
+        unnest($11::text[]) AS file_execution_id,
+        unnest($12::text[]) AS source_event_id,
+        unnest($13::text[]) AS path_integrity,
+        unnest($14::text[]) AS proof_version
 ), inserted AS (
-    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id)
+    INSERT INTO task_message (id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, file_execution_id, source_event_id, path_integrity, proof_version)
     SELECT
         m.id,
-        $11::uuid,
+        $15::uuid,
         m.seq,
         m.type,
         NULLIF(m.tool, ''),
@@ -91,25 +99,41 @@ WITH incoming AS (
         NULLIF(m.output, ''),
         COALESCE(NULLIF(m.created_at, '')::timestamptz, now()),
         NULLIF(m.output_truncated, '')::bool,
-        NULLIF(m.call_id, '')
+        NULLIF(m.call_id, ''),
+        NULLIF(m.file_execution_id, '')::uuid,
+        NULLIF(m.source_event_id, '')::uuid,
+        NULLIF(m.path_integrity, '')::jsonb,
+        NULLIF(m.proof_version, '')::integer
     FROM incoming AS m
-    RETURNING id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id
+    RETURNING id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, file_execution_id, source_event_id, path_integrity, proof_version
+), pending AS (
+    INSERT INTO issue_file_touch_pending (source_message_id,workspace_id,issue_id,run_id)
+    SELECT m.id,i.workspace_id,i.id,m.task_id FROM inserted m
+    JOIN agent_task_queue t ON t.id=m.task_id
+    JOIN issue i ON i.id=t.issue_id
+    WHERE m.type='tool_use' AND $16::boolean
+    ON CONFLICT (source_message_id) DO NOTHING
 )
-SELECT id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id FROM inserted ORDER BY seq ASC
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, file_execution_id, source_event_id, path_integrity, proof_version FROM inserted ORDER BY seq ASC
 `
 
 type CreateTaskMessagesParams struct {
-	Ids               []pgtype.UUID `json:"ids"`
-	Seqs              []int32       `json:"seqs"`
-	Types             []string      `json:"types"`
-	Tools             []string      `json:"tools"`
-	CallIds           []string      `json:"call_ids"`
-	Contents          []string      `json:"contents"`
-	Inputs            []string      `json:"inputs"`
-	Outputs           []string      `json:"outputs"`
-	CreatedAts        []string      `json:"created_ats"`
-	OutputTruncations []string      `json:"output_truncations"`
-	TaskID            pgtype.UUID   `json:"task_id"`
+	Ids                []pgtype.UUID `json:"ids"`
+	Seqs               []int32       `json:"seqs"`
+	Types              []string      `json:"types"`
+	Tools              []string      `json:"tools"`
+	CallIds            []string      `json:"call_ids"`
+	Contents           []string      `json:"contents"`
+	Inputs             []string      `json:"inputs"`
+	Outputs            []string      `json:"outputs"`
+	CreatedAts         []string      `json:"created_ats"`
+	OutputTruncations  []string      `json:"output_truncations"`
+	FileExecutionIds   []string      `json:"file_execution_ids"`
+	SourceEventIds     []string      `json:"source_event_ids"`
+	PathIntegrities    []string      `json:"path_integrities"`
+	ProofVersions      []string      `json:"proof_versions"`
+	TaskID             pgtype.UUID   `json:"task_id"`
+	CollectFileTouches bool          `json:"collect_file_touches"`
 }
 
 type CreateTaskMessagesRow struct {
@@ -124,6 +148,10 @@ type CreateTaskMessagesRow struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	OutputTruncated pgtype.Bool        `json:"output_truncated"`
 	CallID          pgtype.Text        `json:"call_id"`
+	FileExecutionID pgtype.UUID        `json:"file_execution_id"`
+	SourceEventID   pgtype.UUID        `json:"source_event_id"`
+	PathIntegrity   []byte             `json:"path_integrity"`
+	ProofVersion    pgtype.Int4        `json:"proof_version"`
 }
 
 // Batch variant of CreateTaskMessage: persists a whole daemon-reported batch in
@@ -181,7 +209,12 @@ func (q *Queries) CreateTaskMessages(ctx context.Context, arg CreateTaskMessages
 		arg.Outputs,
 		arg.CreatedAts,
 		arg.OutputTruncations,
+		arg.FileExecutionIds,
+		arg.SourceEventIds,
+		arg.PathIntegrities,
+		arg.ProofVersions,
 		arg.TaskID,
+		arg.CollectFileTouches,
 	)
 	if err != nil {
 		return nil, err
@@ -202,6 +235,10 @@ func (q *Queries) CreateTaskMessages(ctx context.Context, arg CreateTaskMessages
 			&i.CreatedAt,
 			&i.OutputTruncated,
 			&i.CallID,
+			&i.FileExecutionID,
+			&i.SourceEventID,
+			&i.PathIntegrity,
+			&i.ProofVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -214,8 +251,23 @@ func (q *Queries) CreateTaskMessages(ctx context.Context, arg CreateTaskMessages
 }
 
 const deleteTaskMessages = `-- name: DeleteTaskMessages :exec
+WITH cleared_file_touch_execution AS (
+ DELETE FROM file_touch_execution WHERE file_touch_execution.task_id = $1
+),
+cleared_issue_file_touch_pending AS (
+ DELETE FROM issue_file_touch_pending WHERE issue_file_touch_pending.run_id = $1
+),
+cleared_issue_file_touch_event AS (
+ DELETE FROM issue_file_touch_event WHERE issue_file_touch_event.run_id = $1
+),
+cleared_issue_file_touches AS (
+ DELETE FROM issue_file_touches WHERE issue_file_touches.run_id = $1
+),
+cleared_issue_file_touch_backfill AS (
+ DELETE FROM issue_file_touch_backfill WHERE issue_file_touch_backfill.run_id = $1
+)
 DELETE FROM task_message
-WHERE task_id = $1
+WHERE task_message.task_id = $1
 `
 
 func (q *Queries) DeleteTaskMessages(ctx context.Context, taskID pgtype.UUID) error {
@@ -224,7 +276,7 @@ func (q *Queries) DeleteTaskMessages(ctx context.Context, taskID pgtype.UUID) er
 }
 
 const listTaskMessages = `-- name: ListTaskMessages :many
-SELECT id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id FROM task_message
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, file_execution_id, source_event_id, path_integrity, proof_version FROM task_message
 WHERE task_id = $1
 ORDER BY seq ASC
 `
@@ -250,6 +302,10 @@ func (q *Queries) ListTaskMessages(ctx context.Context, taskID pgtype.UUID) ([]T
 			&i.CreatedAt,
 			&i.OutputTruncated,
 			&i.CallID,
+			&i.FileExecutionID,
+			&i.SourceEventID,
+			&i.PathIntegrity,
+			&i.ProofVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -262,7 +318,7 @@ func (q *Queries) ListTaskMessages(ctx context.Context, taskID pgtype.UUID) ([]T
 }
 
 const listTaskMessagesSince = `-- name: ListTaskMessagesSince :many
-SELECT id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id FROM task_message
+SELECT id, task_id, seq, type, tool, content, input, output, created_at, output_truncated, call_id, file_execution_id, source_event_id, path_integrity, proof_version FROM task_message
 WHERE task_id = $1 AND seq > $2
 ORDER BY seq ASC
 `
@@ -293,6 +349,10 @@ func (q *Queries) ListTaskMessagesSince(ctx context.Context, arg ListTaskMessage
 			&i.CreatedAt,
 			&i.OutputTruncated,
 			&i.CallID,
+			&i.FileExecutionID,
+			&i.SourceEventID,
+			&i.PathIntegrity,
+			&i.ProofVersion,
 		); err != nil {
 			return nil, err
 		}

@@ -475,6 +475,7 @@
       "secret_set": "Enregistré — saisissez une nouvelle valeur pour la remplacer"
     },
     "scopes": {
+      "files_read": "Lire le fichier sélectionné dans Fichiers",
       "issues_read": "Lire les tâches",
       "issues_write": "Créer et modifier des tâches",
       "comments_read": "Lire les commentaires",

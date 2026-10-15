@@ -472,6 +472,7 @@
       "secret_set": "已保存 — 输入新值可替换"
     },
     "scopes": {
+      "files_read": "读取文件页签中选中的文件",
       "issues_read": "读取任务",
       "issues_write": "创建和修改任务",
       "comments_read": "读取评论",

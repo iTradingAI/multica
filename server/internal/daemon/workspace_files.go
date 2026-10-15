@@ -558,6 +558,10 @@ func (c *workspaceFilesChannel) runRead(p *workspaceFilesPending, payload protoc
 		c.finishError(p, protocol.WorkspaceFilesErrorInvalidUTF8)
 		return
 	}
+	if protocol.WorkspaceFilesBinaryContent(data) {
+		c.finishError(p, protocol.WorkspaceFilesErrorBinaryContent)
+		return
+	}
 	frames, err := buildWorkspaceFilesReadFrames(payload.DaemonReqID, payload.RuntimeID, payload.ResourceID, data, p.generation)
 	if err != nil {
 		c.finishError(p, protocol.WorkspaceFilesErrorUnavailable)
@@ -872,7 +876,7 @@ func workspaceFilesStableError(code string) bool {
 	switch code {
 	case protocol.WorkspaceFilesErrorInvalidPath, protocol.WorkspaceFilesErrorSymlinkDenied,
 		protocol.WorkspaceFilesErrorNotRegular, protocol.WorkspaceFilesErrorNotDirectory,
-		protocol.WorkspaceFilesErrorTooLarge, protocol.WorkspaceFilesErrorInvalidUTF8,
+		protocol.WorkspaceFilesErrorTooLarge, protocol.WorkspaceFilesErrorInvalidUTF8, protocol.WorkspaceFilesErrorBinaryContent,
 		protocol.WorkspaceFilesErrorTimeout, protocol.WorkspaceFilesErrorBusy,
 		protocol.WorkspaceFilesErrorUnsupported, protocol.WorkspaceFilesErrorInvalidCursor,
 		protocol.WorkspaceFilesErrorUnavailable:

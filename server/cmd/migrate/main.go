@@ -140,6 +140,14 @@ var pgBigmOperatorClass = extensionOperatorClass{
 // they are still pending: a fresh self-hosted install, which is exactly where an
 // interrupted build would otherwise leave a permanently unusable index.
 var concurrentIndexCleanups = map[string]string{
+	"569_file_touch_execution_identity":                         "file_touch_execution_identity",
+	"570_file_touch_pending_identity":                           "file_touch_pending_identity",
+	"571_file_touch_pending_scan":                               "file_touch_pending_scan",
+	"572_file_touch_event_identity":                             "file_touch_event_identity",
+	"573_issue_file_touches_identity":                           "issue_file_touches_identity",
+	"574_issue_file_touches_issue":                              "issue_file_touches_issue",
+	"575_file_touch_backfill_identity":                          "file_touch_backfill_identity",
+	"576_file_touch_source_scan":                                "file_touch_source_scan",
 	"566_daemon_registration_identity_scope_index":              "daemon_registration_identity_scope_idx",
 	"563_search_index_change_changed_at_index":                  "idx_search_index_change_changed_at",
 	"562_search_index_change_workspace_index":                   "idx_search_index_change_workspace_xid",

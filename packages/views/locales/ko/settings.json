@@ -472,6 +472,7 @@
       "secret_set": "저장됨 — 새 값을 입력하면 교체됩니다"
     },
     "scopes": {
+      "files_read": "파일 탭에서 선택한 파일 읽기",
       "issues_read": "태스크 읽기",
       "issues_write": "태스크 생성 및 수정",
       "comments_read": "댓글 읽기",

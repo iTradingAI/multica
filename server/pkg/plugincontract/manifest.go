@@ -44,6 +44,7 @@ const (
 const (
 	SurfaceIssuePanel   = "issue_panel"
 	SurfaceSidebarPanel = "sidebar_panel"
+	SurfaceFileViewer   = "file_viewer"
 	SurfaceModal        = "modal"
 )
 
@@ -100,6 +101,7 @@ const (
 	ScopeMembersRead      = "members:read"
 	ScopeStorageUser      = "storage:user"
 	ScopeStorageWorkspace = "storage:workspace"
+	ScopeFilesRead        = "files:read"
 
 	// ScopeNetPrefix guards outbound network access: both the iframe CSP
 	// connect-src allowlist and the hook transport host check derive from it.
@@ -118,6 +120,7 @@ const (
 )
 
 var fixedScopes = map[string]bool{
+	ScopeFilesRead:        true,
 	ScopeIssuesRead:       true,
 	ScopeIssuesWrite:      true,
 	ScopeCommentsRead:     true,
@@ -172,6 +175,7 @@ var (
 	semverPattern           = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
 	netDomainPattern        = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
 	relativePathPattern     = regexp.MustCompile(`^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$`)
+	viewerExtensionPattern  = regexp.MustCompile(`^[a-z0-9]+$`)
 )
 
 type Manifest struct {
@@ -201,11 +205,12 @@ type Contributes struct {
 // Surface is a host-mounted iframe. The host owns where it appears; the plugin
 // owns what renders inside it.
 type Surface struct {
-	Key       string   `json:"key"`
-	Type      string   `json:"type"`
-	Name      string   `json:"name"`
-	Entry     string   `json:"entry"`
-	Platforms []string `json:"platforms,omitempty"`
+	Key        string   `json:"key"`
+	Type       string   `json:"type"`
+	Name       string   `json:"name"`
+	Entry      string   `json:"entry"`
+	Platforms  []string `json:"platforms,omitempty"`
+	Extensions []string `json:"extensions,omitempty"`
 }
 
 // Hook is one plugin-side capability. Triggers say who may invoke it; the host
@@ -555,6 +560,7 @@ func (m Manifest) validateContributions() error {
 	}
 
 	surfaceKeys := map[string]bool{}
+	viewerExtensions := map[string]bool{}
 	for index, surface := range m.Contributes.Surfaces {
 		field := fmt.Sprintf("contributes.surfaces[%d]", index)
 		if !contributionKeyPattern.MatchString(surface.Key) {
@@ -565,9 +571,22 @@ func (m Manifest) validateContributions() error {
 		}
 		surfaceKeys[surface.Key] = true
 		switch surface.Type {
-		case SurfaceIssuePanel, SurfaceSidebarPanel, SurfaceModal:
+		case SurfaceIssuePanel, SurfaceSidebarPanel, SurfaceModal, SurfaceFileViewer:
 		default:
 			return fmt.Errorf("%s.type is unsupported: %q", field, surface.Type)
+		}
+		if surface.Type == SurfaceFileViewer {
+			if !hasScope(m.Scopes, ScopeFilesRead) || len(surface.Extensions) == 0 || len(surface.Extensions) > 64 {
+				return fmt.Errorf("%s requires files:read and 1 to 64 extensions", field)
+			}
+			for _, extension := range surface.Extensions {
+				if !viewerExtensionPattern.MatchString(extension) || len(extension) > 32 || viewerExtensions[extension] {
+					return fmt.Errorf("%s has invalid or duplicate extensions", field)
+				}
+				viewerExtensions[extension] = true
+			}
+		} else if len(surface.Extensions) != 0 {
+			return fmt.Errorf("%s.extensions requires file_viewer", field)
 		}
 		if err := validateDisplayText(field+".name", surface.Name, 160); err != nil {
 			return err

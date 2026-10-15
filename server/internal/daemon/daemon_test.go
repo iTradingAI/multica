@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/filetouch"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -6344,9 +6345,9 @@ func TestConvertDisabledRuntimeSkillsForEnvScopesToClaimedRuntime(t *testing.T) 
 // nestedPatchSecretBackend emits a Codex-shaped file-edit payload carrying a
 // credential nested inside changes[] — the legacy protocol reports a deletion
 // as the whole outgoing file, so deleting a .env puts its contents here.
-type nestedPatchSecretBackend struct{}
+type nestedPatchSecretBackend struct{ attestPath bool }
 
-func (nestedPatchSecretBackend) Execute(
+func (b nestedPatchSecretBackend) Execute(
 	_ context.Context,
 	_ string,
 	_ agent.ExecOptions,
@@ -6354,7 +6355,7 @@ func (nestedPatchSecretBackend) Execute(
 	msgCh := make(chan agent.Message, 2)
 	resCh := make(chan agent.Result, 1)
 
-	msgCh <- agent.Message{
+	message := agent.Message{
 		Type:   agent.MessageToolUse,
 		Tool:   "patch_apply",
 		CallID: "patch-1",
@@ -6368,6 +6369,11 @@ func (nestedPatchSecretBackend) Execute(
 			},
 		},
 	}
+	if b.attestPath {
+		// Match the provider adapter's origin evidence before redaction.
+		message.PathIntegrity = filetouch.Origin("codex", message.Tool, runtime.GOOS, message.Input, true)
+	}
+	msgCh <- message
 	close(msgCh)
 	resCh <- agent.Result{Status: "completed", Output: "done"}
 	close(resCh)
@@ -6384,43 +6390,61 @@ func (nestedPatchSecretBackend) Execute(
 func TestExecuteAndDrain_RedactsNestedToolInputBeforeSending(t *testing.T) {
 	t.Parallel()
 
-	d, rec := newTranscriptRecorder(t)
+	for _, tc := range []struct {
+		name, provider, wantPath string
+		attestPath               bool
+	}{
+		{"verified_origin", "codex", ".env", true},
+		{"missing_origin", "codex", filetouch.UnverifiedPath, false},
+		{"wrong_provider", "claude", filetouch.UnverifiedPath, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, rec := newTranscriptRecorder(t)
 
-	if _, _, err := d.executeAndDrain(
-		context.Background(),
-		nestedPatchSecretBackend{},
-		"p",
-		agent.ExecOptions{},
-		slog.Default(),
-		"task-redact",
-		"",
-		new(atomic.Int32),
-	); err != nil {
-		t.Fatalf("executeAndDrain: %v", err)
-	}
+			if _, _, err := d.executeAndDrain(
+				context.Background(),
+				nestedPatchSecretBackend{attestPath: tc.attestPath},
+				"p",
+				agent.ExecOptions{FilePathProvider: tc.provider},
+				slog.Default(),
+				"task-redact",
+				"",
+				new(atomic.Int32),
+			); err != nil {
+				t.Fatalf("executeAndDrain: %v", err)
+			}
 
-	msgs := rec.snapshot()
-	var toolUse *TaskMessageData
-	for i := range msgs {
-		if msgs[i].Type == "tool_use" {
-			toolUse = &msgs[i]
-			break
-		}
-	}
-	if toolUse == nil {
-		t.Fatalf("no tool_use message reported: %+v", msgs)
-	}
+			msgs := rec.snapshot()
+			var toolUse *TaskMessageData
+			for i := range msgs {
+				if msgs[i].Type == "tool_use" {
+					toolUse = &msgs[i]
+					break
+				}
+			}
+			if toolUse == nil {
+				t.Fatalf("no tool_use message reported: %+v", msgs)
+			}
 
-	blob, err := json.Marshal(toolUse.Input)
-	if err != nil {
-		t.Fatalf("marshal reported input: %v", err)
-	}
-	if strings.Contains(string(blob), "ghp_ABCDEFGH") {
-		t.Fatalf("nested token left the daemon unredacted: %s", blob)
-	}
-	// The surrounding structure must survive, or the transcript loses the edit.
-	if !strings.Contains(string(blob), ".env") {
-		t.Fatalf("redaction destroyed the change metadata: %s", blob)
+			blob, err := json.Marshal(toolUse.Input)
+			if err != nil {
+				t.Fatalf("marshal reported input: %v", err)
+			}
+			if strings.Contains(string(blob), "ghp_ABCDEFGH") {
+				t.Fatalf("nested token left the daemon unredacted: %s", blob)
+			}
+			// Redaction retains the edit structure, but only an attested path may
+			// survive the path-integrity boundary. Never upgrade missing evidence.
+			var input struct {
+				Changes []struct{ Path, Kind string }
+			}
+			if err := json.Unmarshal(blob, &input); err != nil {
+				t.Fatalf("decode reported changes: %v", err)
+			}
+			if len(input.Changes) != 1 || input.Changes[0].Kind != "delete" || input.Changes[0].Path != tc.wantPath {
+				t.Fatalf("redaction changed the edit structure or path authority: %s", blob)
+			}
+		})
 	}
 }
 

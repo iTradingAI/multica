@@ -43,11 +43,13 @@ export class WSClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private hasConnectedBefore = false;
+  private authenticated = false;
   // One-shot per connection. A non-conforming frame can repeat hundreds of
   // times per session, so we log the first drop and suppress the rest. Reset
   // on each connect() so a fresh connection logs once again.
   private badFrameLogged = false;
   private onReconnectCallbacks = new Set<() => void>();
+  private onReadyCallbacks = new Set<() => void>();
   private anyHandlers = new Set<(msg: WSMessage) => void>();
   private logger: Logger;
 
@@ -81,6 +83,18 @@ export class WSClient {
   }
 
   connect() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.authenticated = false;
+    if (this.ws) {
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.close();
+    }
     this.badFrameLogged = false;
     const url = new URL(this.baseUrl);
     // Token is never sent as a URL query parameter — it would be logged by
@@ -96,12 +110,14 @@ export class WSClient {
     if (this.identity?.os)
       url.searchParams.set("client_os", this.identity.os);
 
-    this.ws = new WebSocket(url.toString());
+    const socket = new WebSocket(url.toString());
+    this.ws = socket;
 
-    this.ws.onopen = () => {
+    socket.onopen = () => {
+      if (this.ws !== socket) return;
       const token = this.getToken?.() ?? this.token;
       if (!this.cookieAuth && token) {
-        this.ws!.send(
+        socket.send(
           JSON.stringify({ type: "auth", payload: { token } }),
         );
         return;
@@ -110,7 +126,8 @@ export class WSClient {
       this.onAuthenticated();
     };
 
-    this.ws.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (this.ws !== socket) return;
       let msg: WSMessage;
       try {
         msg = JSON.parse(event.data as string) as WSMessage;
@@ -156,11 +173,16 @@ export class WSClient {
       }
     };
 
-    this.ws.onclose = () => {
+    socket.onclose = () => {
+      if (this.ws !== socket) return;
+      this.authenticated = false;
+      this.ws = null;
+      socket.onopen = null;
+      socket.onmessage = null;
       this.scheduleReconnect();
     };
 
-    this.ws.onerror = () => {
+    socket.onerror = () => {
       // Suppress — onclose handles reconnect; errors during StrictMode
       // double-fire are expected in dev and harmless.
     };
@@ -191,9 +213,13 @@ export class WSClient {
   }
 
   private onAuthenticated() {
+    if (this.authenticated) return;
+    const socket = this.ws;
+    this.authenticated = true;
     this.logger.info("connected");
     const recoveredConnection = this.hasConnectedBefore || this.reconnectAttempt > 0;
     this.reconnectAttempt = 0;
+    this.hasConnectedBefore = true;
     if (recoveredConnection) {
       for (const cb of this.onReconnectCallbacks) {
         try {
@@ -203,7 +229,15 @@ export class WSClient {
         }
       }
     }
-    this.hasConnectedBefore = true;
+    for (const cb of [...this.onReadyCallbacks]) {
+      if (this.ws !== socket || !this.authenticated) break;
+      if (!this.onReadyCallbacks.has(cb)) continue;
+      try {
+        cb();
+      } catch {
+        // One subscriber must not prevent another from recovering.
+      }
+    }
   }
 
   disconnect() {
@@ -213,16 +247,20 @@ export class WSClient {
     }
     if (this.ws) {
       // Remove handlers before close to prevent onclose from scheduling a reconnect
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
       this.ws.onclose = null;
       this.ws.onerror = null;
       this.ws.close();
       this.ws = null;
     }
     this.hasConnectedBefore = false;
+    this.authenticated = false;
     this.reconnectAttempt = 0;
     this.handlers.clear();
     this.anyHandlers.clear();
     this.onReconnectCallbacks.clear();
+    this.onReadyCallbacks.clear();
   }
 
   on(event: WSEventType, handler: EventHandler) {
@@ -249,9 +287,27 @@ export class WSClient {
     };
   }
 
-  send(message: WSMessage) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
+  /** Every authenticated connection, including the first. Late subscribers
+   * observe an already-ready socket without changing onReconnect semantics. */
+  onReady(callback: () => void) {
+    this.onReadyCallbacks.add(callback);
+    if (this.authenticated && this.ws?.readyState === WebSocket.OPEN) {
+      try {
+        callback();
+      } catch {
+        // Match the notification behavior at authentication time.
+      }
     }
+    return () => {
+      this.onReadyCallbacks.delete(callback);
+    };
+  }
+
+  send(message: WSMessage) {
+    if (this.authenticated && this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(message));
+      return true;
+    }
+    return false;
   }
 }

@@ -130,6 +130,23 @@
     "open_in_new_tab": "Open in new tab"
   },
   "workbench": {
+    "files": {
+      "title": "Files",
+      "resource": "Directory",
+      "breadcrumb": "File location",
+      "root": "Root",
+      "refresh": "Refresh",
+      "more": "Load more",
+      "empty": "This directory is empty.",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "loading": "Loading files…",
+      "too_large": "Preview unavailable: file exceeds 1 MiB.",
+      "binary": "Preview unavailable: binary or invalid UTF-8 content.",
+      "touches": "File activity",
+      "touch_counts": "Counts are write-tool calls, including failed calls; Bash is not covered.",
+      "coverage": "Unknown {{unknown}} · Unavailable {{unavailable}} · Uncertain {{uncertain}} · Conflicting {{conflicting}} · Pending {{pending}}"
+    },
     "title": "Workbench",
     "diagnostics": "Directory status",
     "loading": "Checking directory access…",

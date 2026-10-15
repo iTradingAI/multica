@@ -130,6 +130,23 @@
     "open_in_new_tab": "在新标签页打开"
   },
   "workbench": {
+    "files": {
+      "title": "文件",
+      "resource": "目录",
+      "breadcrumb": "文件位置",
+      "root": "根目录",
+      "refresh": "刷新",
+      "more": "加载更多",
+      "empty": "目录为空。",
+      "expand": "展开",
+      "collapse": "收起",
+      "loading": "正在加载文件...",
+      "too_large": "文件超过 1 MiB，无法预览。",
+      "binary": "二进制或无效 UTF-8 内容，无法预览。",
+      "touches": "文件触达",
+      "touch_counts": "计数为写入工具调用数，包含失败调用；不覆盖 Bash。",
+      "coverage": "未知 {{unknown}} · 不可访问 {{unavailable}} · 不确定 {{uncertain}} · 冲突 {{conflicting}} · 待投影 {{pending}}"
+    },
     "title": "工作台",
     "diagnostics": "目录状态",
     "loading": "正在检查目录访问…",

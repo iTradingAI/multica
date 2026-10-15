@@ -16,6 +16,7 @@ import (
 // byte-for-byte on every frame and is never serialized to a browser or log.
 type WorkspaceFilesSnapshot struct {
 	WorkspaceID, ProjectID, ResourceID, ResourceType, Root, DaemonID string
+	BindingGeneration                                                int64
 }
 type WorkspaceFilesAuthorizer interface {
 	AuthorizeWorkspaceFiles(context.Context, string, string, protocol.WorkspaceFilesContext, string) (WorkspaceFilesSnapshot, string)
@@ -81,10 +82,10 @@ func (s WorkspaceFilesStore) AuthorizeWorkspaceFiles(ctx context.Context, user, 
 	args = append(args, resource)
 	var ref []byte
 	err := s.DB.QueryRow(ctx, filesAuthorizedProjectSQL+`
- SELECT p.id::text,p.workspace_id::text,r.id::text,r.resource_type,r.resource_ref
+ SELECT p.id::text,p.workspace_id::text,r.id::text,r.resource_type,r.resource_ref,r.binding_generation
  FROM authorized_project p JOIN project_resource r
  ON r.project_id=p.id AND r.workspace_id=p.workspace_id
- WHERE r.id=$5::uuid AND r.resource_type='local_directory'`, args...).Scan(&snap.ProjectID, &snap.WorkspaceID, &snap.ResourceID, &snap.ResourceType, &ref)
+ WHERE r.id=$5::uuid AND r.resource_type='local_directory'`, args...).Scan(&snap.ProjectID, &snap.WorkspaceID, &snap.ResourceID, &snap.ResourceType, &ref, &snap.BindingGeneration)
 	if err != nil {
 		return WorkspaceFilesSnapshot{}, filesStoreCode(err)
 	}
