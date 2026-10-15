@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   badCursor: false,
   connected: true,
   ready: () => {},
+  deepTree: false,
 }));
 function emit(type: string, payload: unknown) {
   state.handlers.get(type)?.forEach((handler) => handler(payload));
@@ -45,6 +46,7 @@ beforeEach(() => {
   state.badCursor = false;
   state.connected = true;
   state.ready = () => {};
+  state.deepTree = false;
   state.send.mockImplementation(
     ({ type, payload }: { type: string; payload: Record<string, unknown> }) => {
       if (!state.connected) return false;
@@ -77,7 +79,11 @@ beforeEach(() => {
                     { name: "nested", type: "directory" },
                     { name: "note.txt", type: "regular" },
                   ]
-              : [{ name: "child.txt", type: "regular" }];
+              : state.deepTree && payload.path === "nested"
+                ? [{ name: "level-two", type: "directory" }]
+                : state.deepTree && payload.path === "nested/level-two"
+                  ? [{ name: "level-three", type: "directory" }]
+                  : [{ name: "child.txt", type: "regular" }];
           emit("workspace_files.list_result", {
             client_req_id: payload.client_req_id,
             resource_id: "resource",
@@ -120,6 +126,23 @@ const requests = (type: string) =>
     .filter((frame) => frame.type === type);
 
 describe("Files tree lifecycle (renderer A only)", () => {
+  it("expands three directory levels lazily and reads the full nested path", async () => {
+    state.deepTree = true;
+    setup();
+    await screen.findByRole("button", { name: "note.txt" });
+    fireEvent.click(screen.getByRole("button", { name: "Expand nested" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Expand level-two" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Expand level-three" }));
+    expect(requests("workspace_files.list").map((frame) => frame.payload.path)).toEqual([
+      ".", "nested", "nested/level-two", "nested/level-two/level-three",
+    ]);
+    fireEvent.click(await screen.findByRole("button", { name: "child.txt" }));
+    await screen.findByText("selected evidence");
+    expect(requests("workspace_files.read").at(-1).payload.path).toBe("nested/level-two/level-three/child.txt");
+    fireEvent.click(screen.getByRole("button", { name: "Root" }));
+    await screen.findByRole("button", { name: "Expand nested" });
+    expect(screen.queryByRole("button", { name: "child.txt" })).not.toBeInTheDocument();
+  });
   it("recovers a resource request made before the first authenticated connection without manual retry", async () => {
     state.connected = false;
     setup();

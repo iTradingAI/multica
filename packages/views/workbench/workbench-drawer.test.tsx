@@ -38,6 +38,7 @@ describe("workbench lifecycle", () => {
         state.desktop = desktop;
         setup(context);
         const user = userEvent.setup();
+        expect(screen.getByRole("button", { name: "Workbench" })).toHaveTextContent("Workbench");
         await user.click(screen.getByRole("button", { name: "Workbench" }));
         await user.click(await screen.findByRole("tab", { name: "Sidebar" }));
         const frame = await screen.findByTitle("Example — Sidebar");
