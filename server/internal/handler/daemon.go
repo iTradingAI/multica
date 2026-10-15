@@ -2601,13 +2601,6 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		)
 	}
 	useSkillRefs := requestHasClientCapability(r, protocol.DaemonCapabilitySkillBundlesV1)
-	// A daemon older than the multica-platform merge assembles a brief that
-	// still names the built-ins this server stopped shipping. It cannot be
-	// fixed from here — the brief lives in the daemon binary — so the missing
-	// capability buys that daemon a redirect stub under the old name instead of
-	// a dangling pointer. Capability, not version: the version string is only
-	// ever shown to humans.
-	legacySkillRedirects := !requestHasClientCapability(r, protocol.DaemonCapabilityPlatformSkillV1)
 	var customEnv map[string]string
 	if agent.CustomEnv != nil {
 		if err := json.Unmarshal(agent.CustomEnv, &customEnv); err != nil {
@@ -2693,7 +2686,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		resp.Agent.Instructions = service.ComposeMikaInstructions(agent.Name, agent.Instructions)
 	}
 	if useSkillRefs {
-		_, skillRefs, err := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID, agent.SystemKey.String, legacySkillRedirects)
+		_, skillRefs, err := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID, agent.SystemKey.String)
 		if err != nil {
 			return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, h.rejectClaimSkillLoad(task, err)
 		}
@@ -2705,7 +2698,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			return resp, deliveredCommentIDs, issueSnapshot, agentSkillCount, builtinSkillCount, h.rejectClaimSkillLoad(task, err)
 		}
 		agentSkillCount = len(skills)
-		builtinSkills := h.TaskService.BuiltinSkills(agent.SystemKey.String, legacySkillRedirects)
+		builtinSkills := h.TaskService.BuiltinSkills(agent.SystemKey.String)
 		builtinSkillCount = len(builtinSkills)
 		skills = append(skills, builtinSkills...)
 		resp.Agent.Skills = skills
