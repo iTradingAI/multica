@@ -536,6 +536,7 @@ RETURNING id
 `, neighborSlug).Scan(&neighborWorkspaceID)
 	t.Cleanup(func() {
 		for _, workspaceID := range []string{targetWorkspaceID, neighborWorkspaceID} {
+			_, _ = testPool.Exec(context.Background(), `DELETE FROM daemon_registration_identity WHERE workspace_id = $1`, workspaceID)
 			_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID)
 			_, _ = testPool.Exec(context.Background(), `DELETE FROM task_usage_hourly_dirty WHERE workspace_id = $1`, workspaceID)
 			_, _ = testPool.Exec(context.Background(), `DELETE FROM runtime_profile WHERE workspace_id = $1`, workspaceID)
@@ -558,6 +559,10 @@ VALUES ($1, $2, 'owner')
 		{workspaceID: neighborWorkspaceID, mediaKey: neighborMediaKey},
 	}
 	for _, fixture := range fixtures {
+		dbfx.Exec(t, `
+INSERT INTO daemon_registration_identity (workspace_id, daemon_id, owner_id)
+VALUES ($1, gen_random_uuid()::text, $2)
+`, fixture.workspaceID, testUserID)
 		dbfx.QueryRow(t, `
 INSERT INTO issue (workspace_id, title, creator_type, creator_id)
 VALUES ($1, 'Workspace delete tenant isolation', 'member', $2)
@@ -599,6 +604,7 @@ VALUES ($1, $2, gen_random_uuid(), 's3://workspace-delete/tenant-isolation')
 
 	for table, predicate := range map[string]string{
 		"workspace":                    "id",
+		"daemon_registration_identity": "workspace_id",
 		"issue":                        "workspace_id",
 		"comment":                      "workspace_id",
 		"inbox_item":                   "workspace_id",

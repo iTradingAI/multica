@@ -128,5 +128,20 @@
   },
   "navigation": {
     "open_in_new_tab": "Open in new tab"
+  },
+  "workbench": {
+    "title": "Workbench",
+    "diagnostics": "Directory status",
+    "loading": "Checking directory access…",
+    "no_project": "This issue has no project.",
+    "no_resources": "No local directories are attached to this project.",
+    "forbidden": "You do not have access to this directory.",
+    "unavailable": "The directory channel is unavailable.",
+    "daemon_offline": "The directory daemon is offline.",
+    "daemon_upgrade_required": "Update the directory daemon to continue.",
+    "timeout": "The directory check timed out.",
+    "ready": "The directory is available.",
+    "retry": "Retry",
+    "directory": "Directory {{number}}"
   }
 }

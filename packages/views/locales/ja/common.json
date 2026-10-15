@@ -128,5 +128,20 @@
   },
   "navigation": {
     "open_in_new_tab": "新しいタブで開く"
+  },
+  "workbench": {
+    "title": "ワークベンチ",
+    "diagnostics": "ディレクトリの状態",
+    "loading": "ディレクトリへのアクセスを確認中…",
+    "no_project": "この課題にはプロジェクトがありません。",
+    "no_resources": "このプロジェクトにローカルディレクトリはありません。",
+    "forbidden": "このディレクトリにアクセスできません。",
+    "unavailable": "ディレクトリ接続は利用できません。",
+    "daemon_offline": "ディレクトリのデーモンはオフラインです。",
+    "daemon_upgrade_required": "デーモンを更新してください。",
+    "timeout": "ディレクトリの確認がタイムアウトしました。",
+    "ready": "ディレクトリは利用可能です。",
+    "retry": "再試行",
+    "directory": "ディレクトリ {{number}}"
   }
 }

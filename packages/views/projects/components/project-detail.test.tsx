@@ -8,6 +8,7 @@ import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import { ProjectDetail } from "./project-detail";
 
 const mocks = vi.hoisted(() => ({
+  workbench: vi.fn(),
   role: "admin",
   copyText: vi.fn(),
   deleteProject: vi.fn(),
@@ -15,6 +16,10 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn(),
   recordVisit: vi.fn(),
   toastSuccess: vi.fn(),
+}));
+
+vi.mock("../../workbench", () => ({
+  WorkbenchDrawer: (props: unknown) => { mocks.workbench(props); return <button>Workbench</button>; },
 }));
 
 vi.mock("@multica/ui/lib/clipboard", () => ({
@@ -304,6 +309,10 @@ beforeEach(() => {
 });
 
 describe("ProjectDetail sharing", () => {
+  it("wires the shared workbench with project context", () => {
+    renderProjectDetail();
+    expect(mocks.workbench).toHaveBeenCalledWith({ wsId: "workspace-1", context: { kind: "project", project_id: PROJECT.id } });
+  });
   it("copies the platform shareable URL instead of the renderer URL", async () => {
     const user = userEvent.setup();
     renderProjectDetail();

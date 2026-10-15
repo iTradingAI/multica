@@ -3189,9 +3189,10 @@ export class ApiClient {
   }
 
   /** Mint one hosted document URL and its single-use bridge proof. */
-  async getPluginSurfaceLaunch(workspaceId: string, installationId: string, surfaceKey: string): Promise<PluginSurfaceLaunch> {
+  async getPluginSurfaceLaunch(workspaceId: string, installationId: string, surfaceKey: string, options?: { signal?: AbortSignal }): Promise<PluginSurfaceLaunch> {
     const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/plugins/${installationId}/surfaces/${encodeURIComponent(surfaceKey)}/launch`,
+      { signal: options?.signal },
     );
     return parseWithFallback(raw, PluginSurfaceLaunchSchema, EMPTY_PLUGIN_SURFACE_LAUNCH, {
       endpoint: "GET /api/workspaces/{id}/plugins/{installationId}/surfaces/{surfaceKey}/launch",

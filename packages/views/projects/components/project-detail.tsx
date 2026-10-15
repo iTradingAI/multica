@@ -53,6 +53,7 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { EmojiPicker } from "@multica/ui/components/common/emoji-picker";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
+import { WorkbenchDrawer } from "../../workbench";
 import {
   AnimatedRightSidebar,
   getAnimatedRightSidebarInitialOpen,
@@ -483,6 +484,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             leaf={<span className="truncate font-medium text-foreground">{project.title}</span>}
             actions={
               <>
+              <WorkbenchDrawer wsId={wsId} context={{ kind: "project", project_id: project.id }} />
               <Button
                 variant="ghost"
                 size="icon-sm"

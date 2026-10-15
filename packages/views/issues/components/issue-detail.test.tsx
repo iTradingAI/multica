@@ -20,6 +20,10 @@ import enIssues from "../../locales/en/issues.json";
 const TEST_RESOURCES = { en: { agents: enAgents, common: enCommon, issues: enIssues } };
 
 const mockViewport = vi.hoisted(() => ({ isMobile: false }));
+const mockWorkbench = vi.hoisted(() => vi.fn());
+vi.mock("../../workbench", () => ({
+  WorkbenchDrawer: (props: unknown) => { mockWorkbench(props); return <button>Workbench</button>; },
+}));
 
 // Counts MockContentEditor mounts. This pins the description to exactly one
 // eager editor per issue and catches stale editor reuse across issue switches.
@@ -707,6 +711,10 @@ function hasHighlightedCommentBackground(root: ParentNode | null): boolean {
 // ---------------------------------------------------------------------------
 
 describe("IssueDetail (shared)", () => {
+  it("wires the shared workbench with the actual Issue and no project field", async () => {
+    renderIssueDetail();
+    await waitFor(() => expect(mockWorkbench).toHaveBeenCalledWith({ wsId: "ws-1", context: { kind: "issue", issue_id: mockIssue.id }, hasProject: Boolean(mockIssue.project_id) }));
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     contentEditorMounts.count = 0;

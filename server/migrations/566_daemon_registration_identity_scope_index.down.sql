@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS daemon_registration_identity_scope_idx;

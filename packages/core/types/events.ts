@@ -100,7 +100,15 @@ export type WSEventType =
   | "terminal.open_result"
   | "terminal.data"
   | "terminal.exit"
-  | "terminal.error";
+  | "terminal.error"
+  | "workspace_files.resources"
+  | "workspace_files.resources_result"
+  | "workspace_files.list"
+  | "workspace_files.list_result"
+  | "workspace_files.read"
+  | "workspace_files.read_chunk"
+  | "workspace_files.cancel"
+  | "workspace_files.error";
 
 export interface WSMessage<T = unknown> {
   type: WSEventType;
@@ -667,6 +675,14 @@ export interface WSEventPayloadMap {
   "terminal.data": unknown;
   "terminal.exit": unknown;
   "terminal.error": unknown;
+  "workspace_files.resources": unknown;
+  "workspace_files.resources_result": unknown;
+  "workspace_files.list": unknown;
+  "workspace_files.list_result": unknown;
+  "workspace_files.read": unknown;
+  "workspace_files.read_chunk": unknown;
+  "workspace_files.cancel": unknown;
+  "workspace_files.error": unknown;
 }
 
 /**
