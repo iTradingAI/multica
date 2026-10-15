@@ -32,3 +32,11 @@ unresolved reachable vulnerability.
 
 Every Go binary retains its compiler version in the standard Go build metadata;
 use `go version -m <binary>` when auditing a downloaded release artifact.
+
+## Downstream desktop installers
+
+The fork's separate desktop workflow builds unsigned Linux, Windows, and macOS
+installers on tag pushes. PR and manual runs only retain workflow artifacts;
+even a manual run targeting a tag cannot publish. See the
+[downstream desktop release guide](../docs/README.md) for architecture-specific
+update metadata, Gatekeeper handling, and dry-run verification.
