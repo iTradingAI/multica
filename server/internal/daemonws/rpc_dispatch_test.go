@@ -17,8 +17,10 @@ import (
 // client conn plus the hub.
 func dialRPCTestConn(t *testing.T, hub *Hub, identity ClientIdentity) *websocket.Conn {
 	t.Helper()
+	ready := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hub.HandleWebSocket(w, r, identity)
+		close(ready)
 	}))
 	t.Cleanup(server.Close)
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
@@ -27,6 +29,13 @@ func dialRPCTestConn(t *testing.T, hub *Hub, identity ClientIdentity) *websocket
 		t.Fatalf("Dial: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ready:
+	case <-timer.C:
+		t.Fatal("timed out waiting for daemon WebSocket registration")
+	}
 	return conn
 }
 

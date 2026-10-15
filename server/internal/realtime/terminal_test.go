@@ -175,9 +175,11 @@ func TestTerminalSubscribeAuthorizationMatrix(t *testing.T) {
 		{"capability missing", "rt-cap", "subscribe_error:capability_missing"},
 		{"lookup failure", "rt-err", "subscribe_error:lookup_failed"},
 	}
+	parentT := t
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			conn := connectWS(t, server)
+			parentT.Cleanup(func() { _ = conn.Close() })
 			got := subscribeTerminalOverWS(t, conn, tc.runtimeID)
 			if tc.want == "subscribe_ack" {
 				if got != "subscribe_ack" {

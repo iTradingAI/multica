@@ -36,7 +36,7 @@ const EntryNameSchema = z
   .min(1)
   .max(4096)
   .refine(
-    (name) => name !== "." && name !== ".." && !/[\/\\:\u0000]/.test(name),
+    (name) => name !== "." && name !== ".." && !/[/\\:]/.test(name) && !name.includes("\0"),
   );
 const ListSchema = z.object({ client_req_id: z.string(), resource_id: z.string(), seq: z.number().int().nonnegative(), entries: z.array(z.object({ name: EntryNameSchema, type: z.enum(["regular", "directory"]),
       }),
@@ -212,7 +212,10 @@ export function requestWorkspaceFiles(ws: WorkspaceFilesTransport, request: Requ
             const chunk = new TextDecoder("utf-8", { fatal: true }).decode(
               data,
             );
-            if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(chunk))
+            if (Array.from(chunk).some((character) => {
+              const code = character.charCodeAt(0);
+              return code < 32 && code !== 9 && code !== 10 && code !== 13;
+            }))
               return fail("binary_content");
             text += chunk;
           } catch {

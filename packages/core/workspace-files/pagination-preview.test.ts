@@ -45,7 +45,9 @@ describe("FilesPaginationAndPreviewBoundaries", () => {
       skipped: 3,
     });
   });
-  for (const text of ["\0", "a\u0001b", "\u001f"])
+  for (const code of Array.from({ length: 32 }, (_, code) => code).filter(
+    (code) => ![9, 10, 13].includes(code),
+  ))
     it("blocks binary controls without exposing content", async () => {
       const ws = transport();
       const pending = requestWorkspaceFiles(ws, {
@@ -59,12 +61,36 @@ describe("FilesPaginationAndPreviewBoundaries", () => {
         client_req_id,
         resource_id: "r",
         seq: 0,
-        data: btoa(text),
+        data: btoa(`a${String.fromCharCode(code)}b`),
         eof: true,
       });
       await expect(pending).rejects.toMatchObject({ code: "binary_content" });
       expect(ws.handlers.size).toBe(0);
     });
+  it("preserves tabs, line endings and printable characters", async () => {
+    const ws = transport();
+    const pending = requestWorkspaceFiles(ws, {
+      operation: "read", context, resourceId: "r", path: "data",
+    });
+    const { client_req_id } = ws.send.mock.calls[0]![0].payload;
+    const text = "a\tb\r\nc\n !~";
+    ws.handlers.get("workspace_files.read_chunk")?.({
+      client_req_id, resource_id: "r", seq: 0, data: btoa(text), eof: true,
+    });
+    expect(await pending).toEqual({ text });
+  });
+  it.each(["a\0b", "a/b", "a\\b", "a:b"])("rejects unsafe entry name %j", async (name) => {
+    const ws = transport();
+    const pending = requestWorkspaceFiles(ws, {
+      operation: "list", context, resourceId: "r", path: ".",
+    });
+    const { client_req_id } = ws.send.mock.calls[0]![0].payload;
+    ws.handlers.get("workspace_files.list_result")?.({
+      client_req_id, resource_id: "r", seq: 0,
+      entries: [{ name, type: "regular" }], final: true,
+    });
+    await expect(pending).rejects.toMatchObject({ code: "unavailable" });
+  });
   it("accepts empty text and exactly 1 MiB, rejects an extra byte", async () => {
     for (const size of [0, 1024 * 1024, 1024 * 1024 + 1]) {
       const ws = transport();
