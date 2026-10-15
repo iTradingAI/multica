@@ -1405,6 +1405,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	hub.SetTerminalAuthorizer(h)
 	hub.SetTerminalRelay(daemonHub)
 	daemonHub.SetTerminalBridge(hub)
+	hub.ConfigureWorkspaceFiles(os.Getenv("MULTICA_WORKSPACE_FILES_ENABLED") == "true", os.Getenv("MULTICA_WORKSPACE_FILES_SINGLE_API") == "true", realtime.WorkspaceFilesStore{DB: pool}, daemonHub)
+	daemonHub.SetWorkspaceFilesBridge(hub)
 	health := newServerHealth(pool)
 
 	r := chi.NewRouter()

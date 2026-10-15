@@ -427,6 +427,7 @@ func main() {
 
 	bus := events.New()
 	hub := realtime.NewHub()
+	defer hub.ShutdownWorkspaceFiles()
 	go hub.Run()
 	daemonHub := daemonws.NewHub()
 	var daemonWakeup interface {
@@ -909,6 +910,7 @@ func main() {
 			}
 		},
 		DrainHTTP: func() {
+			hub.ShutdownWorkspaceFiles()
 			apiShutdownCtx, apiShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if err := srv.Shutdown(apiShutdownCtx); err != nil {
 				apiShutdownCancel()
