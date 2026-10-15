@@ -5,12 +5,17 @@ vi.mock("../analytics", () => ({ captureEvent: vi.fn() }));
 // A controllable PerformanceObserver stand-in: records the callback so a test
 // can fire synthetic long-task entries, and counts constructions so we can
 // assert idempotent install.
-let lastCallback: ((list: { getEntries: () => Array<{ duration: number }> }) => void) | null;
+type LongTask = {
+  duration: number;
+  name?: string;
+  attribution?: Array<{ containerName: string; containerSrc: string }>;
+};
+let lastCallback: ((list: { getEntries: () => LongTask[] }) => void) | null;
 let constructed: number;
 let observeCalls: number;
 
 class FakePerformanceObserver {
-  constructor(cb: (list: { getEntries: () => Array<{ duration: number }> }) => void) {
+  constructor(cb: (list: { getEntries: () => LongTask[] }) => void) {
     constructed += 1;
     lastCallback = cb;
   }
@@ -19,8 +24,8 @@ class FakePerformanceObserver {
   }
 }
 
-function fireLongTask(duration: number) {
-  lastCallback?.({ getEntries: () => [{ duration }] });
+function fireLongTask(duration: number, details: Omit<LongTask, "duration"> = {}) {
+  lastCallback?.({ getEntries: () => [{ duration, ...details }] });
 }
 
 async function load() {
@@ -51,6 +56,28 @@ afterEach(() => {
 });
 
 describe("installFreezeWatchdog", () => {
+  it("reports the long-task name and each container attribution", async () => {
+    const { installFreezeWatchdog, captureEvent } = await load();
+    installFreezeWatchdog();
+    const attribution = [
+      { containerName: "preview", containerSrc: "about:blank" },
+      { containerName: "", containerSrc: "" },
+    ];
+    fireLongTask(3000, { name: "same-origin-descendant", attribution });
+    expect(captureEvent).toHaveBeenCalledWith("client_unresponsive", expect.objectContaining({
+      name: "same-origin-descendant", attribution, duration_ms: 3000,
+    }));
+  });
+
+  it("keeps empty attribution for top-level tasks", async () => {
+    const { installFreezeWatchdog, captureEvent } = await load();
+    installFreezeWatchdog();
+    fireLongTask(3000, { name: "self", attribution: [] });
+    expect(captureEvent).toHaveBeenCalledWith("client_unresponsive", expect.objectContaining({
+      name: "self", attribution: [],
+    }));
+  });
+
   it("reports a long task at or above the 2s threshold with duration + path", async () => {
     const { installFreezeWatchdog, captureEvent } = await load();
     installFreezeWatchdog();
@@ -62,6 +89,8 @@ describe("installFreezeWatchdog", () => {
       source: "longtask",
       duration_ms: 2300,
       path: "/acme/issues",
+      name: "",
+      attribution: [],
     });
   });
 
@@ -79,6 +108,8 @@ describe("installFreezeWatchdog", () => {
       source: "longtask",
       duration_ms: 2300,
       path: "/:slug/issues/:id",
+      name: "",
+      attribution: [],
     });
   });
 
