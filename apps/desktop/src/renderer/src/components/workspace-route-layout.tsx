@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Outlet, useParams } from "react-router-dom";
+import { Suspense, useEffect, useState } from "react";
+import { Outlet, useLocation, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import {
@@ -13,6 +13,7 @@ import { useWorkspaceSeen } from "@multica/views/workspace/use-workspace-seen";
 import { WelcomeAfterOnboarding } from "@multica/views/workspace/welcome-after-onboarding";
 import { WorkspacePresencePrefetch } from "@multica/views/layout";
 import { SourceBackfillModal } from "@multica/views/onboarding";
+import { PageLoading } from "./page-loading";
 import { useTabStore } from "@/stores/tab-store";
 import { useWindowOverlayStore } from "@/stores/window-overlay-store";
 
@@ -47,6 +48,7 @@ let singletonOwner: symbol | null = null;
  * the WindowOverlay takes over (zero valid workspaces).
  */
 export function WorkspaceRouteLayout() {
+  const { pathname } = useLocation();
   const { workspaceSlug } = useParams<{ workspaceSlug: string }>();
   // Identity for this mounted instance. A Symbol so two layouts can never
   // compare equal — including the incoming and outgoing layout of a
@@ -178,7 +180,11 @@ export function WorkspaceRouteLayout() {
   return (
     <WorkspaceSlugProvider slug={workspaceSlug}>
       <WorkspacePresencePrefetch />
-      <Outlet />
+      <div data-route-pathname={pathname} style={{ display: "contents" }}>
+        <Suspense key={pathname} fallback={<PageLoading />}>
+          <Outlet />
+        </Suspense>
+      </div>
       {/* Reads the welcome-store transient signal parked by
        *  OnboardingFlow.handleRuntimeNext. Suppressed while a WindowOverlay
        *  (onboarding / accept-invite / new-workspace) is open so the modal
