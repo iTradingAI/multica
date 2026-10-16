@@ -66,8 +66,13 @@ describe("shared tool result body", () => {
       reader.onload = () => resolve(reader.result as ArrayBuffer);
       reader.readAsArrayBuffer(blob!);
     });
-    expect(Buffer.from(bytes)).toEqual(Buffer.from(source.output, "utf8"));
-    expect(createHash("sha256").update(Buffer.from(bytes)).digest("hex"))
+    const actualBytes = Buffer.from(bytes);
+    const expectedBytes = Buffer.from(source.output, "utf8");
+    expect(actualBytes.byteLength).toBe(expectedBytes.byteLength);
+    // Preserve exact byte equality without a matcher traversing millions of
+    // indexed properties, which exceeded the test timeout on the CI shard.
+    expect(actualBytes.equals(expectedBytes)).toBe(true);
+    expect(createHash("sha256").update(actualBytes).digest("hex"))
       .toBe(createHash("sha256").update(source.output).digest("hex"));
     expect(item!.originalOutput).toBe(source.output);
   });
