@@ -168,5 +168,9 @@
     "export_png": "Download PNG",
     "export_svg": "Download SVG",
     "export_source": "Download .mmd"
+  },
+  "large_document": {
+    "notice": "Large description: read-only preview. Blank lines are collapsed and only an excerpt is shown. Download the original to read or edit the full text.",
+    "download": "Download original Markdown"
   }
 }
