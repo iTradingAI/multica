@@ -2971,6 +2971,31 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </div>
       )}
 
+      {(!childIssuesLoaded || childIssues.length > 0) && (
+        <section aria-label={t(($) => $.detail.sub_issues_label)} data-testid="sidebar-sub-issues" className="space-y-2">
+          <div className="flex items-center justify-between gap-2 px-2 text-caption font-medium text-muted-foreground">
+            <span>{t(($) => $.detail.sub_issues_label)}</span>
+            {childIssuesLoaded && !childIssuesError && childIssues.length > 0 && (
+              <span className="text-micro tabular-nums">
+                {childIssues.filter((child) => issueBehavesAs(child, "done")).length}/{childIssues.length}
+              </span>
+            )}
+          </div>
+          {childIssuesError ? (
+            <div role="alert" className="space-y-2 px-2 text-caption text-muted-foreground">
+              <p>{t(($) => $.detail.sub_issues_load_failed)}</p>
+              <Button variant="outline" size="sm" onClick={() => { void refetchChildIssues(); }}>
+                {t(($) => $.table.load_failed_retry)}
+              </Button>
+            </div>
+          ) : !childIssuesLoaded ? (
+            <p role="status" className="px-2 text-caption text-muted-foreground">{commonT(($) => $.loading)}</p>
+          ) : (
+            <IssueContextMenuProvider>{renderSubIssueRows(true)}</IssueContextMenuProvider>
+          )}
+        </section>
+      )}
+
       <IssueDuplicatesSection issueId={issue.id} />
 
       {/* Pull requests — hidden when the workspace disables the PR sidebar
@@ -3021,31 +3046,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           </PropRow>
         </div>}
       </div>
-
-      <section aria-label={t(($) => $.detail.sub_issues_label)} data-testid="sidebar-sub-issues" className="space-y-2">
-        <div className="flex items-center justify-between gap-2 px-2 text-caption font-medium text-muted-foreground">
-          <span>{t(($) => $.detail.sub_issues_label)}</span>
-          {childIssuesLoaded && !childIssuesError && childIssues.length > 0 && (
-            <span className="text-micro tabular-nums">
-              {childIssues.filter((child) => issueBehavesAs(child, "done")).length}/{childIssues.length}
-            </span>
-          )}
-        </div>
-        {childIssuesError ? (
-          <div role="alert" className="space-y-2 px-2 text-caption text-muted-foreground">
-            <p>{t(($) => $.detail.sub_issues_load_failed)}</p>
-            <Button variant="outline" size="sm" onClick={() => { void refetchChildIssues(); }}>
-              {t(($) => $.table.load_failed_retry)}
-            </Button>
-          </div>
-        ) : !childIssuesLoaded ? (
-          <p role="status" className="px-2 text-caption text-muted-foreground">{commonT(($) => $.loading)}</p>
-        ) : childIssues.length === 0 ? (
-          <p className="px-2 text-caption text-muted-foreground">{t(($) => $.detail.sub_issues_empty)}</p>
-        ) : (
-          <IssueContextMenuProvider>{renderSubIssueRows(true)}</IssueContextMenuProvider>
-        )}
-      </section>
 
       {/* The standalone "Token usage" section that used to sit here is gone:
           it showed the same issue totals the execution-log header now carries,

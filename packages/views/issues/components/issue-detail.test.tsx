@@ -765,6 +765,33 @@ describe("IssueDetail (shared)", () => {
       expect(mockWorkbench.mock.calls.at(-1)?.[0]).not.toHaveProperty("issueSubIssues");
     });
 
+    it("places sub-issues immediately after the parent section even when the parent is collapsed", async () => {
+      const parent: Issue = { ...mockIssue, id: "parent-1", identifier: "TES-0", title: "Parent task" };
+      mockApiObj.getIssue.mockImplementation(async (id: string) =>
+        id === parent.id ? parent : { ...mockIssue, parent_issue_id: parent.id },
+      );
+      mockApiObj.listChildIssues.mockImplementation(async (id: string) => ({
+        issues: id === mockIssue.id ? [child] : [],
+      }));
+      renderIssueDetail();
+      const panel = await screen.findByTestId("sidebar-sub-issues");
+      const parentToggle = await screen.findByRole("button", { name: "Parent issue" });
+      expect(parentToggle.parentElement?.nextElementSibling).toBe(panel);
+      fireEvent.click(parentToggle);
+      expect(parentToggle.parentElement?.nextElementSibling).toBe(panel);
+      expect(within(panel).getByRole("link", { name: /TES-2.*Child task/ })).toBeInTheDocument();
+    });
+
+    it("hides the entire sidebar section when there are no children, preserving the body create action", async () => {
+      renderIssueDetail();
+      await screen.findByRole("button", { name: "Add sub-issues" });
+      await waitFor(() => expect(screen.queryByTestId("sidebar-sub-issues")).not.toBeInTheDocument());
+      expect(screen.queryByRole("region", { name: "Sub-issues" })).not.toBeInTheDocument();
+      expect(screen.queryByText("No sub-issues.")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Properties" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Details" })).toBeInTheDocument();
+    });
+
     it("keeps the sidebar list available when the body's sub-issues are collapsed", async () => {
       mockApiObj.listChildIssues.mockResolvedValue({ issues: [child] });
       renderIssueDetail();
@@ -786,13 +813,13 @@ describe("IssueDetail (shared)", () => {
       expect(panel.queryByText("No sub-issues.")).not.toBeInTheDocument();
     });
 
-    it("shows query failure and retries to the successful empty state", async () => {
+    it("shows query failure and hides the section after retry confirms no children", async () => {
       mockApiObj.listChildIssues.mockRejectedValueOnce(new Error("offline"));
       renderIssueDetail();
       const panel = within(await screen.findByTestId("sidebar-sub-issues"));
       expect(await panel.findByRole("alert")).toHaveTextContent("Could not load sub-issues.");
       fireEvent.click(panel.getByRole("button", { name: "Retry" }));
-      expect(await panel.findByText("No sub-issues.")).toBeInTheDocument();
+      await waitFor(() => expect(screen.queryByTestId("sidebar-sub-issues")).not.toBeInTheDocument());
       expect(mockApiObj.listChildIssues).toHaveBeenCalledTimes(2);
     });
 
