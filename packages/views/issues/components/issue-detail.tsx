@@ -39,7 +39,8 @@ import { Button } from "@multica/ui/components/ui/button";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@multica/ui/components/ui/resizable";
 import { Sheet, SheetContent } from "@multica/ui/components/ui/sheet";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
-import { ContentEditor, type ContentEditorRef, TitleEditor, type TitleEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useEditorUpload, PreviewSequenceProvider, collectPreviewSequence } from "../../editor";
+import { type ContentEditorRef, TitleEditor, type TitleEditorRef, useFileDropZone, FileDropOverlay, useLazyEditor, useEditorUpload, PreviewSequenceProvider, collectPreviewSequence } from "../../editor";
+import { BoundedContentEditor } from "../../editor/bounded-content-editor";
 import {
   WAKEUP_ACTIVITY_ACTIONS,
   WakeupActivityIcon,
@@ -2270,6 +2271,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   }, [highlightCommentId, highlightRequestToken, id, writeViewState, items, targetIdx, scrollContainerEl, replyToRoot, expandedResolved, timelineView, toggleResolvedExpand]);
 
   const descEditorRef = useRef<ContentEditorRef>(null);
+  const [descriptionReadOnly, setDescriptionReadOnly] = useState(false);
   const descriptionEditingRef = useRef(false);
   const descriptionSaveInFlightRef = useRef(false);
   const descriptionSaveIssueIdRef = useRef(id);
@@ -2282,7 +2284,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // composer shells, a long rendered description cannot swap between
   // react-markdown and ProseMirror without small per-block height differences
   // accumulating into a visible scroll/layout jump. The chunked Markdown path
-  // keeps this single eager editor affordable; title and composers stay lazy.
+  // handles normal descriptions; oversized descriptions use a bounded preview.
   const titleEditorRef = useRef<TitleEditorRef>(null);
   const titleBaseRef = useRef<string | undefined>(issue?.title);
   const [titleConflictDraft, setTitleConflictDraft] = useState<string | null>(null);
@@ -2299,6 +2301,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   }, [id]);
   const titleLazy = useLazyEditor({ editorRef: titleEditorRef, resetKey: id });
   const { isDragOver: descDragOver, dropZoneProps: descDropZoneProps } = useFileDropZone({
+    enabled: !descriptionReadOnly,
     onDrop: (files) => files.forEach((file) => descEditorRef.current?.uploadFile(file)),
   });
   // Pending uploads in the description editor. We don't pass `issueId` on
@@ -3635,7 +3638,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           >
             {descriptionAnnotations.popup}
             <div data-comment-content={descriptionSourceId}>
-              <ContentEditor
+              <BoundedContentEditor
+                onReadOnlyChange={setDescriptionReadOnly}
                 ref={descEditorRef}
                 key={id}
                 value={issue.description ?? ""}
@@ -3687,6 +3691,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 getActorName={getActorName}
               />
               <FileUploadButton
+                disabled={descriptionReadOnly}
                 size="sm"
                 multiple
                 onSelect={(file) => descEditorRef.current?.uploadFile(file)}

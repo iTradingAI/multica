@@ -13,6 +13,8 @@
 // isolation and independent of whichever list shell renders the events.
 
 import { truncateWithEllipsis } from "@multica/core/utils";
+import { boundToolOutput, TOOL_OUTPUT_MAX_CHARS, unwrapToolOutput } from "./tool-output-preview";
+export { unwrapToolOutput } from "./tool-output-preview";
 
 export interface TraceEvent {
   seq?: number;
@@ -21,6 +23,8 @@ export interface TraceEvent {
   content?: string;
   input?: Record<string, unknown>;
   output?: string;
+  /** Unmodified record, used only for explicit copy/download actions. */
+  originalOutput?: string;
   created_at?: string;
 }
 
@@ -166,10 +170,12 @@ export function traceEventSummary(event: TraceEvent, labels?: TraceSummaryLabels
       return clip(firstLine(event.content), 200);
     case "tool_use":
       return traceToolArgSummary(event.input, labels);
-    case "tool_result":
+    case "tool_result": {
       // Unwrap first: the collapsed row is the one people read without
       // clicking, so it must not show transport escaping.
-      return clip(collapseWhitespace(labels?.formatText?.(unwrapToolOutput(event.output ?? "")) ?? unwrapToolOutput(event.output ?? "")), 200);
+      const preview = boundToolOutput(event.output ?? "").text;
+      return clip(collapseWhitespace(labels?.formatText?.(preview) ?? preview), 200);
+    }
     default:
       return firstLine(event.content ?? event.output);
   }
@@ -191,7 +197,7 @@ export function traceEventCopyText(event: TraceEvent): string {
     case "tool_result":
       // Match what the row displays, so copied evidence reads like the
       // terminal output rather than its transport encoding.
-      body = unwrapToolOutput(event.output ?? "");
+      body = unwrapToolOutput(event.originalOutput ?? event.output ?? "");
       break;
     default:
       body = event.content ?? "";
@@ -199,23 +205,6 @@ export function traceEventCopyText(event: TraceEvent): string {
   const date = event.created_at ? new Date(event.created_at) : null;
   const timestamp = date && !Number.isNaN(date.getTime()) ? `[${date.toISOString()}] ` : "";
   return body ? `${timestamp}[${label}] ${body}` : `${timestamp}[${label}]`;
-}
-
-/**
- * Tool output is persisted JSON-encoded, so a result arrives as a quoted string
- * whose newlines are escaped. Decode exactly one layer so it reads as the
- * terminal output it was. Anything that is not a wrapped string — a bare JSON
- * document, plain prose, a truncated body — is returned untouched.
- */
-export function unwrapToolOutput(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed.length < 2 || !trimmed.startsWith('"') || !trimmed.endsWith('"')) return raw;
-  try {
-    const decoded: unknown = JSON.parse(trimmed);
-    return typeof decoded === "string" ? decoded : raw;
-  } catch {
-    return raw;
-  }
 }
 
 export type TraceDiffLineKind = "add" | "remove" | "context" | "gap";
@@ -565,7 +554,7 @@ export interface TraceImageResult {
  * output should not pay for a `JSON.parse` on every render.
  */
 export function readImageResult(output: string | undefined): TraceImageResult | null {
-  if (!output) return null;
+  if (!output || output.length > TOOL_OUTPUT_MAX_CHARS) return null;
   const head = output.slice(0, 200);
   if (!head.includes('"image"') || !head.includes('"base64"')) return null;
 

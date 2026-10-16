@@ -62,7 +62,8 @@ import {
   FOLLOW_EDGE_THRESHOLD,
   LINE_SCROLL_PX,
 } from "./transcript-follow";
-import { isOutputTruncated, type TimelineItem } from "./build-timeline";
+import type { TimelineItem } from "./build-timeline";
+import { ToolOutputBody } from "./tool-output-body";
 import {
   buildLanes,
   buildSteps,
@@ -80,7 +81,6 @@ import {
 import { buildRunOutcome } from "./run-outcome";
 import { RunTimeline } from "./run-timeline";
 import {
-  base64ByteLength,
   readImageResult,
   traceEventCopyText,
   traceEventDetail,
@@ -102,7 +102,6 @@ import {
   formatUsd,
   summarizeTaskUsage,
 } from "../../runtimes/utils";
-import { formatBytes } from "../format-bytes";
 import "../../editor/styles/code.css";
 import "./task-transcript.css";
 
@@ -1809,35 +1808,17 @@ function InspectorSection({ label, children }: { label: string; children: React.
   );
 }
 
-/** One payload, rendered as what it is. */
-/** Pre-existing render ceiling for a body with no server-side budget. */
+/** Pre-existing render ceiling for non-result bodies. */
 const DISPLAY_CLIP_CHARS = 8000;
 
+/** One payload, rendered as what it is. */
 export function StepBody({ item }: { item: TimelineItem }) {
+  return item.type === "tool_result" ? <ToolOutputBody item={item} /> : <EventBody item={item} />;
+}
+
+function EventBody({ item }: { item: TimelineItem }) {
   const { t } = useT("agents");
   const detail = useMemo(() => traceEventDetail(item), [item]);
-  const image = useMemo(() => readImageResult(item.output), [item.output]);
-  // Stated where the output actually ends, for a reader who has just reached
-  // the bottom and is wondering whether that was all of it. A header badge said
-  // the same thing louder, before anyone had asked the question.
-  const note = isOutputTruncated(item) ? t(($) => $.transcript.output_truncated_note) : undefined;
-
-  // A screenshot is a picture, not a 200KB base64 string in a <pre>.
-  if (image) {
-    return (
-      <figure className="px-2 py-1">
-        <img
-          src={`data:${image.mediaType};base64,${image.base64}`}
-          alt={t(($) => $.transcript.image_result)}
-          className="max-h-80 w-full rounded-md border object-contain"
-        />
-        <figcaption className="pt-1 text-micro text-faint-foreground">
-          {t(($) => $.transcript.image_result)} · {formatBytes(base64ByteLength(image.base64))}
-        </figcaption>
-        {note && <span className="block pt-1 text-micro text-faint-foreground">{note}</span>}
-      </figure>
-    );
-  }
 
   switch (detail.kind) {
     case "diff":
@@ -1848,22 +1829,15 @@ export function StepBody({ item }: { item: TimelineItem }) {
       return <FileWriteSurface text={detail.text} lineCount={detail.lineCount} path={detail.path} />;
     default: {
       const text = detail.text;
-      // A stored tool result is already capped at 8192 bytes by the daemon, so
-      // clipping it again could only shave a couple of hundred more characters
-      // — under a note that already reports the same loss. Tool input has no
-      // server-side budget and keeps the clip at its existing length; nothing
-      // about how long an input renders is this change's business.
-      const clip = item.type === "tool_result" ? null : DISPLAY_CLIP_CHARS;
       const clipped =
-        clip !== null && text.length > clip
-          ? `${redactSecrets(text.slice(0, clip))}\n${t(($) => $.transcript.display_clipped)}`
+        text.length > DISPLAY_CLIP_CHARS
+          ? `${redactSecrets(text.slice(0, DISPLAY_CLIP_CHARS))}\n${t(($) => $.transcript.display_clipped)}`
           : redactSecrets(text);
       const path = item.type === "tool_use" ? readPathFromInput(item.input) : undefined;
       return (
         <ToolDetailSurface
           text={clipped}
           language={path ? languageForPath(path) : undefined}
-          note={note}
         />
       );
     }
