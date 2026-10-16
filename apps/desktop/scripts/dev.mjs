@@ -13,7 +13,6 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { envWithLocalBins } from "./package.mjs";
 import {
   applyWorktreeDevEnv,
   repoRootFromScriptDir,
@@ -43,11 +42,4 @@ const node = process.execPath;
 run(node, [join(here, "bundle-cli.mjs")]);
 run(node, [join(here, "brand-dev-electron.mjs")]);
 
-const isWin = process.platform === "win32";
-// electron-vite's bin lands in apps/desktop/node_modules/.bin under the
-// isolated linker but only in the repo-root .bin under the hoisted linker
-// (.npmrc node-linker=hoisted); envWithLocalBins puts both on PATH.
-run("electron-vite", ["dev", ...process.argv.slice(2)], {
-  shell: isWin,
-  env: envWithLocalBins(process.env),
-});
+run(node, [join(here, "electron-vite.mjs"), "dev", ...process.argv.slice(2)]);

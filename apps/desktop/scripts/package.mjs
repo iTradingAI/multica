@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+// Invoked via Node; no hashbang because Vite SSR prepends imports in tests.
 // Wrapper around `electron-builder` that keeps the Desktop version in
 // lockstep with the CLI. Both are derived from `git describe --tags
 // --match 'v[0-9]*' --always --dirty` — the same source GoReleaser reads
