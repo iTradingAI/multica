@@ -1,4 +1,5 @@
 import type { JSONContent } from "@tiptap/core";
+import { DocumentBudgetExceeded } from "./document-budget";
 
 /**
  * Above this source size, ContentEditor parses markdown in chunks instead of in
@@ -36,6 +37,7 @@ export function parseMarkdownChunked(
   manager: MarkdownManagerLike,
   markdown: string,
   chunkSize = MARKDOWN_CHUNK_SIZE,
+  budget?: { maxNodes: number; maxChunkCharacters: number },
 ): JSONContent {
   const lines = markdown.split("\n");
   const chunks: string[] = [];
@@ -60,9 +62,23 @@ export function parseMarkdownChunked(
   if (current.length) chunks.push(current.join("\n"));
 
   const merged: JSONContent = { type: "doc", content: [] };
+  let nodeCount = 1;
   for (const chunk of chunks) {
+    // An unsplittable paragraph/fence must not defeat the tokenizer budget.
+    if (budget && chunk.length > budget.maxChunkCharacters) throw new DocumentBudgetExceeded();
     const doc = manager.parse(chunk);
-    if (doc.content) merged.content!.push(...doc.content);
+    if (budget) {
+      const pending = [doc.content ?? []];
+      while (pending.length) {
+        for (const node of pending.pop()!) {
+          if (++nodeCount > budget.maxNodes) throw new DocumentBudgetExceeded();
+          if (node.content) pending.push(node.content);
+        }
+      }
+    }
+    if (doc.content) {
+      for (const node of doc.content) merged.content!.push(node);
+    }
   }
   return merged;
 }
