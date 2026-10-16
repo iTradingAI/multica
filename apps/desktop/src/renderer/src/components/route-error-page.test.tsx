@@ -7,6 +7,12 @@ const reloadActiveTab = vi.fn();
 const closeActiveTab = vi.fn();
 const navigateActiveSession = vi.fn();
 
+vi.mock("@/platform/lazy-page", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/platform/lazy-page")>(),
+  reloadPageWindow: vi.fn(),
+}));
+import { PageLoadError, reloadPageWindow } from "@/platform/lazy-page";
+
 let activeWorkspaceSlug: string | null = "acme";
 
 vi.mock("@multica/core/modals", () => ({
@@ -85,6 +91,29 @@ describe("DesktopRouteErrorPage", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /reload tab/i }));
     expect(reloadActiveTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers an explicit full-window reload for an import failure, retaining its cause", async () => {
+    const cause = new Error("chunk not found");
+    const error = new PageLoadError(cause);
+    function ImportFailure(): never { throw error; }
+    const router = createMemoryRouter([
+      { path: "/", element: <ImportFailure />, errorElement: <DesktopRouteErrorPage /> },
+    ]);
+    render(<RouterProvider router={router} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("entire window, including all tabs");
+    expect(error.cause).toBe(cause);
+    expect(reloadPageWindow).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /reload tab/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /reload window/i }));
+    expect(reloadPageWindow).toHaveBeenCalledTimes(1);
+    expect(reloadActiveTab).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /report error/i }));
+    expect(openModal).toHaveBeenCalledWith("feedback", expect.objectContaining({
+      context: expect.objectContaining({ error: expect.objectContaining({ name: "PageLoadError" }) }),
+    }));
+    fireEvent.click(screen.getByRole("button", { name: /close tab/i }));
+    expect(closeActiveTab).toHaveBeenCalledTimes(1);
   });
 
   it("offers Close tab as the always-safe escape from a crashing route", async () => {

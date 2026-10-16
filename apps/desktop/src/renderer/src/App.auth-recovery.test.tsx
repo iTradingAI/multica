@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   },
   refetchWorkspaceList: vi.fn(),
   workspaceListUnavailable: false,
+  issueGate: null as Promise<void> | null,
 }));
 
 const tabStore = vi.hoisted(() => ({
@@ -105,8 +106,12 @@ vi.mock("./components/desktop-layout", () => ({
 vi.mock("./components/update-notification", () => ({
   UpdateNotification: () => null,
 }));
-vi.mock("./components/issue-window", () => ({
-  IssueWindow: () => <div data-testid="issue-window" />,
+vi.mock("./components/issue-window", async () => {
+  await state.issueGate;
+  return { IssueWindow: () => <div data-testid="issue-window" /> };
+});
+vi.mock("@multica/views/platform", () => ({
+  DragStrip: () => <div data-testid="drag-strip" />,
 }));
 
 vi.mock("./stores/tab-store", () => ({
@@ -230,5 +235,22 @@ describe("App main-window auth recovery", () => {
 
     expect(screen.getByTestId("auth-recovery")).toBeInTheDocument();
     expect(screen.queryByTestId("issue-window")).toBeNull();
+  });
+
+  it("keeps the drag strip as the first flex child while the dedicated window loads", async () => {
+    let release = () => {};
+    state.issueGate = new Promise<void>((resolve) => { release = resolve; });
+    window.desktopAPI.windowContext = {
+      kind: "issue",
+      issueId: "issue-1",
+      path: "/acme/issues/issue-1",
+      title: "MUL-1",
+      workspaceSlug: "acme",
+    };
+    render(<App />);
+    const pending = screen.getByRole("status", { name: "Loading page" });
+    expect(pending.parentElement?.firstElementChild).toBe(screen.getByTestId("drag-strip"));
+    await act(async () => { release(); await state.issueGate; });
+    expect(await screen.findByTestId("issue-window")).toBeInTheDocument();
   });
 });

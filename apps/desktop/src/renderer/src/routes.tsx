@@ -1,68 +1,88 @@
-import { useEffect } from "react";
+import { lazy, useEffect } from "react";
 import { createMemoryRouter, Outlet, useMatches } from "react-router-dom";
 import type { RouteObject } from "react-router-dom";
-import { IssueDetailPage } from "./pages/issue-detail-page";
-import { ProjectDetailPage } from "./pages/project-detail-page";
-import { AutopilotDetailPage } from "./pages/autopilot-detail-page";
-import { SkillDetailPage } from "./pages/skill-detail-page";
-import { AgentDetailPage } from "./pages/agent-detail-page";
-import { AiBuilderSessionPage } from "./pages/ai-builder-session-page";
-import { MemberDetailPage } from "./pages/member-detail-page";
-import {
-  RuntimeDetailPage,
-  RuntimeSettingsPage,
-} from "./pages/runtime-detail-page";
-import { AttachmentPreviewRoute } from "./pages/attachment-preview-page";
-import { IssuesPage } from "@multica/views/issues/components";
-import { ProjectsPage } from "@multica/views/projects/components";
-import { DashboardPage } from "@multica/views/dashboard";
-import { AutopilotsPage } from "@multica/views/autopilots/components";
-import { MyIssuesPage } from "@multica/views/my-issues";
-import { SkillsPage } from "@multica/views/skills";
-import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
-import { DesktopAgentsPage } from "./components/desktop-agents-page";
-import {
-  AiCreateAgentPage,
-  ChooseCreateMethodPage,
-  ManualCreateAgentPage,
-} from "@multica/views/agents";
-import { SquadsPage, SquadDetailPage as SquadDetailPageView } from "@multica/views/squads/components";
-import { InboxPage } from "@multica/views/inbox";
-import { ChatPage } from "@multica/views/chat";
-import { SettingsPage } from "@multica/views/settings";
-import { useT } from "@multica/views/i18n";
-import { Download, Server } from "lucide-react";
-import { DaemonSettingsTab } from "./components/daemon-settings-tab";
-import { UpdatesSettingsTab } from "./components/updates-settings-tab";
 import { WorkspaceRouteLayout } from "./components/workspace-route-layout";
 import { DesktopRouteErrorPage } from "./components/route-error-page";
+import { loadPage } from "./platform/lazy-page";
 
-/**
- * Wraps `SettingsPage` so the desktop-only extra tabs can pull their labels
- * from i18n. The route element has to be a component (not a literal JSX
- * value) for `useT` to run.
- */
-function DesktopSettingsRoute() {
-  const { t } = useT("settings");
-  return (
-    <SettingsPage
-      extraDeviceTabs={[
-        {
-          value: "daemon",
-          label: t(($) => $.desktop.daemon.title),
-          icon: Server,
-          content: <DaemonSettingsTab />,
-        },
-        {
-          value: "updates",
-          label: t(($) => $.desktop.tabs.updates),
-          icon: Download,
-          content: <UpdatesSettingsTab />,
-        },
-      ]}
-    />
-  );
-}
+const IssueDetailPage = lazy(() =>
+  loadPage(import("./pages/issue-detail-page").then((m) => ({ default: m.IssueDetailPage }))),
+);
+const ProjectDetailPage = lazy(() =>
+  loadPage(import("./pages/project-detail-page").then((m) => ({ default: m.ProjectDetailPage }))),
+);
+const AutopilotDetailPage = lazy(() =>
+  loadPage(import("./pages/autopilot-detail-page").then((m) => ({ default: m.AutopilotDetailPage }))),
+);
+const SkillDetailPage = lazy(() =>
+  loadPage(import("./pages/skill-detail-page").then((m) => ({ default: m.SkillDetailPage }))),
+);
+const AgentDetailPage = lazy(() =>
+  loadPage(import("./pages/agent-detail-page").then((m) => ({ default: m.AgentDetailPage }))),
+);
+const AiBuilderSessionPage = lazy(() =>
+  loadPage(import("./pages/ai-builder-session-page").then((m) => ({ default: m.AiBuilderSessionPage }))),
+);
+const MemberDetailPage = lazy(() =>
+  loadPage(import("./pages/member-detail-page").then((m) => ({ default: m.MemberDetailPage }))),
+);
+const RuntimeDetailPage = lazy(() =>
+  loadPage(import("./pages/runtime-detail-page").then((m) => ({ default: m.RuntimeDetailPage }))),
+);
+const RuntimeSettingsPage = lazy(() =>
+  loadPage(import("./pages/runtime-detail-page").then((m) => ({ default: m.RuntimeSettingsPage }))),
+);
+const AttachmentPreviewRoute = lazy(() =>
+  loadPage(import("./pages/attachment-preview-page").then((m) => ({ default: m.AttachmentPreviewRoute }))),
+);
+const IssuesPage = lazy(() =>
+  loadPage(import("@multica/views/issues/components").then((m) => ({ default: m.IssuesPage }))),
+);
+const ProjectsPage = lazy(() =>
+  loadPage(import("@multica/views/projects/components").then((m) => ({ default: m.ProjectsPage }))),
+);
+const DashboardPage = lazy(() =>
+  loadPage(import("@multica/views/dashboard").then((m) => ({ default: m.DashboardPage }))),
+);
+const AutopilotsPage = lazy(() =>
+  loadPage(import("@multica/views/autopilots/components").then((m) => ({ default: m.AutopilotsPage }))),
+);
+const MyIssuesPage = lazy(() =>
+  loadPage(import("@multica/views/my-issues").then((m) => ({ default: m.MyIssuesPage }))),
+);
+const SkillsPage = lazy(() =>
+  loadPage(import("@multica/views/skills").then((m) => ({ default: m.SkillsPage }))),
+);
+const DesktopRuntimesPage = lazy(() =>
+  loadPage(import("./components/desktop-runtimes-page").then((m) => ({ default: m.DesktopRuntimesPage }))),
+);
+const DesktopAgentsPage = lazy(() =>
+  loadPage(import("./components/desktop-agents-page").then((m) => ({ default: m.DesktopAgentsPage }))),
+);
+const ChooseCreateMethodPage = lazy(() =>
+  loadPage(import("@multica/views/agents/choose-create-method-page").then((m) => ({ default: m.ChooseCreateMethodPage }))),
+);
+const ManualCreateAgentPage = lazy(() =>
+  loadPage(import("@multica/views/agents/manual-create-agent-page").then((m) => ({ default: m.ManualCreateAgentPage }))),
+);
+const AiCreateAgentPage = lazy(() =>
+  loadPage(import("@multica/views/agents/ai-create-agent-page").then((m) => ({ default: m.AiCreateAgentPage }))),
+);
+const SquadsPage = lazy(() =>
+  loadPage(import("@multica/views/squads/components").then((m) => ({ default: m.SquadsPage }))),
+);
+const SquadDetailPageView = lazy(() =>
+  loadPage(import("@multica/views/squads/components").then((m) => ({ default: m.SquadDetailPage }))),
+);
+const InboxPage = lazy(() =>
+  loadPage(import("@multica/views/inbox").then((m) => ({ default: m.InboxPage }))),
+);
+const ChatPage = lazy(() =>
+  loadPage(import("@multica/views/chat").then((m) => ({ default: m.ChatPage }))),
+);
+const DesktopSettingsRoute = lazy(() =>
+  loadPage(import("./pages/settings-page").then((m) => ({ default: m.DesktopSettingsRoute }))),
+);
 
 /**
  * Sets document.title from the deepest matched route's handle.title.
@@ -237,7 +257,12 @@ export const appRoutes: RouteObject[] = [
             element: <DesktopSettingsRoute />,
             handle: { title: "Settings" },
           },
-        ],
+        ].map((route) => ({
+          ...route,
+          // Keep failed leaves inside the workspace owner. Bubbling to the
+          // root unmounts it and lets the shell's workspace gate hide recovery.
+          errorElement: <DesktopRouteErrorPage />,
+        })),
       },
     ],
   },

@@ -157,4 +157,81 @@ describe("tab-coordinator external scroll sources", () => {
     });
     registerActiveHostElement(null);
   });
+
+  it.each(["navigate", "tab", "workspace", "reload"])(
+    "preserves a cold page's scroll and view mementos on %s",
+    (action) => {
+      const tabId = seedActiveTab("/acme/inbox", "Inbox");
+      useTabStore.getState().commitScrollMemento(tabId, "/acme/inbox", {
+        main: { top: 640, height: 3000 },
+      });
+      useTabStore.getState().commitViewState(tabId, "/acme/inbox", "selected", "issue-1");
+      const host = document.createElement("div");
+      const fallback = document.createElement("div");
+      fallback.setAttribute("data-route-pending", "");
+      host.appendChild(fallback);
+      registerActiveHostElement(host);
+
+      if (action === "navigate") useTabStore.getState().navigateActiveSession("/acme/issues");
+      if (action === "tab") seedActiveTab("/acme/issues", "Issues");
+      if (action === "workspace") useTabStore.getState().switchWorkspace("other");
+      if (action === "reload") useTabStore.getState().reloadActiveTab();
+
+      const tab = useTabStore.getState().byWorkspace.acme.tabs.find((t) => t.id === tabId)!;
+      expect(tab.memento.scroll["/acme/inbox::main"]).toEqual({ top: 640, height: 3000 });
+      expect(tab.memento.view["/acme/inbox::selected"]).toBe("issue-1");
+    },
+  );
+
+  it("clears a stale positive offset after the loaded page really scrolled to zero", () => {
+    const tabId = seedActiveTab("/acme/inbox", "Inbox");
+    useTabStore.getState().commitScrollMemento(tabId, "/acme/inbox", {
+      main: { top: 640, height: 3000 },
+    });
+    const host = document.createElement("div");
+    const page = document.createElement("div");
+    page.setAttribute("data-tab-scroll-root", "main");
+    host.appendChild(page);
+    registerActiveHostElement(host);
+    seedActiveTab("/acme/issues", "Issues");
+    const tab = useTabStore.getState().byWorkspace.acme.tabs.find((t) => t.id === tabId)!;
+    expect(tab.memento.scroll["/acme/inbox::main"]).toBeUndefined();
+  });
+
+  it("preserves saved scroll while a failed import shows recovery instead of the page", () => {
+    const tabId = seedActiveTab("/acme/inbox", "Inbox");
+    useTabStore.getState().commitScrollMemento(tabId, "/acme/inbox", {
+      main: { top: 640, height: 3000 },
+    });
+    const host = document.createElement("div");
+    const error = document.createElement("div");
+    error.setAttribute("data-route-load-error", "");
+    host.appendChild(error);
+    registerActiveHostElement(host);
+    seedActiveTab("/acme/issues", "Issues");
+    const tab = useTabStore.getState().byWorkspace.acme.tabs.find((t) => t.id === tabId)!;
+    expect(tab.memento.scroll["/acme/inbox::main"]?.top).toBe(640);
+  });
+
+  it("does not capture the previous page's DOM during a rapid A to B to C navigation", () => {
+    const tabId = seedActiveTab("/acme/issues", "Issues");
+    useTabStore.getState().commitScrollMemento(tabId, "/acme/inbox", {
+      main: { top: 640, height: 3000 },
+    });
+    const host = document.createElement("div");
+    const page = document.createElement("div");
+    page.setAttribute("data-route-pathname", "/acme/issues");
+    const list = document.createElement("div");
+    list.setAttribute("data-tab-scroll-root", "main");
+    list.scrollTop = 250;
+    page.appendChild(list);
+    host.appendChild(page);
+    registerActiveHostElement(host);
+    useTabStore.getState().navigateActiveSession("/acme/inbox");
+    // React has not committed B's fallback yet; the DOM still belongs to A.
+    useTabStore.getState().navigateActiveSession("/acme/projects");
+    const tab = getActiveTab(useTabStore.getState())!;
+    expect(tab.memento.scroll["/acme/issues::main"]?.top).toBe(250);
+    expect(tab.memento.scroll["/acme/inbox::main"]?.top).toBe(640);
+  });
 });

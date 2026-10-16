@@ -245,8 +245,18 @@ function handleStoreChange(): void {
     lastIdentity = identity;
     lastActiveTabId = active?.id ?? null;
     lastActiveUrl = activeUrl;
-    if (outgoingTabId && outgoingUrl) {
-      const routeKey = splitTabUrl(outgoingUrl).pathname;
+    // The fallback has no page scroll roots yet. Preserve the saved memento
+    // until the real page mounts, including across tab/workspace switches.
+    const pageUnavailable = activeHostElement?.querySelector(
+      "[data-route-pending], [data-route-load-error]",
+    );
+    const routeKey = outgoingUrl ? splitTabUrl(outgoingUrl).pathname : null;
+    // Store notifications can outrun React commits. Never attribute the old
+    // page's still-mounted DOM to a destination that has not rendered yet.
+    const mountedPath = activeHostElement
+      ?.querySelector("[data-route-pathname]")
+      ?.getAttribute("data-route-pathname");
+    if (outgoingTabId && routeKey && !pageUnavailable && (!mountedPath || mountedPath === routeKey)) {
       // Always commit — REPLACE semantics clear entries for containers that
       // scrolled back to 0; the store skips the write when nothing changed.
       useTabStore
