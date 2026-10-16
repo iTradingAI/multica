@@ -136,6 +136,11 @@ vi.mock("../../navigation", () => ({
   NavigationProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
+// Budget behavior is covered with real Tiptap in bounded-content-editor.test.tsx.
+vi.mock("../../editor/bounded-content-editor", async () => ({
+  BoundedContentEditor: (await import("../../editor")).ContentEditor,
+}));
+
 // Mock editor components (Tiptap requires real DOM)
 vi.mock("../../editor", async () => ({
   // Real lazy-mount controller (pure React, no Tiptap) so readonly-first
