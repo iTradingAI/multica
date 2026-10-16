@@ -843,6 +843,8 @@
     "patch_body_truncated": "... (corps tronqué)",
     "display_clipped": "... (trop long pour tout afficher — seul le début est affiché)",
     "output_truncated_note": "La sortie était trop longue : seul le début a été conservé.",
+    "output_preview_clipped": "Sortie volumineuse : seul un aperçu est affiché. Téléchargez le relevé original pour consulter tout le contenu enregistré.",
+    "download_output_record": "Télécharger le relevé original",
     "patch_no_content": "(aucun contenu communiqué)",
     "patch_summary_more": "{{path}} +{{extra}} de plus",
     "status_queued": "En file d'attente",

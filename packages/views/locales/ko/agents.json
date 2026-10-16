@@ -734,6 +734,8 @@
     "patch_body_truncated": "...(본문 잘림)",
     "display_clipped": "...(내용이 길어 앞부분만 표시합니다)",
     "output_truncated_note": "출력이 너무 길어 앞부분만 저장되어 있습니다.",
+    "output_preview_clipped": "출력이 길어 미리보기만 표시합니다. 저장된 전체 내용은 원본 기록을 다운로드하여 확인할 수 있습니다.",
+    "download_output_record": "원본 기록 다운로드",
     "patch_no_content": "(기록된 내용 없음)",
     "patch_summary_more": "{{path}} 외 {{extra}}개",
     "status_queued": "대기열",

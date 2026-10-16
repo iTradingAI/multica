@@ -1,5 +1,6 @@
 import type { TaskMessagePayload } from "@multica/core/types/events";
 import { redactSecrets } from "./redact";
+import { boundToolOutput } from "./tool-output-preview";
 
 /** A unified timeline entry: tool calls, thinking, text, and errors in chronological order. */
 export interface TimelineItem {
@@ -11,6 +12,10 @@ export interface TimelineItem {
   content?: string;
   input?: Record<string, unknown>;
   output?: string;
+  /** Source record for explicit downloads/copies only; never render this field. */
+  originalOutput?: string;
+  /** Client preview clipping is independent of source-side data loss. */
+  outputPreviewClipped?: boolean;
   /**
    * Whether the stored `output` dropped bytes at the source (`tool_result`
    * only). `undefined` means unknown — the record predates the flag or came
@@ -50,11 +55,18 @@ export function appendTimelineItem(items: TimelineItem[], item: TimelineItem): T
 }
 
 function redactTimelineItems(items: TimelineItem[]): TimelineItem[] {
-  return items.map((item) => ({
-    ...item,
-    content: item.content ? redactSecrets(item.content) : item.content,
-    output: item.output ? redactSecrets(item.output) : item.output,
-  }));
+  return items.map((item) => {
+    const preview = item.type === "tool_result" && item.output ? boundToolOutput(item.output) : undefined;
+    // Preserve the transport representation so all existing consumers still
+    // decode exactly once. Never write this projection to the API/query cache.
+    const output = preview?.clipped ? JSON.stringify(preview.text) : item.output;
+    return {
+      ...item,
+      content: item.content ? redactSecrets(item.content) : item.content,
+      output: output ? redactSecrets(output) : output,
+      ...(preview ? { originalOutput: item.output, outputPreviewClipped: preview.clipped } : {}),
+    };
+  });
 }
 
 /**
