@@ -843,6 +843,8 @@
     "patch_body_truncated": "... (body truncated)",
     "display_clipped": "... (too long to show in full — only the start is displayed)",
     "output_truncated_note": "Output was too long — only the beginning was kept.",
+    "output_preview_clipped": "Large output: only a preview is shown. Download the original stored record for the full saved content.",
+    "download_output_record": "Download original record",
     "patch_no_content": "(no content reported)",
     "patch_summary_more": "{{path}} +{{extra}} more",
     "status_queued": "Queued",
