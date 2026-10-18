@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/testutil"
 )
 
@@ -92,6 +95,129 @@ func TestBuildDaemonWebSocketIdentityFailsClosedForMissingRuntime(t *testing.T) 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404: %s", w.Code, w.Body.String())
 	}
+}
+
+// TestBuildDaemonWebSocketIdentityCapturesDaemonAuthPath ensures the WebSocket
+// identity preserves the credential kind that DaemonAuth actually accepted.
+func TestBuildDaemonWebSocketIdentityCapturesDaemonAuthPath(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	const daemonID = "ws-auth-path-daemon"
+	runtimeID := dbfx.Runtime(t, "WS auth path runtime", testutil.Cols{
+		"daemon_id": daemonID,
+	})
+	rawDaemonToken := "mdt_ws_auth_path_" + uuid.NewString()
+	dbfx.Insert(t, "daemon_token", testutil.Cols{
+		"token_hash":   auth.HashToken(rawDaemonToken),
+		"workspace_id": testWorkspaceID,
+		"daemon_id":    daemonID,
+		"expires_at":   testutil.Raw("now() + interval '1 hour'"),
+	})
+
+	for _, credential := range []struct {
+		name     string
+		token    string
+		userID   string
+		wantPath string
+	}{
+		{name: "daemon token", token: rawDaemonToken, wantPath: middleware.DaemonAuthPathDaemonToken},
+		{name: "PAT", token: mustInsertDaemonWebSocketPAT(t), userID: testUserID, wantPath: middleware.DaemonAuthPathPAT},
+	} {
+		t.Run(credential.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/daemon/ws", nil)
+			req.Header.Set("Authorization", "Bearer "+credential.token)
+			w := httptest.NewRecorder()
+			var identity daemonws.ClientIdentity
+			var ok bool
+			middleware.DaemonAuth(testHandler.Queries, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				identity, ok = testHandler.buildDaemonWebSocketIdentity(w, r, []string{runtimeID}, requestUserID(r))
+			})).ServeHTTP(w, req)
+			if w.Code != http.StatusOK || !ok {
+				t.Fatalf("build identity: status=%d body=%s", w.Code, w.Body.String())
+			}
+			if identity.AuthPath != credential.wantPath {
+				t.Fatalf("auth path = %q, want %q", identity.AuthPath, credential.wantPath)
+			}
+			if credential.userID != "" && identity.UserID != credential.userID {
+				t.Fatalf("identity user = %q, want %q", identity.UserID, credential.userID)
+			}
+		})
+	}
+}
+
+// TestBuildDaemonWebSocketIdentityRejectsDaemonTokenCrossWorkspaceRuntime
+// exercises a real mdt_ middleware path: a token for workspace A cannot
+// authorize a runtime in workspace B, even when both name the same machine.
+func TestBuildDaemonWebSocketIdentityRejectsDaemonTokenCrossWorkspaceRuntime(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	otherWorkspaceID := dbfx.Workspace(t, "WS token foreign workspace", "ws-token-foreign-"+uuid.NewString(), testutil.Cols{
+		"issue_prefix": "WTF",
+	})
+	const daemonID = "ws-token-cross-workspace-daemon"
+	foreignRuntimeID := dbfx.Runtime(t, "WS token foreign runtime", testutil.Cols{
+		"workspace_id": otherWorkspaceID,
+		"daemon_id":    daemonID,
+	})
+	rawDaemonToken := "mdt_ws_cross_workspace_" + uuid.NewString()
+	dbfx.Insert(t, "daemon_token", testutil.Cols{
+		"token_hash":   auth.HashToken(rawDaemonToken),
+		"workspace_id": testWorkspaceID,
+		"daemon_id":    daemonID,
+		"expires_at":   testutil.Raw("now() + interval '1 hour'"),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/daemon/ws", nil)
+	req.Header.Set("Authorization", "Bearer "+rawDaemonToken)
+	w := httptest.NewRecorder()
+	accepted := false
+	middleware.DaemonAuth(testHandler.Queries, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, accepted = testHandler.buildDaemonWebSocketIdentity(w, r, []string{foreignRuntimeID}, requestUserID(r))
+	})).ServeHTTP(w, req)
+	if accepted {
+		t.Fatal("daemon token accepted a cross-workspace runtime")
+	}
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestBuildDaemonWebSocketIdentityRejectsPATWorkspaceWithoutMembership keeps
+// account credentials bound to memberships rather than to their runtime owner.
+func TestBuildDaemonWebSocketIdentityRejectsPATWorkspaceWithoutMembership(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	otherWorkspaceID := dbfx.Workspace(t, "WS PAT foreign workspace", "ws-pat-foreign-"+uuid.NewString(), testutil.Cols{
+		"issue_prefix": "WPF",
+	})
+	foreignRuntimeID := dbfx.Runtime(t, "WS PAT foreign runtime", testutil.Cols{
+		"workspace_id": otherWorkspaceID,
+		"daemon_id":    "ws-pat-foreign-daemon",
+		"owner_id":     testUserID,
+	})
+	rawPAT := mustInsertDaemonWebSocketPAT(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/daemon/ws", nil)
+	req.Header.Set("Authorization", "Bearer "+rawPAT)
+	w := httptest.NewRecorder()
+	accepted := false
+	middleware.DaemonAuth(testHandler.Queries, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, accepted = testHandler.buildDaemonWebSocketIdentity(w, r, []string{foreignRuntimeID}, requestUserID(r))
+	})).ServeHTTP(w, req)
+	if accepted {
+		t.Fatal("PAT accepted a runtime in an unjoined workspace")
+	}
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", w.Code, w.Body.String())
+	}
+}
+
+func mustInsertDaemonWebSocketPAT(t *testing.T) string {
+	t.Helper()
+	rawPAT, _ := insertTestPAT(t, time.Now().Add(time.Hour))
+	return rawPAT
 }
 
 func TestBuildDaemonWebSocketIdentityBindsOnlyOwnedUnambiguousAccountRuntimes(t *testing.T) {

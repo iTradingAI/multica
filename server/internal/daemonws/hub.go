@@ -21,6 +21,9 @@ const (
 
 // ClientIdentity captures the already-authenticated daemon connection scope.
 type ClientIdentity struct {
+	// AuthPath preserves the authenticated credential kind independently of
+	// DaemonID, which can also be an enrolled account connection's machine.
+	AuthPath string
 	DaemonID string
 	UserID   string
 	// WorkspaceID is the legacy single-workspace scope used by older callers
