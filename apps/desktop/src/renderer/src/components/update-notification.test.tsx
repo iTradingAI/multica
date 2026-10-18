@@ -12,9 +12,15 @@ type UpdateDownloadedListener = (info: {
   version: string;
   releaseNotes?: string;
 }) => void;
+type UpdateAvailableListener = (info: {
+  version: string;
+  releaseNotes?: string;
+  manualInstall?: boolean;
+}) => void;
 
 describe("UpdateNotification", () => {
   let updateDownloaded: UpdateDownloadedListener;
+  let updateAvailable: UpdateAvailableListener;
 
   beforeEach(() => {
     mocks.installUpdate.mockReset().mockResolvedValue(undefined);
@@ -29,6 +35,10 @@ describe("UpdateNotification", () => {
       value: {
         onUpdateDownloaded: (listener: UpdateDownloadedListener) => {
           updateDownloaded = listener;
+          return vi.fn();
+        },
+        onUpdateAvailable: (listener: UpdateAvailableListener) => {
+          updateAvailable = listener;
           return vi.fn();
         },
         installUpdate: mocks.installUpdate,
@@ -55,5 +65,29 @@ describe("UpdateNotification", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restart now" }));
 
     expect(mocks.installUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("offers the macOS installer instead of a restart", () => {
+    render(<UpdateNotification />);
+    act(() => updateAvailable({ version: "0.4.27", manualInstall: true }));
+
+    expect(
+      screen.getByText("Download and install v0.4.27 to update Multica."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open download" }));
+
+    expect(mocks.installUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("shows an error if the update action cannot start", async () => {
+    mocks.installUpdate.mockRejectedValueOnce(new Error("blocked"));
+    render(<UpdateNotification />);
+    act(() => updateAvailable({ version: "0.4.27", manualInstall: true }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Open download" }));
+
+    expect(
+      await screen.findByText("Unable to open the update download."),
+    ).toBeInTheDocument();
   });
 });

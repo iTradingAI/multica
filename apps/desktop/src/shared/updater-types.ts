@@ -8,5 +8,6 @@ export type ManualUpdateCheckResult =
       currentVersion: string;
       latestVersion: string;
       available: boolean;
+      manualInstall?: boolean;
     }
   | { ok: false; error: string };

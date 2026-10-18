@@ -35,6 +35,7 @@ func (h *Handler) DaemonWebSocket(w http.ResponseWriter, r *http.Request) {
 // without re-reading agent_runtime every 15 seconds.
 func (h *Handler) buildDaemonWebSocketIdentity(w http.ResponseWriter, r *http.Request, runtimeIDs []string, userID string) (daemonws.ClientIdentity, bool) {
 	identity := daemonws.ClientIdentity{
+		AuthPath:      middleware.DaemonAuthPathFromContext(r.Context()),
 		DaemonID:      middleware.DaemonIDFromContext(r.Context()),
 		UserID:        userID,
 		RuntimeIDs:    runtimeIDs,
