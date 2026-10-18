@@ -108,6 +108,9 @@ jobs:
       - name: Verify Go test wrapper
         run: bash scripts/test-go.test.sh
 
+      - name: Run migrations
+        run: cd server && go run ./cmd/migrate up
+
       - name: Run tests
         run: bash scripts/test-go.sh --race
 
