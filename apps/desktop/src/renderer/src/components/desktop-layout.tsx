@@ -38,7 +38,7 @@ import { FloatingTerminal } from "./floating-terminal";
 import { WindowOverlay } from "./window-overlay";
 import { WindowToolbar, WINDOW_TOOLBAR_CLEARANCE } from "./window-toolbar";
 
-const TOP_BAR_HEIGHT_CLASS = "h-12";
+const TOP_BAR_HEIGHT_CLASS = "h-10";
 const toolbarMotion = {
   type: "spring",
   stiffness: 420,

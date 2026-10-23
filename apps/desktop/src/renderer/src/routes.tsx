@@ -206,7 +206,12 @@ export const appRoutes: RouteObject[] = [
           { path: "agents", element: <DesktopAgentsPage />, handle: { title: "Agents" } },
           {
             path: "agents/new",
-            element: <ChooseCreateMethodPage />,
+            element: <DesktopChooseRuntimePage />,
+            handle: { title: "Create Agent" },
+          },
+          {
+            path: "agents/new/done/:agentId",
+            element: <AgentCreatedPage />,
             handle: { title: "Create Agent" },
           },
           {

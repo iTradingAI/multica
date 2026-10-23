@@ -179,6 +179,7 @@ type AgentTaskQueue struct {
 	CancelledByName           pgtype.Text `json:"cancelled_by_name"`
 	IssueSnapshot             []byte      `json:"issue_snapshot"`
 	FileClaimSnapshot         []byte      `json:"-"`
+	WorkflowStep              pgtype.Text `json:"workflow_step"`
 }
 
 type AgentToLabel struct {
@@ -476,6 +477,25 @@ type ChannelTaskDelivery struct {
 	ChannelSenderID  pgtype.Text        `json:"channel_sender_id"`
 }
 
+type ChannelTypingReaction struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	ChatSessionID        pgtype.UUID        `json:"chat_session_id"`
+	ChatMessageID        pgtype.UUID        `json:"chat_message_id"`
+	InstallationID       pgtype.UUID        `json:"installation_id"`
+	ChannelMessageID     string             `json:"channel_message_id"`
+	InstallationSnapshot []byte             `json:"installation_snapshot"`
+	ReactionID           string             `json:"reaction_id"`
+	AddFinished          bool               `json:"add_finished"`
+	CleanupRequired      bool               `json:"cleanup_required"`
+	CleanedAt            pgtype.Timestamptz `json:"cleaned_at"`
+	RetryAfter           pgtype.Timestamptz `json:"retry_after"`
+	Attempts             int32              `json:"attempts"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	AbandonedAt          pgtype.Timestamptz `json:"abandoned_at"`
+	QuotaSlot            pgtype.Int4        `json:"quota_slot"`
+}
+
 type ChannelUserBinding struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
@@ -514,6 +534,7 @@ type ChatMessage struct {
 	ChannelOutboundInstallationID pgtype.UUID        `json:"channel_outbound_installation_id"`
 	ChannelOutboundChatID         pgtype.Text        `json:"channel_outbound_chat_id"`
 	ChannelOutboundMessageIds     []string           `json:"channel_outbound_message_ids"`
+	ChannelTypingSettled          bool               `json:"channel_typing_settled"`
 }
 
 type ChatPinnedAgent struct {
@@ -563,6 +584,21 @@ type ClientUsageDaily struct {
 	OfflineCount    pgtype.Int4        `json:"offline_count"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type CloudAgentConnection struct {
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	Provider         string             `json:"provider"`
+	OwnerID          pgtype.UUID        `json:"owner_id"`
+	TokenID          pgtype.UUID        `json:"token_id"`
+	ConfigEncrypted  string             `json:"config_encrypted"`
+	JournalEncrypted string             `json:"journal_encrypted"`
+	Enabled          bool               `json:"enabled"`
+	Revision         int64              `json:"revision"`
+	Status           string             `json:"status"`
+	LastError        string             `json:"last_error"`
+	BusyUntil        pgtype.Timestamptz `json:"busy_until"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Comment struct {
@@ -641,6 +677,7 @@ type DaemonToken struct {
 	DaemonID    string             `json:"daemon_id"`
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	OwnerID     pgtype.UUID        `json:"owner_id"`
 }
 
 type DingtalkBotIdentity struct {
@@ -1135,6 +1172,19 @@ type IssueWakeupReceipt struct {
 	CoalesceKey pgtype.Text        `json:"coalesce_key"`
 }
 
+type IssueWorkflow struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description"`
+	InitialStatusKey string             `json:"initial_status_key"`
+	Steps            []byte             `json:"steps"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	IsDefault        bool               `json:"is_default"`
+	OwnerID          pgtype.UUID        `json:"owner_id"`
+}
+
 type LarkBindingToken struct {
 	TokenHash      string             `json:"token_hash"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
@@ -1243,6 +1293,11 @@ type Member struct {
 	UserID      pgtype.UUID        `json:"user_id"`
 	Role        string             `json:"role"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type MemberDelegationDay struct {
+	UserID       pgtype.UUID `json:"user_id"`
+	ActivityDate pgtype.Date `json:"activity_date"`
 }
 
 type NotificationPreference struct {
@@ -1390,6 +1445,7 @@ type Project struct {
 	Priority    string             `json:"priority"`
 	StartDate   pgtype.Date        `json:"start_date"`
 	DueDate     pgtype.Date        `json:"due_date"`
+	WorkflowID  pgtype.UUID        `json:"workflow_id"`
 }
 
 type ProjectResource struct {

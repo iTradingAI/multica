@@ -110,6 +110,7 @@
   },
   "code_block": {
     "html_preview": "HTML プレビュー",
+    "close_preview": "閉じる",
     "copy_code": "コードをコピー",
     "show_preview": "プレビューを表示",
     "show_source": "ソースを表示",
@@ -168,5 +169,17 @@
   "large_document": {
     "notice": "説明が大きいため、読み取り専用プレビューを表示しています。連続する空行を省略し、一部のみ表示しています。全文の確認や編集には原文をダウンロードしてください。",
     "download": "元の Markdown をダウンロード"
+  "table": {
+    "reset_widths": "列幅をリセット",
+    "expand": "表を展開",
+    "copy_markdown": "Markdown としてコピー",
+    "copy_csv": "CSV としてコピー",
+    "copied": "コピーしました",
+    "resize_column": "「{{name}}」列の幅を変更",
+    "expanded_title": "表",
+    "filter_placeholder": "行を絞り込む",
+    "clear_filter": "絞り込みを解除",
+    "no_matches": "一致する行がありません",
+    "close": "閉じる"
   }
 }
