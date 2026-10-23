@@ -183,14 +183,9 @@ export function WorkspaceRouteLayout() {
           <Outlet />
         </Suspense>
       </div>
-      {/* Reads the welcome-store transient signal parked by
-       *  OnboardingFlow.handleRuntimeNext. Suppressed while a WindowOverlay
-       *  (onboarding / accept-invite / new-workspace) is open so the modal
-       *  doesn't portal-jump in front of an active pre-workspace flow.
-       *  Once the overlay closes the hook re-evaluates and pops the
-       *  Modal — unless the store signal has already been consumed, in
-       *  which case the hook renders null. */}
-      {!overlayActive && <WelcomeAfterOnboarding />}
+      {/* Upstream MUL-8047 replaced the post-onboarding welcome modal with
+       * opening the runtime guide issue directly; the fork component was
+       * retired with the merge. */}
       {/* Source-attribution backfill: same Dialog the web shell mounts
        *  inside DashboardLayout. Desktop's WorkspaceRouteLayout doesn't
        *  wrap DashboardLayout, so the modal has to be wired in directly
