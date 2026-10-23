@@ -1449,7 +1449,6 @@ export class ApiClient {
     return value;
   }
 
-  async createIssue(data: CreateIssueRequest): Promise<Issue> {
   async createIssue(
     data: CreateIssueRequest,
     workspaceSlug?: string,
