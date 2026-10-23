@@ -169,6 +169,7 @@
   "large_document": {
     "notice": "描述过大，已显示只读预览，连续空行已折叠且仅显示部分内容。下载原文可查看或编辑完整内容。",
     "download": "下载 Markdown 原文"
+  },
   "table": {
     "reset_widths": "重置列宽",
     "expand": "展开表格",

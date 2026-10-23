@@ -90,7 +90,9 @@ describe("IssueDetailRoute comment deep links", () => {
     render(route("#comment-adapter-comment", issueId));
     await waitFor(() => {
       expectHighlight("adapter-comment");
-      expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134#comment-adapter-comment");
+      // Downstream passes { preservePage: true } so the canonicalizing
+      // replace keeps the desktop tab's page state instead of remounting it.
+      expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134#comment-adapter-comment", { preservePage: true });
     });
     expect(push).not.toHaveBeenCalled();
   });

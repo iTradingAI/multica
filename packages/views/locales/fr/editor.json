@@ -173,6 +173,7 @@
   "large_document": {
     "notice": "Description volumineuse : aperçu en lecture seule. Les lignes vides sont regroupées et seul un extrait est affiché. Téléchargez l’original pour lire ou modifier le texte complet.",
     "download": "Télécharger le Markdown original"
+  },
   "table": {
     "reset_widths": "Réinitialiser les largeurs",
     "expand": "Agrandir le tableau",
