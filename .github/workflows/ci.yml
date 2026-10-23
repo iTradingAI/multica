@@ -82,7 +82,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: "~1.27.3"
           check-latest: true
           cache-dependency-path: server/go.sum
 
@@ -373,9 +373,9 @@ jobs:
         id: go
         uses: actions/setup-go@v5
         with:
-          # Deliberately independent from the minimum patch in server/go.mod:
-          # CI follows the newest 1.26 patch available to setup-go.
-          go-version: "1.26.x"
+          # Keep the security floor even when the setup-go manifest lags;
+          # continue accepting newer patches within Go 1.27.
+          go-version: "~1.27.3"
           check-latest: true
           cache: false
 
@@ -478,7 +478,7 @@ jobs:
         id: go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: "~1.27.3"
           check-latest: true
           cache: false
 
@@ -519,9 +519,9 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          # Deliberately independent from the minimum patch in server/go.mod:
-          # CI follows the newest 1.26 patch available to setup-go.
-          go-version: "1.26.x"
+          # Keep the security floor even when the setup-go manifest lags;
+          # continue accepting newer patches within Go 1.27.
+          go-version: "~1.27.3"
           check-latest: true
           cache-dependency-path: server/go.sum
 
@@ -564,9 +564,9 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          # Deliberately independent from the minimum patch in server/go.mod:
-          # CI follows the newest 1.26 patch available to setup-go.
-          go-version: "1.26.x"
+          # Keep the security floor even when the setup-go manifest lags;
+          # continue accepting newer patches within Go 1.27.
+          go-version: "~1.27.3"
           check-latest: true
           cache-dependency-path: server/go.sum
 
@@ -583,6 +583,13 @@ jobs:
         # platform-native Hermes home; otherwise discovery scans the runner's
         # real skills instead of the test directories.
         run: go test ./internal/daemon -v -run '^(TestListRuntimeLocalSkills_HermesFollowsTaskHome|TestLocalSkills_DiscoversACPProviderRoots)$' -count=1 -timeout=5m
+
+      - name: Test Windows Git Bash temp lifecycle
+        working-directory: server
+        run: |
+          $env:MULTICA_TEST_GIT_BASH = "$env:ProgramFiles\Git\usr\bin\bash.exe"
+          if (-not (Test-Path -LiteralPath $env:MULTICA_TEST_GIT_BASH)) { throw "Git for Windows is required" }
+          go test -tags=gitbashintegration ./internal/daemon -v -run '^(TestWindowsGitBashTaskTempLifecycle|TestTaskMulticaEnvironment.*|TestTaskTempBaseDir)$' -count=1 -timeout=5m
 
       - name: Test Windows agent launcher argv/stdin handling
         working-directory: server
@@ -828,7 +835,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: "~1.27.3"
+          check-latest: true
           cache-dependency-path: server/go.sum
       - name: Verify Cursor background lifecycle and watchdog races
         shell: bash
@@ -948,6 +956,9 @@ jobs:
 
       - name: Test self-host env derivation
         run: bash scripts/selfhost-config.test.sh
+
+      - name: Test check script
+        run: bash scripts/check.test.sh
 
       - name: Test worktree database cleanup
         run: bash scripts/worktree-db.test.sh

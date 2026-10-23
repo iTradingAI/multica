@@ -59,8 +59,11 @@ const DesktopRuntimesPage = lazy(() =>
 const DesktopAgentsPage = lazy(() =>
   loadPage(import("./components/desktop-agents-page").then((m) => ({ default: m.DesktopAgentsPage }))),
 );
-const ChooseCreateMethodPage = lazy(() =>
-  loadPage(import("@multica/views/agents/choose-create-method-page").then((m) => ({ default: m.ChooseCreateMethodPage }))),
+const DesktopChooseRuntimePage = lazy(() =>
+  loadPage(import("./components/desktop-choose-runtime-page").then((m) => ({ default: m.DesktopChooseRuntimePage }))),
+);
+const AgentCreatedPage = lazy(() =>
+  loadPage(import("./pages/agent-created-page").then((m) => ({ default: m.AgentCreatedPage }))),
 );
 const ManualCreateAgentPage = lazy(() =>
   loadPage(import("@multica/views/agents/manual-create-agent-page").then((m) => ({ default: m.ManualCreateAgentPage }))),
@@ -206,7 +209,12 @@ export const appRoutes: RouteObject[] = [
           { path: "agents", element: <DesktopAgentsPage />, handle: { title: "Agents" } },
           {
             path: "agents/new",
-            element: <ChooseCreateMethodPage />,
+            element: <DesktopChooseRuntimePage />,
+            handle: { title: "Create Agent" },
+          },
+          {
+            path: "agents/new/done/:agentId",
+            element: <AgentCreatedPage />,
             handle: { title: "Create Agent" },
           },
           {

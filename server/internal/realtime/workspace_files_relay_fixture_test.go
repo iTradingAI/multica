@@ -93,9 +93,25 @@ func (a *relayEvidenceAuth) ResolveToken(_ context.Context, token string) (strin
 	u, ok := a.tokens[token]
 	return u, ok
 }
-func (a *relayEvidenceAuth) IsMember(ctx context.Context, u, w string) bool {
+func (a *relayEvidenceAuth) IsMember(ctx context.Context, u, w string) (bool, error) {
 	var yes bool
-	return a.store.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM member WHERE user_id=$1::uuid AND workspace_id=$2::uuid)`, u, w).Scan(&yes) == nil && yes
+	err := a.store.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM member WHERE user_id=$1::uuid AND workspace_id=$2::uuid)`, u, w).Scan(&yes)
+	if err != nil {
+		return false, err
+	}
+	return yes, nil
+}
+
+func (a *relayEvidenceAuth) Members(ctx context.Context, identities []realtime.MembershipIdentity) (map[realtime.MembershipIdentity]bool, error) {
+	members := make(map[realtime.MembershipIdentity]bool, len(identities))
+	for _, id := range identities {
+		ok, err := a.IsMember(ctx, id.UserID, id.WorkspaceID)
+		if err != nil {
+			return nil, err
+		}
+		members[id] = ok
+	}
+	return members, nil
 }
 func (a *relayEvidenceAuth) AuthorizeWorkspaceFiles(ctx context.Context, u, w string, c protocol.WorkspaceFilesContext, r string) (realtime.WorkspaceFilesSnapshot, string) {
 	s, code := a.store.AuthorizeWorkspaceFiles(ctx, u, w, c, r)

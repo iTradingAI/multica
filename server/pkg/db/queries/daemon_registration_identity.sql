@@ -36,3 +36,22 @@ VALUES (@workspace_id, @daemon_id)
 ON CONFLICT (workspace_id, daemon_id) DO UPDATE
 SET daemon_id = daemon_registration_identity.daemon_id
 RETURNING *;
+
+-- name: ReleaseDaemonIdentityIfNoRuntimes :execrows
+-- Deleting the last provider row of a machine releases its registration
+-- identity so a replacement owner can enroll the daemon (MUL-8154 review).
+-- Moving a provider row without deleting it does not go through here: the
+-- canonical namespace stays with its enrollee.
+DELETE FROM daemon_registration_identity AS identity
+WHERE identity.workspace_id = $1
+  AND identity.daemon_id = $2
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_runtime AS runtime
+      WHERE runtime.workspace_id = $1 AND runtime.daemon_id = $2
+  );
+
+-- name: CountDaemonRegistrationIdentity :one
+-- Reports whether a machine namespace has a registration identity row at
+-- all (ownerless reservations included), for credential scoping decisions.
+SELECT count(*) FROM daemon_registration_identity
+WHERE workspace_id = $1 AND daemon_id = $2;

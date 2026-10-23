@@ -79,6 +79,10 @@ func (h *Handler) rpcClaimTasks(ctx context.Context, identity daemonws.ClientIde
 	// even when the connection is bound to a server-enrolled machine.
 	if identity.AuthPath == middleware.DaemonAuthPathDaemonToken {
 		reqCtx = middleware.WithDaemonContext(reqCtx, identity.PrimaryWorkspaceID(), identity.DaemonID)
+		// Carry the connection's credential so per-call revocation checks
+		// (Qoder) validate the real token instead of an empty header.
+		reqCtx = middleware.WithDaemonTokenHash(reqCtx, identity.DaemonTokenHash)
+		reqCtx = middleware.WithDaemonTokenOwnerID(reqCtx, identity.DaemonTokenOwnerID)
 	}
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, "/api/daemon/tasks/claim", bytes.NewReader(body))
 	if err != nil {

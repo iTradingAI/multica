@@ -65,7 +65,7 @@ func filesNativeDB(t *testing.T) *filesDBFixture {
 	if _, err = pool.Exec(ctx, ddl); err != nil {
 		t.Fatal(err)
 	}
-	guard, err := os.ReadFile("../../migrations/567_project_resource_binding_generation.up.sql")
+	guard, err := os.ReadFile("../../migrations/595_project_resource_binding_generation.up.sql")
 	if err != nil {
 		t.Fatal("read binding guard fixture", err)
 	}

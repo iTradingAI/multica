@@ -36,7 +36,6 @@ vi.mock("@multica/core/workspace", () => ({
   }),
 }));
 vi.mock("@multica/views/workspace/use-workspace-seen", () => ({ useWorkspaceSeen: () => true }));
-vi.mock("@multica/views/workspace/welcome-after-onboarding", () => ({ WelcomeAfterOnboarding: () => null }));
 vi.mock("@multica/views/layout", () => ({ WorkspacePresencePrefetch: () => null }));
 vi.mock("@multica/views/onboarding", () => ({ SourceBackfillModal: () => null }));
 vi.mock("@multica/views/issues/components", () => ({ IssuesPage: () => <div>Issues fixture</div> }));

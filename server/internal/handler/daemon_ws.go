@@ -1,12 +1,15 @@
 package handler
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
 
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func (h *Handler) DaemonWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -35,13 +38,15 @@ func (h *Handler) DaemonWebSocket(w http.ResponseWriter, r *http.Request) {
 // without re-reading agent_runtime every 15 seconds.
 func (h *Handler) buildDaemonWebSocketIdentity(w http.ResponseWriter, r *http.Request, runtimeIDs []string, userID string) (daemonws.ClientIdentity, bool) {
 	identity := daemonws.ClientIdentity{
-		AuthPath:      middleware.DaemonAuthPathFromContext(r.Context()),
-		DaemonID:      middleware.DaemonIDFromContext(r.Context()),
-		UserID:        userID,
-		RuntimeIDs:    runtimeIDs,
-		RuntimeLeases: make(map[string]*daemonws.RuntimeLease, len(runtimeIDs)),
-		ClientVersion: r.Header.Get("X-Client-Version"),
-		Capabilities:  r.Header.Get("X-Client-Capabilities"),
+		AuthPath:           middleware.DaemonAuthPathFromContext(r.Context()),
+		DaemonID:           middleware.DaemonIDFromContext(r.Context()),
+		DaemonTokenHash:    daemonTokenHashForRequest(r),
+		DaemonTokenOwnerID: middleware.DaemonTokenOwnerIDFromContext(r.Context()),
+		UserID:             userID,
+		RuntimeIDs:         runtimeIDs,
+		RuntimeLeases:      make(map[string]*daemonws.RuntimeLease, len(runtimeIDs)),
+		ClientVersion:      r.Header.Get("X-Client-Version"),
+		Capabilities:       r.Header.Get("X-Client-Capabilities"),
 	}
 	if len(runtimeIDs) == 0 {
 		return identity, true
@@ -76,14 +81,40 @@ func (h *Handler) buildDaemonWebSocketIdentity(w http.ResponseWriter, r *http.Re
 			return daemonws.ClientIdentity{}, false
 		}
 		rt := rows[index]
-		if identity.DaemonID != "" && rt.DaemonID.Valid && rt.DaemonID.String != identity.DaemonID {
-			writeError(w, http.StatusNotFound, "runtime not found")
-			return daemonws.ClientIdentity{}, false
+		// Daemon-token connections prove the scoped machine identity: the
+		// token's daemon_id must cover every runtime. An owner-bound token
+		// additionally must not act on a runtime owned by someone else
+		// (MUL-8154); an ownerless legacy token stays machine-scoped only.
+		if identity.DaemonID != "" {
+			if !rt.DaemonID.Valid || strings.TrimSpace(rt.DaemonID.String) == "" || rt.DaemonID.String != identity.DaemonID {
+				writeError(w, http.StatusNotFound, "runtime not found")
+				return daemonws.ClientIdentity{}, false
+			}
+			if tokenOwner := middleware.DaemonTokenOwnerIDFromContext(r.Context()); tokenOwner != "" &&
+				rt.OwnerID.Valid && uuidToString(rt.OwnerID) != tokenOwner {
+				writeError(w, http.StatusNotFound, "runtime not found")
+				return daemonws.ClientIdentity{}, false
+			}
 		}
 		workspaceID := uuidToString(rt.WorkspaceID)
 		if !h.requireDaemonWorkspaceAccess(w, r, workspaceID) {
 			return daemonws.ClientIdentity{}, false
 		}
+		if identity.DaemonID == "" {
+			// Account credential. The runtime owner or any member of an
+			// enrolled machine may connect; an unenrolled runtime owned by
+			// someone else is not reachable (MUL-8154 ownership rules).
+			ownedByUser := rt.OwnerID.Valid && uuidToString(rt.OwnerID) == userID
+			if !ownedByUser && userID != "" &&
+				(!rt.DaemonID.Valid || strings.TrimSpace(rt.DaemonID.String) == "" ||
+					h.daemonIdentityExists(workspaceID, rt.DaemonID.String) == 0) {
+				writeError(w, http.StatusNotFound, "runtime not found")
+				return daemonws.ClientIdentity{}, false
+			}
+		}
+		// Account credentials identify the registration principal. A provider row
+		// is not machine proof: bind only a server-enrolled machine owned by that
+		// principal, with a complete unambiguous authorized runtime set.
 		if canBindAccount {
 			if !rt.EnrolledOwnerID.Valid || uuidToString(rt.EnrolledOwnerID) != userID || !rt.OwnerID.Valid || uuidToString(rt.OwnerID) != userID || !rt.DaemonID.Valid || strings.TrimSpace(rt.DaemonID.String) == "" {
 				canBindAccount = false
@@ -119,6 +150,24 @@ func (h *Handler) buildDaemonWebSocketIdentity(w http.ResponseWriter, r *http.Re
 	return identity, true
 }
 
+// daemonTokenHashForRequest returns the hash of the mdt_ token behind a
+// daemon-token request: the one DaemonAuth recorded, or — for a request that
+// carries a daemon context without passing DaemonAuth — the Authorization
+// header's. Empty for user credentials.
+func daemonTokenHashForRequest(r *http.Request) string {
+	if middleware.DaemonWorkspaceIDFromContext(r.Context()) == "" {
+		return ""
+	}
+	if hash := middleware.DaemonTokenHashFromContext(r.Context()); hash != "" {
+		return hash
+	}
+	raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !strings.HasPrefix(raw, "mdt_") {
+		return ""
+	}
+	return auth.HashToken(raw)
+}
+
 func parseRuntimeIDs(r *http.Request) []string {
 	seen := map[string]struct{}{}
 	var out []string
@@ -142,4 +191,15 @@ func parseRuntimeIDs(r *http.Request) []string {
 		add(raw)
 	}
 	return out
+}
+
+// daemonIdentityExists reports whether the machine namespace has a
+// registration identity row (ownerless reservations count).
+func (h *Handler) daemonIdentityExists(workspaceID, daemonID string) int {
+	n, err := h.Queries.CountDaemonRegistrationIdentity(context.Background(),
+		db.CountDaemonRegistrationIdentityParams{WorkspaceID: parseUUID(workspaceID), DaemonID: daemonID})
+	if err != nil {
+		return 0
+	}
+	return int(n)
 }

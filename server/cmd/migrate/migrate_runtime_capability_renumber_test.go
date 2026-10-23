@@ -18,16 +18,16 @@ import (
 // upgrades must preserve historical records and safely apply the new identity.
 func TestRuntimeCapabilityRenumberPreservesAppliedFunction(t *testing.T) {
 	t.Parallel()
-	const version = "577_runtime_capability_merge"
+	const version = "605_runtime_capability_merge"
 	var completed atomic.Int32
 	// The shared DB helper may skip when a developer has no database. CI has
 	// PostgreSQL configured and must prove that every regression case ran.
 	t.Cleanup(func() {
-		if os.Getenv("CI") == "true" && completed.Load() != 5 {
-			t.Errorf("expected all 5 database cases to complete in CI, got %d", completed.Load())
+		if os.Getenv("CI") == "true" && completed.Load() != 6 {
+			t.Errorf("expected all 6 database cases to complete in CI, got %d", completed.Load())
 		}
 	})
-	for _, legacy := range []string{"", "548_runtime_capability_merge", "551_runtime_capability_merge", "564_runtime_capability_merge", "565_runtime_capability_merge"} {
+	for _, legacy := range []string{"", "548_runtime_capability_merge", "551_runtime_capability_merge", "564_runtime_capability_merge", "565_runtime_capability_merge", "577_runtime_capability_merge"} {
 		name := legacy
 		if name == "" {
 			name = "fresh"
