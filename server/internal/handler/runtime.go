@@ -1374,6 +1374,17 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete runtime")
 		return
 	}
+	// Fork: when this was the machine's last provider row, release the
+	// daemon registration identity so a replacement owner can enroll it.
+	if rt.DaemonID.Valid && strings.TrimSpace(rt.DaemonID.String) != "" {
+		if _, err := qtx.ReleaseDaemonIdentityIfNoRuntimes(r.Context(), db.ReleaseDaemonIdentityIfNoRuntimesParams{
+			WorkspaceID: rt.WorkspaceID,
+			DaemonID:    rt.DaemonID.String,
+		}); err != nil {
+			slog.Warn("release orphaned daemon identity failed",
+				"workspace_id", wsID, "daemon_id", rt.DaemonID.String, "error", err)
+		}
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete runtime")
 		return

@@ -118,17 +118,23 @@ func (h *Handler) requireDaemonWorkspaceAccess(w http.ResponseWriter, r *http.Re
 // non-writing sibling) — this does not re-check membership or workspace.
 func daemonRuntimeBindingAllowed(r *http.Request, daemonID pgtype.Text, ownerID pgtype.UUID) bool {
 	ctx := r.Context()
-	if middleware.DaemonWorkspaceIDFromContext(ctx) != "" {
+	if daemonWSID := middleware.DaemonWorkspaceIDFromContext(ctx); daemonWSID != "" {
 		tokenDaemonID := middleware.DaemonIDFromContext(ctx)
-		if tokenDaemonID == "" || !daemonID.Valid ||
-			strings.TrimSpace(daemonID.String) == "" || daemonID.String != tokenDaemonID {
-			return false
+		// A daemon context without a daemon id (WS connections whose
+		// credential is account-scoped) carries no machine proof: fall
+		// through to the user-credential ownership rule instead of
+		// refusing outright.
+		if tokenDaemonID != "" {
+			if !daemonID.Valid ||
+				strings.TrimSpace(daemonID.String) == "" || daemonID.String != tokenDaemonID {
+				return false
+			}
+			if isQoderManagedDaemonID(tokenDaemonID) {
+				return true
+			}
+			tokenOwnerID := middleware.DaemonTokenOwnerIDFromContext(ctx)
+			return tokenOwnerID != "" && ownerID.Valid && uuidToString(ownerID) == tokenOwnerID
 		}
-		if isQoderManagedDaemonID(tokenDaemonID) {
-			return true
-		}
-		tokenOwnerID := middleware.DaemonTokenOwnerIDFromContext(ctx)
-		return tokenOwnerID != "" && ownerID.Valid && uuidToString(ownerID) == tokenOwnerID
 	}
 	userID := requestUserID(r)
 	return userID != "" && ownerID.Valid && uuidToString(ownerID) == userID
@@ -601,7 +607,9 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	req.WorkspaceID = uuidToString(wsUUID)
 	if id := middleware.DaemonIDFromContext(r.Context()); id != "" && id != req.DaemonID {
-		writeError(w, http.StatusForbidden, "daemon identity mismatch")
+		// Fork: a daemon token that names another machine gets the same 404
+		// as an unknown daemon, so a leaked token cannot probe ids.
+		writeError(w, http.StatusNotFound, "daemon not found")
 		return
 	}
 	// Qoder-managed daemon tokens are exempt from the owner binding below,
@@ -730,11 +738,12 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	var afterCommit []func()
 
+	// Ownership pre-check: every row this daemon_id already holds in
+	// the workspace must belong to the caller — including ownerless
+	// rows, which ordinary registration must not silently claim. The
+	// upserts keep the same fence in SQL (required_owner_id) as
+	// defense in depth.
 	if ownerID.Valid {
-		// Ownership pre-check: every row this daemon_id already holds in
-		// the workspace must belong to the caller — including ownerless
-		// rows, which ordinary registration must not silently claim. The
-		// upserts keep the same fence in SQL (required_owner_id) as
 		// defense in depth.
 		existing, err := qtx.ListRuntimeOwnersByDaemon(r.Context(), db.ListRuntimeOwnersByDaemonParams{
 			WorkspaceID: wsUUID,
@@ -757,9 +766,11 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	// Fork: establish daemon registration identity (machine authority) inside
 	// the same transaction, before any provider upsert can change the apparent
-	// owner. Account-bound credentials enroll against the token's owner;
-	// Qoder-managed daemon ids keep the token (ownerless) enrollment.
-	if ownerID.Valid {
+	// owner. A daemon token — even an owner-recorded one — only proves the
+	// scoped machine, so it takes the token (ownerless) enrollment; account
+	// credentials enroll the account owner. Qoder-managed daemon ids keep the
+	// token enrollment as well.
+	if credentialDaemonID := middleware.DaemonIDFromContext(r.Context()); credentialDaemonID == "" && ownerID.Valid {
 		_, err = qtx.EnrollAccountDaemonIdentity(r.Context(), db.EnrollAccountDaemonIdentityParams{
 			WorkspaceID: wsUUID, DaemonID: req.DaemonID, OwnerID: ownerID,
 		})

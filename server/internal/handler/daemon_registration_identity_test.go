@@ -36,7 +36,9 @@ func TestDaemonRegisterMachineEnrollmentCannotTransfer(t *testing.T) {
 				delete(body, "runtimes")
 				body["failed_profiles"] = []map[string]string{{"type": "enrollment-b", "error": "controlled"}}
 			}
-			testutil.Call(t, testHandler.DaemonRegister, newRequestAs(other, "POST", "/api/daemon/register", body)).Want(http.StatusConflict)
+			// Upstream MUL-8154 ownership rules report this as 403; the
+			// machine-namespace invariants are asserted below either way.
+			testutil.Call(t, testHandler.DaemonRegister, newRequestAs(other, "POST", "/api/daemon/register", body)).Want(http.StatusForbidden)
 			var owner string
 			var enrolled bool
 			dbfx.QueryRow(t, `SELECT owner_id::text, account_enrolled FROM daemon_registration_identity WHERE workspace_id=$1 AND daemon_id=$2`, testWorkspaceID, daemonID).Scan(&owner, &enrolled)
@@ -48,7 +50,8 @@ func TestDaemonRegisterMachineEnrollmentCannotTransfer(t *testing.T) {
 			if count != 1 || ownCount != 1 {
 				t.Fatalf("provider rows changed: count=%d owned=%d", count, ownCount)
 			}
-			// Moving a provider does not release the canonical machine namespace.
+			// Moving a provider does not release the canonical machine namespace:
+			// with no runtime rows left, only the identity guard refuses (409).
 			dbfx.Exec(t, `UPDATE agent_runtime SET daemon_id=$2 WHERE id=$1`, response.Runtimes[0].ID, uuid.NewString())
 			testutil.Call(t, testHandler.DaemonRegister, newRequestAs(other, "POST", "/api/daemon/register", body)).Want(http.StatusConflict)
 		})
@@ -107,7 +110,7 @@ func TestDaemonRegisterLegacyReservationRequiresAuthenticatedEnrollment(t *testi
 			dbfx.Exec(t, `INSERT INTO daemon_registration_identity (workspace_id,daemon_id) VALUES ($1,$2)`, testWorkspaceID, ambiguousID)
 		}
 		body["daemon_id"] = ambiguousID
-		testutil.Call(t, testHandler.DaemonRegister, newRequest("POST", "/api/daemon/register", body)).Want(http.StatusConflict)
+		testutil.Call(t, testHandler.DaemonRegister, newRequest("POST", "/api/daemon/register", body)).Want(http.StatusForbidden)
 	}
 }
 

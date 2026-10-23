@@ -11,6 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countDaemonRegistrationIdentity = `-- name: CountDaemonRegistrationIdentity :one
+SELECT count(*) FROM daemon_registration_identity
+WHERE workspace_id = $1 AND daemon_id = $2
+`
+
+type CountDaemonRegistrationIdentityParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	DaemonID    string      `json:"daemon_id"`
+}
+
+// Reports whether a machine namespace has a registration identity row at
+// all (ownerless reservations included), for credential scoping decisions.
+func (q *Queries) CountDaemonRegistrationIdentity(ctx context.Context, arg CountDaemonRegistrationIdentityParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDaemonRegistrationIdentity, arg.WorkspaceID, arg.DaemonID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const enrollAccountDaemonIdentity = `-- name: EnrollAccountDaemonIdentity :one
 INSERT INTO daemon_registration_identity (workspace_id, daemon_id, owner_id, account_enrolled)
 SELECT $1::uuid, $2::text, $3::uuid, true
@@ -87,4 +106,31 @@ func (q *Queries) EnrollTokenDaemonIdentity(ctx context.Context, arg EnrollToken
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const releaseDaemonIdentityIfNoRuntimes = `-- name: ReleaseDaemonIdentityIfNoRuntimes :execrows
+DELETE FROM daemon_registration_identity AS identity
+WHERE identity.workspace_id = $1
+  AND identity.daemon_id = $2
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_runtime AS runtime
+      WHERE runtime.workspace_id = $1 AND runtime.daemon_id = $2
+  )
+`
+
+type ReleaseDaemonIdentityIfNoRuntimesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	DaemonID    string      `json:"daemon_id"`
+}
+
+// Deleting the last provider row of a machine releases its registration
+// identity so a replacement owner can enroll the daemon (MUL-8154 review).
+// Moving a provider row without deleting it does not go through here: the
+// canonical namespace stays with its enrollee.
+func (q *Queries) ReleaseDaemonIdentityIfNoRuntimes(ctx context.Context, arg ReleaseDaemonIdentityIfNoRuntimesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, releaseDaemonIdentityIfNoRuntimes, arg.WorkspaceID, arg.DaemonID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
