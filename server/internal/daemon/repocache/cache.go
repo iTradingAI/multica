@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon/processtree"
+	"github.com/multica-ai/multica/server/internal/util"
 )
 
 // gitEnv returns an environment for git subprocesses that contact remotes.
@@ -1127,23 +1128,15 @@ func removeLinkedWorktreeContext(ctx context.Context, barePath, checkoutPath str
 	return nil
 }
 
-// sameResolvedPath reports whether a and b denote the same location after
-// resolving to absolute, symlink-free, cleaned form. It is a path-equality
-// check (not a same-device check): the migration guard uses it to confirm a
-// linked worktree's git-common-dir really points at this cache bare repo
-// before removing the worktree.
+// sameResolvedPath proves both existing paths resolve to the same location.
+// Ownership guards must reject resolution errors, even for identical inputs.
 func sameResolvedPath(a, b string) bool {
-	clean := func(path string) string {
-		abs, err := filepath.Abs(path)
-		if err == nil {
-			path = abs
-		}
-		if resolved, err := filepath.EvalSymlinks(path); err == nil {
-			path = resolved
-		}
-		return filepath.Clean(path)
+	resolvedA, err := util.ResolveSymlinks(a)
+	if err != nil {
+		return false
 	}
-	return clean(a) == clean(b)
+	resolvedB, err := util.ResolveSymlinks(b)
+	return err == nil && resolvedA == resolvedB
 }
 
 // localCloneArgs builds the `git clone --local` invocation that seeds a fresh
