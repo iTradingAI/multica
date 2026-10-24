@@ -3748,7 +3748,7 @@ func (h *Handler) updateIssueAtomically(ctx context.Context, workspaceID pgtype.
 		// writes are last-write-wins; concurrent edits are recorded by the
 		// `description_updated` activity.
 		params.Description = pgtype.Text{
-			String: mergeIssueChannelMediaDescription(currentDescription, incomingDescription, descriptionBase, attachments),
+			String: util.NormalizeNewlines(mergeIssueChannelMediaDescription(currentDescription, incomingDescription, descriptionBase, attachments)),
 			Valid:  true,
 		}
 	}
