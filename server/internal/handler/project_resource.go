@@ -1042,10 +1042,11 @@ func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData,
 			ref = json.RawMessage("{}")
 		}
 		resources = append(resources, ProjectResourceData{
-			ID:           uuidToString(row.ID),
-			ResourceType: row.ResourceType,
-			ResourceRef:  ref,
-			Label:        label,
+			BindingGeneration: row.BindingGeneration,
+			ID:                uuidToString(row.ID),
+			ResourceType:      row.ResourceType,
+			ResourceRef:       ref,
+			Label:             label,
 		})
 		if row.ResourceType == "github_repo" {
 			var payload struct {

@@ -20,6 +20,14 @@ function message(seq: number, type: TaskMessagePayload["type"], content?: string
 }
 
 describe("task transcript timeline", () => {
+  it("bounds large tool output before preview redaction without rewriting the API message", () => {
+    const output = "line\r\n".repeat(200_000);
+    const source = Object.freeze({ ...message(1, "tool_result"), output });
+    const [item] = buildTimeline([source]);
+    expect(item!.output!.length).toBeLessThan(20_000);
+    expect(source.output).toBe(output);
+  });
+
   it("merges adjacent text and thinking fragments split by streaming flushes", () => {
     const items = buildTimeline([
       message(2, "text", "world"),

@@ -4,6 +4,7 @@ import { AlertTriangle, Compass, RotateCw, Send, X } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import type { DesktopRouteErrorFeedbackContext } from "@multica/core/feedback";
 import { useModalStore } from "@multica/core/modals";
+import { PageLoadError, reloadPageWindow } from "@/platform/lazy-page";
 import { useTabStore } from "@/stores/tab-store";
 
 export function createRouteErrorFeedbackContext({
@@ -115,10 +116,12 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
     [error],
   );
   const message = normalizeError(error).message;
+  const loadFailed = error instanceof PageLoadError;
 
   return (
     <div
       role="alert"
+      data-route-load-error={loadFailed ? "" : undefined}
       className="flex h-full min-h-[20rem] flex-col items-center justify-center gap-4 p-8 text-center"
     >
       <div className="rounded-full bg-destructive/10 p-3 text-destructive">
@@ -127,7 +130,9 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
       <div className="space-y-2">
         <h2 className="text-title font-semibold">Something went wrong in this tab</h2>
         <p className="max-w-lg text-body text-muted-foreground">
-          This tab could not load. Reload it, or send a report if the problem continues.
+          {loadFailed
+            ? "Reloading will reload the entire window, including all tabs."
+            : "This tab could not load. Reload it, or send a report if the problem continues."}
         </p>
         <p className="max-w-lg truncate text-caption text-muted-foreground">{message}</p>
       </div>
@@ -135,10 +140,10 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
         <Button
           type="button"
           variant="outline"
-          onClick={() => useTabStore.getState().reloadActiveTab()}
+          onClick={loadFailed ? reloadPageWindow : () => useTabStore.getState().reloadActiveTab()}
         >
           <RotateCw className="mr-2 h-4 w-4" aria-hidden="true" />
-          Reload tab
+          {loadFailed ? "Reload window" : "Reload tab"}
         </Button>
         {recoveryRoute ? (
           <Button

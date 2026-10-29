@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+// Invoked via Node; no hashbang because Vite SSR prepends imports in tests.
 // Wrapper around `electron-builder` that keeps the Desktop version in
 // lockstep with the CLI. Both are derived from `git describe --tags
 // --match 'v[0-9]*' --always --dirty` — the same source GoReleaser reads
@@ -350,9 +350,6 @@ export function builderArgsForTarget(
     builderArgs.push("-c.publish.channel=latest-arm64");
   }
   if (target.platform === "mac" && target.arch === "x64") {
-    // Scope the Electron 39 platform floor to the new Intel package so this
-    // change does not rewrite established Apple Silicon bundle metadata.
-    builderArgs.push("-c.mac.minimumSystemVersion=12.0.0");
     builderArgs.push("-c.publish.channel=latest-x64");
   }
   return builderArgs;

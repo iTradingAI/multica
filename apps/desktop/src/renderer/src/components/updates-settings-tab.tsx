@@ -10,7 +10,7 @@ type CheckState =
   | { status: "idle" }
   | { status: "checking" }
   | { status: "up-to-date" }
-  | { status: "available"; latestVersion: string }
+  | { status: "available"; latestVersion: string; manualInstall: boolean }
   | { status: "error"; message: string };
 
 export function UpdatesSettingsTab() {
@@ -20,6 +20,7 @@ export function UpdatesSettingsTab() {
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [savingPreference, setSavingPreference] = useState(false);
   const currentVersion = window.desktopAPI.appInfo.version;
+  const manualMacUpdates = window.desktopAPI.appInfo.os === "macos";
 
   useEffect(() => {
     let mounted = true;
@@ -68,9 +69,21 @@ export function UpdatesSettingsTab() {
     }
     setState(
       result.available
-        ? { status: "available", latestVersion: result.latestVersion }
+        ? {
+            status: "available",
+            latestVersion: result.latestVersion,
+            manualInstall: result.manualInstall === true,
+          }
         : { status: "up-to-date" },
     );
+  }, []);
+
+  const handleManualInstall = useCallback(async () => {
+    try {
+      await window.updater.installUpdate();
+    } catch {
+      setState({ status: "error", message: "Unable to open the update download." });
+    }
   }, []);
 
   return (
@@ -86,7 +99,11 @@ export function UpdatesSettingsTab() {
 
         <SettingsRow
           label={t(($) => $.desktop.updates.automatic_updates_title)}
-          description={t(($) => $.desktop.updates.automatic_updates_description)}
+          description={
+            manualMacUpdates
+              ? t(($) => $.desktop.updates.automatic_updates_description_macos)
+              : t(($) => $.desktop.updates.automatic_updates_description)
+          }
         >
           <Switch
             checked={automaticUpdates}
@@ -101,7 +118,11 @@ export function UpdatesSettingsTab() {
           align="start"
           description={
             <>
-              <p>{t(($) => $.desktop.updates.check_section_description)}</p>
+              <p>
+                {manualMacUpdates
+                  ? t(($) => $.desktop.updates.check_section_description_macos)
+                  : t(($) => $.desktop.updates.check_section_description)}
+              </p>
               {state.status === "up-to-date" && (
                 <p className="mt-2 inline-flex items-center gap-1.5">
                   <Check className="size-3.5 text-success" />
@@ -109,12 +130,23 @@ export function UpdatesSettingsTab() {
                 </p>
               )}
               {state.status === "available" && (
-                <p className="mt-2 inline-flex items-center gap-1.5">
-                  <ArrowDownToLine className="size-3.5 text-primary" />
-                  {t(($) => $.desktop.updates.downloading, {
-                    version: state.latestVersion,
-                  })}
-                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <p className="inline-flex items-center gap-1.5">
+                    <ArrowDownToLine className="size-3.5 text-primary" />
+                    {state.manualInstall
+                      ? t(($) => $.desktop.updates.manual_download, {
+                          version: state.latestVersion,
+                        })
+                      : t(($) => $.desktop.updates.downloading, {
+                          version: state.latestVersion,
+                        })}
+                  </p>
+                  {state.manualInstall && (
+                    <Button variant="outline" size="sm" onClick={handleManualInstall}>
+                      {t(($) => $.desktop.updates.open_download)}
+                    </Button>
+                  )}
+                </div>
               )}
               {state.status === "error" && (
                 <p className="mt-2 inline-flex items-center gap-1.5 text-destructive">

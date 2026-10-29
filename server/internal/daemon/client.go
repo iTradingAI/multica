@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/filetouch"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
 
@@ -227,7 +229,7 @@ func daemonCommonCapabilities() []string {
 		caps = append(caps, protocol.DaemonCapabilityTerminalV1)
 	}
 	if workspaceFilesCapabilityEnabled {
-		caps = append(caps, protocol.DaemonCapabilityWorkspaceFilesV1)
+		caps = append(caps, protocol.DaemonCapabilityWorkspaceFilesV1, protocol.DaemonCapabilityWorkspaceFilesV2)
 	}
 	return caps
 }
@@ -286,7 +288,7 @@ func (c *Client) ResolveRemoteMCPCredential(ctx context.Context, daemonToken, ta
 // starvation; a claim that commits server-side after the client gives up is
 // recovered by ReclaimStaleDispatchedTasksForRuntimes on the next poll. Kept
 // comfortably above p99 claim latency so recovery stays the exception.
-const batchClaimRequestTimeout = 5 * time.Second
+const batchClaimRequestTimeout = protocol.DaemonBatchClaimRequestTimeout
 
 // claimTasksResult carries optional scheduling metadata understood only by
 // daemons advertising claim-poll-hints-v1. A zero-value result is deliberately
@@ -570,6 +572,10 @@ type TaskCancelAck struct {
 	// swallow it entirely.
 	ErrorMessage  string
 	FailureReason string
+	// RetiredSessionID: a resumed session this run produced no output on
+	// before the cancel landed, or one a fresh-session retry abandoned. The
+	// server retires it so later triggers start fresh (MUL-8188).
+	RetiredSessionID string
 }
 
 // AckTaskCancelled tells the server this daemon observed the task's
@@ -596,6 +602,9 @@ func (c *Client) AckTaskCancelled(ctx context.Context, taskID string, ack TaskCa
 	if ack.FailureReason != "" {
 		body["failure_reason"] = ack.FailureReason
 	}
+	if ack.RetiredSessionID != "" {
+		body["retired_session_id"] = ack.RetiredSessionID
+	}
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/cancel-ack", taskID), body, nil, defaultTerminalRetrySchedule)
 }
 
@@ -609,6 +618,9 @@ func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, ste
 
 // TaskMessageData represents a single agent execution message for batch reporting.
 type TaskMessageData struct {
+	FileExecutionID string               `json:"file_execution_id,omitempty"`
+	PathIntegrity   *filetouch.Integrity `json:"path_integrity,omitempty"`
+	SourceEventID   string               `json:"source_event_id,omitempty"`
 	// CallID is an opaque tool-call identity scoped to one backend execution.
 	CallID  string         `json:"call_id,omitempty"`
 	Seq     int            `json:"seq"`
@@ -631,6 +643,40 @@ func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), map[string]any{
 		"messages": messages,
 	}, nil)
+}
+
+func (c *Client) RegisterTaskFileExecution(ctx context.Context, taskID, credential string, evidence filetouch.Execution) error {
+	path := fmt.Sprintf("/api/daemon/tasks/%s/file-executions", taskID)
+	if credential == "" {
+		// Existing machine MDT configurations still work; a PAT cannot prove
+		// machine identity and is rejected by the unchanged server guard.
+		return c.postJSON(ctx, path, evidence, nil)
+	}
+	return c.postJSONWithToken(ctx, path, credential, evidence, nil)
+}
+
+func (c *Client) ReportTaskMessagesWithFileEvidence(ctx context.Context, taskID, credential string, messages []TaskMessageData) error {
+	if credential == "" {
+		return c.ReportTaskMessages(ctx, taskID, messages)
+	}
+	if err := c.postJSONWithToken(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), credential, map[string]any{"messages": messages}, nil); err == nil {
+		return nil
+	}
+	// Evidence authority can expire/rebind without losing the transcript.
+	// Copy before removing proof so concurrent task reports and retries cannot
+	// mutate another batch. The ordinary credential conveys no machine proof.
+	fallback := append([]TaskMessageData(nil), messages...)
+	for i := range fallback {
+		fallback[i].PathIntegrity = nil
+		fallback[i].FileExecutionID = ""
+		fallback[i].SourceEventID = ""
+		if fallback[i].Type == "tool_use" {
+			input := redact.InputMap(fallback[i].Input)
+			filetouch.Protect(fallback[i].Tool, input, filetouch.Integrity{})
+			fallback[i].Input = input
+		}
+	}
+	return c.ReportTaskMessages(ctx, taskID, fallback)
 }
 
 func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID, durableWorkDir string) error {
@@ -1093,6 +1139,7 @@ type RegisterResponse struct {
 	Repos        []RepoData      `json:"repos"`
 	ReposVersion string          `json:"repos_version"`
 	Settings     json.RawMessage `json:"settings,omitempty"`
+	CACerts      string          `json:"ca_certs,omitempty"`
 }
 
 func (c *Client) Register(ctx context.Context, req map[string]any) (*RegisterResponse, error) {
@@ -1108,6 +1155,9 @@ type WorkspaceReposResponse struct {
 	Repos        []RepoData      `json:"repos"`
 	ReposVersion string          `json:"repos_version"`
 	Settings     json.RawMessage `json:"settings,omitempty"`
+	// CACerts is the server's extra CA certificates (PEM) for git; see
+	// applyGitCACerts.
+	CACerts string `json:"ca_certs,omitempty"`
 }
 
 func (c *Client) GetWorkspaceRepos(ctx context.Context, workspaceID string) (*WorkspaceReposResponse, error) {

@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { RefreshCw, X } from "lucide-react";
 
-// Downloads run silently in the background (main process has
-// autoDownload=true). The renderer only renders UI once the package is fully
-// downloaded and waiting for a restart.
+// Non-macOS downloads run silently in the background. macOS instead exposes
+// a manual installer because its unsigned builds cannot use Squirrel.Mac.
 type UpdateState =
   | { status: "idle" }
-  | { status: "ready"; version: string };
+  | { status: "ready"; version: string; manualInstall: boolean };
 
 function changelogUrl(version: string): string {
   return `https://multica.ai/changelog#release-${version.replace(/\./g, "-")}`;
@@ -15,13 +14,24 @@ function changelogUrl(version: string): string {
 export function UpdateNotification() {
   const [state, setState] = useState<UpdateState>({ status: "idle" });
   const [dismissed, setDismissed] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     const cleanup = window.updater.onUpdateDownloaded((info) => {
-      setState({ status: "ready", version: info.version });
+      setState({ status: "ready", version: info.version, manualInstall: false });
       setDismissed(false);
+      setActionError(null);
     });
-    return cleanup;
+    const cleanupAvailable = window.updater.onUpdateAvailable((info) => {
+      if (!info.manualInstall) return;
+      setState({ status: "ready", version: info.version, manualInstall: true });
+      setDismissed(false);
+      setActionError(null);
+    });
+    return () => {
+      cleanup();
+      cleanupAvailable();
+    };
   }, []);
 
   if (state.status === "idle") return null;
@@ -42,9 +52,13 @@ export function UpdateNotification() {
           <RefreshCw className="size-4 text-success" />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-body font-medium">Update ready</p>
+          <p className="text-body font-medium">
+            {state.manualInstall ? "Update available" : "Update ready"}
+          </p>
           <p className="text-caption text-muted-foreground mt-0.5">
-            v{state.version} will be applied on next launch.
+            {state.manualInstall
+              ? `Download and install v${state.version} to update Multica.`
+              : `v${state.version} will be applied on next launch.`}
           </p>
           <div className="mt-2 flex items-center gap-1.5">
             <button
@@ -58,12 +72,23 @@ export function UpdateNotification() {
             </button>
             <button
               type="button"
-              onClick={() => window.updater.installUpdate()}
+              onClick={() => {
+                void window.updater.installUpdate().catch(() => {
+                  setActionError(
+                    state.manualInstall
+                      ? "Unable to open the update download."
+                      : "Unable to install the update.",
+                  );
+                });
+              }}
               className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-caption font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
             >
-              Restart now
+              {state.manualInstall ? "Open download" : "Restart now"}
             </button>
           </div>
+          {actionError && (
+            <p className="mt-2 text-caption text-destructive">{actionError}</p>
+          )}
         </div>
       </div>
     </div>

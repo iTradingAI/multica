@@ -59,12 +59,9 @@ func TestProbeDshMulticaProfile_HangingProbeLeavesNoProcessesAfterEachRound(t *t
 	}
 	home := t.TempDir()
 	t.Setenv("DSH_HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, "profiles", dshMulticaProfileName), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "profiles", dshMulticaProfileName, "package.json"), []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// The manifest must name the Multica runtime — a bare {} is classified
+	// as a refused install (missing profile) before the probe ever runs.
+	installMulticaProfile(t, home)
 
 	origTimeout := dshProbeTimeout
 	t.Cleanup(func() { dshProbeTimeout = origTimeout })

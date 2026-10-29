@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getPreferences: vi.fn(),
   setAutomaticUpdates: vi.fn(),
   checkForUpdates: vi.fn(),
+  installUpdate: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
 }));
@@ -18,11 +19,15 @@ const translations = {
       current_version: "Current version",
       automatic_updates_title: "Automatic background updates",
       automatic_updates_description: "Download updates in the background",
+      automatic_updates_description_macos: "Check for macOS updates",
       automatic_updates_save_failed: "Failed to save update settings",
       check_section_title: "Check for updates",
       check_section_description: "Check manually",
+      check_section_description_macos: "Download macOS updates manually",
       up_to_date: "Up to date",
       downloading: "Downloading v{{version}}",
+      manual_download: "Download v{{version}}",
+      open_download: "Open download",
       check_now: "Check now",
       checking: "Checking",
     },
@@ -60,6 +65,7 @@ describe("UpdatesSettingsTab", () => {
     });
     mocks.setAutomaticUpdates.mockReset();
     mocks.checkForUpdates.mockReset();
+    mocks.installUpdate.mockReset().mockResolvedValue(undefined);
     mocks.toastSuccess.mockReset();
     mocks.toastError.mockReset();
 
@@ -73,6 +79,7 @@ describe("UpdatesSettingsTab", () => {
         getPreferences: mocks.getPreferences,
         setAutomaticUpdates: mocks.setAutomaticUpdates,
         checkForUpdates: mocks.checkForUpdates,
+        installUpdate: mocks.installUpdate,
       },
     });
   });
@@ -100,5 +107,30 @@ describe("UpdatesSettingsTab", () => {
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Settings saved", {
       id: "settings-auto-save",
     });
+  });
+
+  it("opens the macOS installer when a manual update is available", async () => {
+    mocks.checkForUpdates.mockResolvedValue({
+      ok: true,
+      currentVersion: "1.2.3",
+      latestVersion: "1.2.4",
+      available: true,
+      manualInstall: true,
+    });
+    Object.defineProperty(window, "desktopAPI", {
+      configurable: true,
+      value: { appInfo: { version: "1.2.3", os: "macos" } },
+    });
+    render(<UpdatesSettingsTab />);
+
+    expect(screen.getByText("Check for macOS updates")).toBeInTheDocument();
+    expect(screen.getByText("Download macOS updates manually")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Check now" }));
+
+    expect(await screen.findByText("Download v1.2.4")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open download" }));
+
+    expect(mocks.installUpdate).toHaveBeenCalledOnce();
   });
 });

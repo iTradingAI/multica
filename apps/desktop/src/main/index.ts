@@ -8,6 +8,7 @@ import { setupAutoUpdater } from "./updater";
 import { setupDaemonManager } from "./daemon-manager";
 import { setupLocalDirectory } from "./local-directory";
 import { setupTerminalIpc } from "./terminal-ipc";
+import { configureLinuxFileDialogs } from "./linux-file-dialog";
 import { openExternalSafely, downloadURLSafely } from "./external-url";
 import { installContextMenu } from "./context-menu";
 import { handleAppShortcut } from "./keyboard-shortcuts";
@@ -64,6 +65,8 @@ import {
   NotificationGate,
   parseNativeNotificationPayload,
 } from "./notification-gate";
+
+configureLinuxFileDialogs(app.commandLine);
 
 // Guards against registering the will-download handler more than once on the
 // same session. window.webContents.session is shared, and createWindow() can
@@ -320,7 +323,8 @@ function createWindow(): BrowserWindow {
     minWidth: 900,
     minHeight: 600,
     titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 16, y: 17 },
+    // Center the native controls in the main window's 40px tab toolbar.
+    trafficLightPosition: { x: 16, y: 13 },
     show: false,
     autoHideMenuBar: true,
     // Windows/Linux pick up the window/taskbar icon from this option.

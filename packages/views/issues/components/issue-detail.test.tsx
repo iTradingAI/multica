@@ -20,6 +20,10 @@ import enIssues from "../../locales/en/issues.json";
 const TEST_RESOURCES = { en: { agents: enAgents, common: enCommon, issues: enIssues } };
 
 const mockViewport = vi.hoisted(() => ({ isMobile: false }));
+const mockWorkbench = vi.hoisted(() => vi.fn());
+vi.mock("../../workbench", () => ({
+  WorkbenchDrawer: (props: Record<string, unknown>) => { mockWorkbench(props); return <button>Workbench</button>; },
+}));
 
 // Counts MockContentEditor mounts. This pins the description to exactly one
 // eager editor per issue and catches stale editor reuse across issue switches.
@@ -130,6 +134,11 @@ vi.mock("../../navigation", () => ({
   }),
   useBackOrReplace: () => vi.fn(),
   NavigationProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
+// Budget behavior is covered with real Tiptap in bounded-content-editor.test.tsx.
+vi.mock("../../editor/bounded-content-editor", async () => ({
+  BoundedContentEditor: (await import("../../editor")).ContentEditor,
 }));
 
 // Mock editor components (Tiptap requires real DOM)
@@ -616,6 +625,10 @@ const mockTimeline: TimelineEntry[] = [
 // ---------------------------------------------------------------------------
 
 import { IssueDetail, groupSubIssuesByStage } from "./issue-detail";
+import {
+  IssueSurfaceSelectionProvider,
+  useCreateIssueSurfaceSelection,
+} from "../surface/selection-context";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -707,6 +720,10 @@ function hasHighlightedCommentBackground(root: ParentNode | null): boolean {
 // ---------------------------------------------------------------------------
 
 describe("IssueDetail (shared)", () => {
+  it("wires the shared workbench with the actual Issue and no project field", async () => {
+    renderIssueDetail();
+    await waitFor(() => expect(mockWorkbench).toHaveBeenCalledWith({ wsId: "ws-1", context: { kind: "issue", issue_id: mockIssue.id }, hasProject: Boolean(mockIssue.project_id) }));
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     contentEditorMounts.count = 0;
@@ -736,6 +753,163 @@ describe("IssueDetail (shared)", () => {
     // Reset project mock — individual tests override per case. Default fixture
     // has project_id: null so getProject is not invoked.
     mockApiObj.getProject.mockReset();
+  });
+
+  describe("properties sidebar sub-issues", () => {
+    const child: Issue = { ...mockIssue, id: "child-1", identifier: "TES-2", title: "Child task", parent_issue_id: mockIssue.id, status: "todo", stage: 1, due_date: null };
+
+    it("lists shared child rows and links in the properties sidebar without a workbench slot", async () => {
+      mockApiObj.listChildIssues.mockResolvedValue({ issues: [child] });
+      renderIssueDetail();
+      const panel = within(await screen.findByTestId("sidebar-sub-issues"));
+      expect(await panel.findByRole("link", { name: /TES-2.*Child task/ })).toHaveAttribute("href", "/test/issues/child-1");
+      expect(panel.getByText("Stage 1")).toBeInTheDocument();
+      expect(mockApiObj.listChildIssues).toHaveBeenCalledTimes(1);
+      expect(panel.queryByRole("checkbox")).not.toBeInTheDocument();
+      expect(mockWorkbench.mock.calls.at(-1)?.[0]).not.toHaveProperty("issueSubIssues");
+    });
+
+    it("places sub-issues immediately after the parent section even when the parent is collapsed", async () => {
+      const parent: Issue = { ...mockIssue, id: "parent-1", identifier: "TES-0", title: "Parent task" };
+      mockApiObj.getIssue.mockImplementation(async (id: string) =>
+        id === parent.id ? parent : { ...mockIssue, parent_issue_id: parent.id },
+      );
+      mockApiObj.listChildIssues.mockImplementation(async (id: string) => ({
+        issues: id === mockIssue.id ? [child] : [],
+      }));
+      renderIssueDetail();
+      const panel = await screen.findByTestId("sidebar-sub-issues");
+      const parentToggle = await screen.findByRole("button", { name: "Parent issue" });
+      expect(parentToggle.parentElement?.nextElementSibling).toBe(panel);
+      fireEvent.click(parentToggle);
+      expect(parentToggle.parentElement?.nextElementSibling).toBe(panel);
+      expect(within(panel).getByRole("link", { name: /TES-2.*Child task/ })).toBeInTheDocument();
+    });
+
+    it("hides the entire sidebar section when there are no children, preserving the body create action", async () => {
+      renderIssueDetail();
+      await screen.findByRole("button", { name: "Add sub-issues" });
+      await waitFor(() => expect(screen.queryByTestId("sidebar-sub-issues")).not.toBeInTheDocument());
+      expect(screen.queryByRole("region", { name: "Sub-issues" })).not.toBeInTheDocument();
+      expect(screen.queryByText("No sub-issues.")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Properties" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Details" })).toBeInTheDocument();
+    });
+
+    it("keeps the sidebar list available when the body's sub-issues are collapsed", async () => {
+      mockApiObj.listChildIssues.mockResolvedValue({ issues: [child] });
+      renderIssueDetail();
+      const panel = within(await screen.findByTestId("sidebar-sub-issues"));
+      await panel.findByRole("link", { name: /TES-2.*Child task/ });
+      expect(screen.getAllByRole("link", { name: /TES-2.*Child task/ })).toHaveLength(2);
+      fireEvent.click(screen.getByRole("button", { name: "Sub-issues" }));
+      expect(panel.getByRole("link", { name: /TES-2.*Child task/ })).toBeInTheDocument();
+      expect(screen.getAllByRole("link", { name: /TES-2.*Child task/ })).toHaveLength(1);
+      fireEvent.click(screen.getByRole("button", { name: "Sub-issues" }));
+      expect(screen.getAllByRole("link", { name: /TES-2.*Child task/ })).toHaveLength(2);
+    });
+
+    it("does not show an empty state before children finish loading", async () => {
+      mockApiObj.listChildIssues.mockReturnValue(new Promise(() => {}));
+      renderIssueDetail();
+      const panel = within(await screen.findByTestId("sidebar-sub-issues"));
+      expect(panel.getByRole("status")).toHaveTextContent("Loading");
+      expect(panel.queryByText("No sub-issues.")).not.toBeInTheDocument();
+    });
+
+    it("shows query failure and hides the section after retry confirms no children", async () => {
+      mockApiObj.listChildIssues.mockRejectedValueOnce(new Error("offline"));
+      renderIssueDetail();
+      const panel = within(await screen.findByTestId("sidebar-sub-issues"));
+      expect(await panel.findByRole("alert")).toHaveTextContent("Could not load sub-issues.");
+      fireEvent.click(panel.getByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(screen.queryByTestId("sidebar-sub-issues")).not.toBeInTheDocument());
+      expect(mockApiObj.listChildIssues).toHaveBeenCalledTimes(2);
+    });
+
+    it("updates the child through the existing mutation and reconciles both copies", async () => {
+      mockApiObj.listChildIssues.mockResolvedValue({ issues: [child] });
+      mockApiObj.updateIssue.mockImplementation(async (_id: string, updates: Partial<Issue>) => {
+        const updated = { ...child, ...updates, revision: 4 };
+        mockApiObj.listChildIssues.mockResolvedValue({ issues: [updated] });
+        return updated;
+      });
+      renderIssueDetail();
+      const panel = within(await screen.findByTestId("sidebar-sub-issues"));
+      const link = await panel.findByRole("link", { name: /TES-2.*Child task/ });
+      const row = link.parentElement!;
+      fireEvent.click(row.querySelector('button[data-slot="popover-trigger"]')!);
+      fireEvent.click(await screen.findByRole("button", { name: "Done" }));
+      await waitFor(() => expect(mockApiObj.updateIssue).toHaveBeenCalledWith("child-1", { status: "done" }));
+      expect(link).toHaveAttribute("href", "/test/issues/child-1");
+      await waitFor(() => expect(screen.getAllByText("1/1")).toHaveLength(2));
+    });
+
+    for (const surface of ["body", "panel"] as const) {
+      for (const outcome of ["success", "failure"] as const) {
+        it(`F01 blocks repeated child writes in ${surface} while pending and unlocks after ${outcome}`, async () => {
+          let currentChild = child;
+          let resolveFirst!: (issue: Issue) => void;
+          let rejectFirst!: (error: Error) => void;
+          const firstWrite = new Promise<Issue>((resolve, reject) => {
+            resolveFirst = resolve;
+            rejectFirst = reject;
+          });
+          mockApiObj.listChildIssues.mockImplementation(async () => ({ issues: [currentChild] }));
+          mockApiObj.updateIssue.mockReset();
+          mockApiObj.updateIssue.mockImplementationOnce(() => firstWrite);
+          mockApiObj.updateIssue.mockImplementation(async (_id: string, updates: Partial<Issue>) => {
+            currentChild = { ...currentChild, ...updates, revision: (currentChild.revision ?? 0) + 1 };
+            return currentChild;
+          });
+          renderIssueDetail();
+          const panel = await screen.findByTestId("sidebar-sub-issues");
+          await within(panel).findByRole("link", { name: /TES-2.*Child task/ });
+          const childLink = (inPanel: boolean) => screen.getAllByRole("link", { name: /TES-2.*Child task/ })
+            .find((link) => panel.contains(link) === inPanel)!;
+          const choose = async (inPanel: boolean, status: "Done" | "Todo") => {
+            const row = childLink(inPanel).parentElement!;
+            fireEvent.click(row.querySelector('button[data-slot="popover-trigger"]')!);
+            fireEvent.click(await screen.findByRole("button", { name: status }));
+          };
+          const inPanel = surface === "panel";
+          await choose(inPanel, "Done");
+          await waitFor(() => expect(mockApiObj.updateIssue).toHaveBeenCalledTimes(1));
+          await choose(inPanel, "Todo");
+          // The second mounted copy must not bypass the same child lock.
+          await choose(!inPanel, "Todo");
+          expect(mockApiObj.updateIssue).toHaveBeenCalledTimes(1);
+          expect(mockApiObj.updateIssue).toHaveBeenNthCalledWith(1, "child-1", { status: "done" });
+
+          if (outcome === "success") {
+            currentChild = { ...child, status: "done", revision: (child.revision ?? 0) + 1 };
+            await act(async () => { resolveFirst(currentChild); await firstWrite; });
+            await waitFor(() => expect(screen.getAllByText("1/1")).toHaveLength(2));
+          } else {
+            await act(async () => { rejectFirst(new Error("Permission denied")); await firstWrite.catch(() => {}); });
+            await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Permission denied"));
+            await waitFor(() => expect(screen.getAllByText("0/1")).toHaveLength(2));
+          }
+          // A settled request allows another intentional update in either copy.
+          await choose(inPanel, outcome === "success" ? "Todo" : "Done");
+          await waitFor(() => expect(mockApiObj.updateIssue).toHaveBeenCalledTimes(2));
+          await waitFor(() => expect(screen.getAllByText(outcome === "success" ? "0/1" : "1/1")).toHaveLength(2));
+        });
+      }
+    }
+
+    it("rolls a failed child status write back and shows the error", async () => {
+      mockApiObj.listChildIssues.mockResolvedValue({ issues: [child] });
+      mockApiObj.updateIssue.mockRejectedValueOnce(new Error("Permission denied"));
+      renderIssueDetail();
+      const panel = within(await screen.findByTestId("sidebar-sub-issues"));
+      const link = await panel.findByRole("link", { name: /TES-2.*Child task/ });
+      fireEvent.click(link.parentElement!.querySelector('button[data-slot="popover-trigger"]')!);
+      fireEvent.click(await screen.findByRole("button", { name: "Done" }));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Permission denied"));
+      await waitFor(() => expect(screen.getAllByText("0/1")).toHaveLength(2));
+      expect(link).toHaveAttribute("href", "/test/issues/child-1");
+    });
   });
 
   it("counts comment files as deliverables, a re-upload once as v2, never the description's (MUL-7649)", async () => {
@@ -1525,8 +1699,15 @@ describe("IssueDetail (shared)", () => {
     });
     await waitFor(() => expect(screen.getAllByText(reply.content!)).toHaveLength(1));
     await waitFor(() => expect(container.querySelector(`[data-run-comment-id="${task.id}"]`)).toBeNull());
-    expect(container.querySelector(`[data-run-slot-id="${task.id}"]`)).toBe(assignmentSlot);
     const replyBlock = container.querySelector("#comment-assignment-reply")!;
+    const parentBlock = container.querySelector("#comment-comment-1")!;
+    if (parentId) {
+      expect(parentBlock).toContainElement(replyBlock as HTMLElement);
+      expect(parentBlock.querySelector(`[data-run-slot-id="${task.id}"]`)).not.toBeNull();
+    } else {
+      expect(parentBlock).not.toContainElement(replyBlock as HTMLElement);
+      expect(container.querySelector(`[data-run-slot-id="${task.id}"]`)).toBe(assignmentSlot);
+    }
     expect(replyBlock.querySelector(`[data-run-id="${task.id}"]`)).not.toBeNull();
     expect(container.querySelectorAll(`[data-run-id="${task.id}"]`)).toHaveLength(1);
     const headerLog = within(replyBlock as HTMLElement).getByRole("button", { name: "Open full log" });
@@ -1663,6 +1844,28 @@ describe("IssueDetail (shared)", () => {
     expect(userReply.nextElementSibling).toBe(agentBlock);
     expect(within(agentBlock as HTMLElement).getByRole("button", { name: "Retry run" })).toBeInTheDocument();
     expect(container.querySelectorAll(`[data-run-id="${task.id}"]`)).toHaveLength(1);
+  });
+
+  it("jumps from a header chip row to the run's block in its thread", async () => {
+    const root = mockTimeline[0]!;
+    const task: AgentTask = {
+      id: "4a2e8d1c-7f9b-4e2a-9c1d-123456789abc", agent_id: "agent-1", runtime_id: "runtime-1", issue_id: "issue-1",
+      status: "running", priority: 0, created_at: "2026-01-16T00:00:00Z",
+      started_at: "2026-01-16T00:00:00Z", dispatched_at: null, completed_at: null, result: null, error: null,
+      trigger_comment_id: root.id, delivered_comment_ids: [root.id],
+    };
+    mockApiObj.listTimeline.mockResolvedValue([root]);
+    mockApiObj.listTasksByIssue.mockResolvedValue([task]);
+    const { container } = renderIssueDetail();
+    await waitFor(() => expect(container.querySelector(`[data-run-slot-id="${task.id}"]`)).not.toBeNull());
+    const block = container.querySelector(`[data-run-slot-id="${task.id}"]`)!;
+    expect(block.className).not.toContain(highlightedCommentBackgroundClass);
+
+    fireEvent.click(screen.getByRole("button", { name: "Claude Agent is working" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Go to run/ }));
+
+    expect(scrollToIndexSpy).toHaveBeenLastCalledWith({ index: expect.any(Number), align: "start", offset: -16 });
+    await waitFor(() => expect(block.className).toContain(highlightedCommentBackgroundClass));
   });
 
   describe("a run's failure notice (MUL-7692)", () => {
@@ -2316,6 +2519,39 @@ describe("IssueDetail (shared)", () => {
   });
 
   describe("highlightCommentId scroll-to-comment", () => {
+    it("folds an assignment reply with its resolved parent and unfolds that thread for a notification", async () => {
+      const run: AgentTask = { id: "ba2e8d1c-7f9b-4e2a-9c1d-123456789abc", agent_id: "agent-1", runtime_id: "runtime-1", issue_id: "issue-1",
+        kind: "direct", status: "completed", priority: 0, created_at: "2026-01-16T00:00:00Z", started_at: null, dispatched_at: null,
+        completed_at: "2026-01-16T00:01:00Z", result: null, error: null, delivered_comment_ids: [] };
+      const root = { ...mockTimeline[0]!, resolved_at: "2026-01-17T00:00:00Z" };
+      const target = { ...mockTimeline[1]!, id: "assigned-reply", parent_id: root.id, source_task_id: run.id,
+        content: "Assignment reply in the resolved discussion" };
+      mockApiObj.listTimeline.mockResolvedValue([root, target]);
+      mockApiObj.listTasksByIssue.mockResolvedValue([run]);
+      const client = createTestQueryClient();
+      const { container, rerender } = render(<I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={client}>
+          <IssueDetail issueId="issue-1" />
+        </QueryClientProvider>
+      </I18nProvider>);
+      await screen.findByRole("button", { name: /2 resolved comments/ });
+      expect(container.querySelector(`#comment-${target.id}`)).toBeNull();
+
+      rerender(<I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={client}>
+          <IssueDetail issueId="issue-1" highlightCommentId={target.id} />
+        </QueryClientProvider>
+      </I18nProvider>);
+      await waitFor(() => expect(container.querySelector(`#comment-${target.id}`))
+        .toHaveClass(highlightedCommentBackgroundClass));
+      expect(container.querySelector(`#comment-${root.id}`))
+        .toContainElement(container.querySelector(`#comment-${target.id}`) as HTMLElement);
+      expect(screen.getAllByText(target.content)).toHaveLength(1);
+      expect(container.querySelectorAll(`[data-run-id="${run.id}"]`)).toHaveLength(1);
+      expect(within(container.querySelector(`#comment-${target.id}`) as HTMLElement)
+        .getByRole("button", { name: "Open full log" })).toBeInTheDocument();
+    });
+
     it.each(["root", "reply"])("unfolds an assignment run with a resolved %s when a notification targets a hidden reply", async (resolved) => {
       const run: AgentTask = { id: "ba2e8d1c-7f9b-4e2a-9c1d-123456789abc", agent_id: "agent-1", runtime_id: "runtime-1", issue_id: "issue-1",
         status: "completed", priority: 0, created_at: "2026-01-16T00:00:00Z", started_at: null, dispatched_at: null,
@@ -2579,6 +2815,12 @@ describe("IssueDetail (shared)", () => {
 
       const nav = await screen.findByRole("navigation", { name: "Jump to comment thread" });
       expect(document.getElementById("comment-reply-1")).toBeNull();
+      expect(within(nav).queryByRole("button", { name: /: Reply inside resolved thread$/ })).toBeNull();
+      act(() => within(nav).getByRole("button", { name: "Resolved root (resolved)" }).focus());
+      fireEvent.click(
+        within(nav.parentElement!).getByRole("button", { name: "Show 1 reply" }),
+        { detail: 0 },
+      );
       fireEvent.click(within(nav).getByRole("button", { name: /: Reply inside resolved thread$/ }));
 
       await waitFor(() => {
@@ -2986,7 +3228,7 @@ describe("IssueDetail (shared)", () => {
 
       renderIssueDetail();
 
-      await screen.findByText("Fix login flow");
+      await screen.findAllByText("Fix login flow");
       // Label chips ride inside the row link.
       expect(screen.getByText("backend")).toBeInTheDocument();
       expect(screen.getByText("auth")).toBeInTheDocument();
@@ -2996,7 +3238,7 @@ describe("IssueDetail (shared)", () => {
       const due = screen.getByText("Jan 1");
       expect(due.closest("span")?.className).toContain("text-destructive");
       // Bare row shows no due date / no progress chip of its own.
-      const bareRow = screen.getByText("Ship dashboards").closest("a");
+      const bareRow = screen.getAllByText("Ship dashboards").find((node) => !screen.getByTestId("sidebar-sub-issues").contains(node))!.closest("a");
       expect(bareRow?.textContent).not.toContain("/");
     });
 
@@ -3023,7 +3265,7 @@ describe("IssueDetail (shared)", () => {
 
       renderIssueDetail();
 
-      await screen.findByText("Fix login flow");
+      await screen.findAllByText("Fix login flow");
       expect(screen.queryByText("backend")).not.toBeInTheDocument();
       expect(screen.queryByText("Jan 1")).not.toBeInTheDocument();
     });
@@ -3065,10 +3307,41 @@ describe("IssueDetail (shared)", () => {
 
       renderIssueDetail();
 
-      await screen.findByText("Fix login flow");
+      await screen.findAllByText("Fix login flow");
       // Chip renders only on the row that has a value for the property.
       expect(await screen.findByText("Sprint 3")).toBeInTheDocument();
       expect(screen.getAllByText("Sprint 3")).toHaveLength(1);
+    });
+
+    it("drives the inline batch toolbar from row checkboxes inside a surface peek", async () => {
+      mockApiObj.listChildIssues.mockResolvedValue({
+        issues: [
+          subIssue({ id: "child-1", number: 11, identifier: "TES-11", title: "Fix login flow" }),
+          subIssue({ id: "child-2", number: 12, identifier: "TES-12", title: "Ship dashboards" }),
+        ],
+      });
+      function SurfaceHost() {
+        const selection = useCreateIssueSurfaceSelection("surface");
+        return (
+          <IssueSurfaceSelectionProvider selection={selection}>
+            <IssueDetail issueId="issue-1" />
+          </IssueSurfaceSelectionProvider>
+        );
+      }
+      render(
+        <I18nProvider locale="en" resources={TEST_RESOURCES}>
+          <QueryClientProvider client={createTestQueryClient()}>
+            <SurfaceHost />
+          </QueryClientProvider>
+        </I18nProvider>,
+      );
+
+      fireEvent.click(await screen.findByRole("checkbox", { name: "Select TES-11" }));
+      expect(await screen.findByText("1 selected")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select all sub-issues" }));
+      expect(await screen.findByText("2 selected")).toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "Select TES-12" })).toBeChecked();
     });
 
     it("mutes the due date on done sub-issues even when past", async () => {
@@ -3087,7 +3360,7 @@ describe("IssueDetail (shared)", () => {
 
       renderIssueDetail();
 
-      await screen.findByText("Wrapped up");
+      await screen.findAllByText("Wrapped up");
       const due = screen.getByText("Jan 1");
       expect(due.closest("span")?.className).not.toContain("text-destructive");
       expect(due.closest("span")?.className).toContain("text-muted-foreground");

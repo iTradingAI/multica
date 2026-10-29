@@ -37,6 +37,14 @@ let lastEmitMs = 0;
 
 let installed = false;
 
+// Long Tasks is not yet included in every consumer's DOM typings.
+interface LongTaskEntry extends PerformanceEntry {
+  readonly attribution?: ReadonlyArray<{
+    readonly containerName: string;
+    readonly containerSrc: string;
+  }>;
+}
+
 /**
  * Install the long-task observer. Safe to call multiple times (idempotent) and
  * safe on the server (no-op when `window` / `PerformanceObserver` is absent).
@@ -57,10 +65,18 @@ export function installFreezeWatchdog(): void {
         const now = Date.now();
         if (now - lastEmitMs < COOLDOWN_MS) continue;
         lastEmitMs = now;
+        const task = entry as LongTaskEntry;
         captureEvent("client_unresponsive", {
           source: "longtask",
           duration_ms: Math.round(entry.duration),
           path: resolveDiagnosticPath(),
+          name: entry.name ?? "",
+          // Top-level tasks commonly have no useful container attribution.
+          // Project explicitly: native PerformanceEntry properties are getters.
+          attribution: Array.from(task.attribution ?? [], (attribution) => ({
+            containerName: attribution.containerName,
+            containerSrc: attribution.containerSrc,
+          })),
         });
       }
     });

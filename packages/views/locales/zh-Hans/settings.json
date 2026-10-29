@@ -79,7 +79,10 @@
       "cancelled": "决定不做。"
     },
     "pr_auto_complete_badge": "PR 合并后自动进入",
-    "built_in_locked": "内置状态驱动系统行为，不能编辑或归档，但可以调整顺序。"
+    "built_in_locked": "内置状态驱动系统行为，不能编辑或归档，但可以调整顺序。",
+    "builtin_badge": "内置",
+    "workflow_usage_other": "{{count}} 个工作流在用",
+    "workflow_usage_none": "未被工作流使用"
   },
   "wakeups": {
     "description": "平台对所有任务生效的规则。每个任务可以在自己的「唤醒」区域单独修改。",
@@ -138,6 +141,8 @@
     "field_name": "名称",
     "field_name_placeholder": "代码审查",
     "field_target": "执行者",
+    "no_target": "无目标",
+    "no_target_hint": "发布消息，不提及任何人。",
     "field_prompt": "提示词",
     "field_prompt_placeholder": "请审查这个任务关联的代码，重点关注正确性和边界情况。",
     "prompt_hint": "原样发送。智能体本来就能看到这个任务。",
@@ -404,7 +409,8 @@
       "billing": "账单与套餐",
       "code": "代码",
       "channels": "消息渠道",
-      "apps": "已连接应用"
+      "apps": "已连接应用",
+      "workflows": "工作流"
     },
     "groups": {
       "personal": "个人",
@@ -472,6 +478,7 @@
       "secret_set": "已保存 — 输入新值可替换"
     },
     "scopes": {
+      "files_read": "读取文件页签中选中的文件",
       "issues_read": "读取任务",
       "issues_write": "创建和修改任务",
       "comments_read": "读取评论",
@@ -671,8 +678,7 @@
     },
     "system": {
       "title": "系统通知",
-      "description": "Multica 在后台时显示系统通知。",
-      "label": "显示系统通知"
+      "label": "Multica 在后台时显示系统通知"
     },
     "browser": {
       "label": "浏览器通知",
@@ -1214,16 +1220,29 @@
     "tabs": {
       "updates": "更新"
     },
+    "tab_bar": {
+      "pin": "固定标签页",
+      "unpin": "取消固定标签页",
+      "close": "关闭标签页",
+      "close_others": "关闭其他标签页",
+      "open_window": "在新窗口打开",
+      "new": "新建标签页",
+      "pinned_name": "{{title}}（已固定）"
+    },
     "updates": {
       "title": "更新",
       "current_version": "当前版本",
       "automatic_updates_title": "后台自动更新",
       "automatic_updates_description": "开启后，桌面端会在启动后和每小时检查更新，并在后台下载可用版本。",
+      "automatic_updates_description_macos": "开启后，桌面端会在启动后和每小时检查可用更新。",
       "automatic_updates_save_failed": "保存自动更新设置失败",
       "check_section_title": "检查更新",
       "check_section_description": "下载完成后会提示重启。",
+      "check_section_description_macos": "发现可用更新后会打开对应的 macOS 下载。",
       "up_to_date": "已是最新版本。",
       "downloading": "v{{version}} 正在后台下载——准备好安装时会通知你。",
+      "manual_download": "v{{version}} 已可下载并安装。",
+      "open_download": "打开下载",
       "check_now": "立即检查",
       "checking": "检查中..."
     },

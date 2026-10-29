@@ -165,7 +165,13 @@ interface DaemonAPI {
 }
 
 interface UpdaterAPI {
-  onUpdateAvailable: (callback: (info: { version: string; releaseNotes?: string }) => void) => () => void;
+  onUpdateAvailable: (
+    callback: (info: {
+      version: string;
+      releaseNotes?: string;
+      manualInstall?: boolean;
+    }) => void,
+  ) => () => void;
   onDownloadProgress: (callback: (progress: { percent: number }) => void) => () => void;
   onUpdateDownloaded: (
     callback: (info: { version: string; releaseNotes?: string }) => void,

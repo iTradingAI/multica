@@ -55,15 +55,34 @@ func (h *Handler) rpcClaimTasks(ctx context.Context, identity daemonws.ClientIde
 	if len(body) == 0 {
 		body = json.RawMessage("{}")
 	}
+	// Account connections may also be bound to an enrolled machine. Preserve
+	// that machine binding without narrowing their workspace authorization.
+	if identity.DaemonID != "" {
+		var claim struct {
+			DaemonID string `json:"daemon_id"`
+		}
+		if err := json.Unmarshal(body, &claim); err != nil {
+			rec := &rpcResponseCapture{}
+			writeError(rec, http.StatusBadRequest, "invalid request body")
+			return rec.status, json.RawMessage(rec.body.Bytes()), nil
+		}
+		if claim.DaemonID != "" && claim.DaemonID != identity.DaemonID {
+			rec := &rpcResponseCapture{}
+			writeError(rec, http.StatusForbidden, "daemon_id does not match connection")
+			return rec.status, json.RawMessage(rec.body.Bytes()), nil
+		}
+	}
 	reqCtx := ctx
 	// A daemon-token connection is workspace-scoped: pin the daemon context so
 	// the reused handler's daemon_id + workspace checks behave exactly like the
-	// HTTP path. A PAT/cloud connection (no daemon id) authorizes per-workspace
-	// via membership from X-User-ID instead, so we must NOT set a single-
-	// workspace daemon context there (it would reject the daemon's other
-	// workspaces).
-	if identity.DaemonID != "" {
+	// HTTP path. Account credentials authorize each workspace via membership,
+	// even when the connection is bound to a server-enrolled machine.
+	if identity.AuthPath == middleware.DaemonAuthPathDaemonToken {
 		reqCtx = middleware.WithDaemonContext(reqCtx, identity.PrimaryWorkspaceID(), identity.DaemonID)
+		// Carry the connection's credential so per-call revocation checks
+		// (Qoder) validate the real token instead of an empty header.
+		reqCtx = middleware.WithDaemonTokenHash(reqCtx, identity.DaemonTokenHash)
+		reqCtx = middleware.WithDaemonTokenOwnerID(reqCtx, identity.DaemonTokenOwnerID)
 	}
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, "/api/daemon/tasks/claim", bytes.NewReader(body))
 	if err != nil {

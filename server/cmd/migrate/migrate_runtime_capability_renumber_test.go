@@ -12,21 +12,22 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// The fork's unchanged function migration moves out of upstream's 564 slot.
+// The unchanged function migration leaves upstream's 564 and the deployed
+// registration/file migrations' 565-576 slots available.
 // Full filenames, not numeric prefixes, are recorded in schema_migrations:
 // upgrades must preserve historical records and safely apply the new identity.
 func TestRuntimeCapabilityRenumberPreservesAppliedFunction(t *testing.T) {
 	t.Parallel()
-	const version = "565_runtime_capability_merge"
+	const version = "605_runtime_capability_merge"
 	var completed atomic.Int32
 	// The shared DB helper may skip when a developer has no database. CI has
 	// PostgreSQL configured and must prove that every regression case ran.
 	t.Cleanup(func() {
-		if os.Getenv("CI") == "true" && completed.Load() != 4 {
-			t.Errorf("expected all 4 database cases to complete in CI, got %d", completed.Load())
+		if os.Getenv("CI") == "true" && completed.Load() != 6 {
+			t.Errorf("expected all 6 database cases to complete in CI, got %d", completed.Load())
 		}
 	})
-	for _, legacy := range []string{"", "548_runtime_capability_merge", "551_runtime_capability_merge", "564_runtime_capability_merge"} {
+	for _, legacy := range []string{"", "548_runtime_capability_merge", "551_runtime_capability_merge", "564_runtime_capability_merge", "565_runtime_capability_merge", "577_runtime_capability_merge"} {
 		name := legacy
 		if name == "" {
 			name = "fresh"
@@ -60,7 +61,7 @@ func TestRuntimeCapabilityRenumberPreservesAppliedFunction(t *testing.T) {
 			var originalDefinition string
 			legacyAppliedAt := time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)
 			if legacy != "" {
-				// The renumbered SQL is byte-for-byte unchanged from all three
+				// The renumbered SQL is byte-for-byte unchanged from all four
 				// prior fork names. Model a database that already applied it.
 				sql, err := os.ReadFile(files[0])
 				if err != nil {

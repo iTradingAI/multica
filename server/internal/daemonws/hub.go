@@ -21,8 +21,20 @@ const (
 
 // ClientIdentity captures the already-authenticated daemon connection scope.
 type ClientIdentity struct {
+	// AuthPath preserves the authenticated credential kind independently of
+	// DaemonID, which can also be an enrolled account connection's machine.
+	AuthPath string
 	DaemonID string
-	UserID   string
+	// DaemonTokenHash is the hash of the mdt_ token that authenticated the
+	// connection (empty for user credentials). RPCs replay requests without
+	// an Authorization header, so credential-specific checks such as Qoder
+	// revocation re-validate this hash on every call (MUL-8154).
+	DaemonTokenHash string
+	// DaemonTokenOwnerID is the runtime owner that token is bound to (empty
+	// for Qoder-managed tokens and user credentials), replayed into every RPC
+	// so the per-runtime owner binding holds over WS as well (MUL-8154).
+	DaemonTokenOwnerID string
+	UserID             string
 	// WorkspaceID is the legacy single-workspace scope used by older callers
 	// and daemon-token auth. New code should populate WorkspaceIDs from the
 	// runtime rows authorized for this connection.
@@ -148,12 +160,15 @@ func (i ClientIdentity) AllowsWorkspace(workspaceID string) bool {
 }
 
 type client struct {
-	hub       *Hub
-	conn      *websocket.Conn
-	send      chan []byte
-	identity  ClientIdentity
-	runtimeMu sync.RWMutex
-	runtimes  map[string]struct{}
+	filesIdentity *protocol.WorkspaceFilesConnectionIdentity
+	filesEpoch    uint64 // Guarded by hub.mu.
+	filesSeq      uint64 // Guarded by hub.mu.
+	hub           *Hub
+	conn          *websocket.Conn
+	send          chan []byte
+	identity      ClientIdentity
+	runtimeMu     sync.RWMutex
+	runtimes      map[string]struct{}
 
 	// ctx is cancelled when the connection tears down, so async RPC handlers
 	// stop instead of running against a dead socket. cancel is invoked from
@@ -310,7 +325,10 @@ type MessageKindRecorder interface {
 // Hub keeps daemon WebSocket connections indexed by runtime ID. Messages are
 // best-effort wakeup hints; the daemon still uses HTTP claim for correctness.
 type Hub struct {
-	upgrader websocket.Upgrader
+	filesConnections map[*protocol.WorkspaceFilesConnectionIdentity]*client
+	filesEpoch       uint64
+	filesBridge      WorkspaceFilesBridge
+	upgrader         websocket.Upgrader
 
 	mu          sync.RWMutex
 	clients     map[*client]bool
@@ -349,6 +367,7 @@ func NewHub() *Hub {
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 		clients:                 make(map[*client]bool),
+		filesConnections:        make(map[*protocol.WorkspaceFilesConnectionIdentity]*client),
 		byRuntime:               make(map[string]map[*client]bool),
 		byWorkspace:             make(map[string]map[*client]bool),
 		byUser:                  make(map[string]map[*client]bool),
@@ -571,6 +590,9 @@ func (h *Hub) invalidateRuntime(runtimeID string, data []byte, eventID string) (
 	}
 	delete(h.byRuntime, runtimeID)
 	h.mu.Unlock()
+	for _, c := range clients {
+		h.workspaceFilesOffline(c, runtimeID)
+	}
 	if len(clients) == 0 {
 		if !h.markRuntimeGoneSeen(eventID) {
 			return false, true
@@ -849,6 +871,12 @@ func (h *Hub) UserConnectionCount(userID string) int {
 
 func (h *Hub) register(c *client) {
 	h.mu.Lock()
+	if h.filesEpoch < ^uint64(0)-1 {
+		h.filesEpoch++
+		c.filesEpoch = h.filesEpoch
+	}
+	c.filesIdentity = &protocol.WorkspaceFilesConnectionIdentity{}
+	h.filesConnections[c.filesIdentity] = c
 	h.clients[c] = true
 	c.runtimeMu.RLock()
 	for runtimeID := range c.runtimes {
@@ -900,6 +928,7 @@ func (h *Hub) unregister(c *client) {
 		return
 	}
 	delete(h.clients, c)
+	delete(h.filesConnections, c.filesIdentity)
 	c.runtimeMu.RLock()
 	for runtimeID := range c.runtimes {
 		if conns := h.byRuntime[runtimeID]; conns != nil {
@@ -943,6 +972,7 @@ func (h *Hub) unregister(c *client) {
 	}
 	c.runtimeMu.RUnlock()
 	h.terminalHandleDisconnect(runtimeIDs)
+	h.workspaceFilesOffline(c, "")
 	slog.Info("daemon websocket disconnected",
 		"daemon_id", c.identity.DaemonID,
 		"user_id", c.identity.UserID,
@@ -1004,6 +1034,8 @@ func (c *client) handleFrame(raw []byte) {
 		c.handleHeartbeatFrame(msg.Payload)
 	case protocol.EventDaemonRPCRequest:
 		c.handleRPCFrame(msg.Payload)
+	case protocol.EventWorkspaceFilesListResult, protocol.EventWorkspaceFilesReadChunk, protocol.EventWorkspaceFilesError:
+		c.hub.handleWorkspaceFilesFromDaemon(c, msg.Type, msg.Payload)
 	case protocol.EventTerminalOpenResult,
 		protocol.EventTerminalData,
 		protocol.EventTerminalExit,
@@ -1057,6 +1089,9 @@ func (c *client) handleRPCFrame(raw json.RawMessage) {
 			hctx, cancel = context.WithTimeout(c.ctx, time.Duration(req.TimeoutMs)*time.Millisecond)
 			defer cancel()
 		}
+		completion := &rpcCompletion{}
+		hctx = context.WithValue(hctx, rpcCompletionKey{}, completion)
+		defer completion.run()
 		status, body, err := handler(hctx, c.identity, req.Method, req.Body)
 		if err != nil {
 			if status < 400 {

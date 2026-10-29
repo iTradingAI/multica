@@ -66,6 +66,7 @@ import {
 import { configStore } from "@multica/core/config";
 import { preprocessMarkdown } from "./utils/preprocess";
 import { repairEmptyListItems } from "./utils/repair-list-items";
+import { DESCRIPTION_BUDGET, DocumentBudgetExceeded, exceedsDescriptionBudget } from "./utils/document-budget";
 import { resolveClickIntent, useAppOrigin } from "../navigation";
 import { openLink, isMentionHref } from "./utils/link-handler";
 import { EditorBubbleMenu } from "./bubble-menu";
@@ -75,9 +76,7 @@ import { AttachmentDownloadProvider } from "./attachment-download-context";
 import "katex/dist/katex.min.css";
 import "./styles/index.css";
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /** Canonical comparison form for a markdown string: drop the blank lines a
  *  block leaves behind at either end, so both sides of a dirty check compare
@@ -115,11 +114,20 @@ function hasUploadingNode(editor: Editor): boolean {
   return found;
 }
 
-// ---------------------------------------------------------------------------
+/** Inside a NodeView's own controls, which handle their clicks. The editable
+ *  content a NodeView hosts (a table's cells) is not: its links are the
+ *  editor's, unless they sit in a NodeView of their own (a mention). */
+function isInNodeViewChrome(target: HTMLElement): boolean {
+  const wrapper = target.closest("[data-node-view-wrapper]");
+  const content = target.closest("[data-node-view-content-react]");
+  return wrapper !== null && !(content !== null && wrapper.contains(content));
+}
+
 // Types
-// ---------------------------------------------------------------------------
 
 interface ContentEditorBaseProps {
+  /** Bounded description hosts replace an unsafe document with a read-only preview. */
+  onDocumentLimitExceeded?: (markdown: string) => void;
   /**
    * `baseMarkdown` is the last authoritative controlled value this editor
    * actually adopted before producing `markdown`. A dirty-editor realtime
@@ -352,9 +360,7 @@ interface ContentEditorRef {
   adoptContent: (markdown: string) => void;
 }
 
-// ---------------------------------------------------------------------------
 // Component
-// ---------------------------------------------------------------------------
 
 const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
   function ContentEditor(
@@ -382,10 +388,20 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       attachments,
       flushPendingOnUnmount = false,
       onReady,
+      onDocumentLimitExceeded,
     },
     ref,
   ) {
     const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+    const onDocumentLimitExceededRef = useRef(onDocumentLimitExceeded);
+    onDocumentLimitExceededRef.current = onDocumentLimitExceeded;
+    const rejectDocument = useCallback((markdown: string) => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = undefined;
+      pendingFlushRef.current = null;
+      pendingBaseRef.current = null;
+      onDocumentLimitExceededRef.current?.(markdown);
+    }, []);
     const flushPendingOnUnmountRef = useRef(flushPendingOnUnmount);
     // Markdown serialized at `onUpdate` time, awaiting its debounce fire. The
     // unmount flush emits this cached copy — it runs mid-teardown and can't
@@ -544,7 +560,8 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     };
 
     const initialMarkdown = value ?? defaultValue ?? "";
-    const initialContent = initialMarkdown
+    const initialContent = initialMarkdown &&
+      !(onDocumentLimitExceeded && exceedsDescriptionBudget(initialMarkdown))
       ? // One-shot read: the editor preprocesses its initial document once at
         // load. Unlike the readonly renderer it does not need to re-run when
         // the CDN config lands later — the user's own edits drive the document
@@ -560,7 +577,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     const focusOnReadyRef = useRef(false);
     // Large markdown is parsed in chunks to dodge marked's O(n²) tokenizer (see
     // parseMarkdownChunked). Small docs stay on the single-parse fast path.
-    const mountChunked = initialContent.length > MARKDOWN_CHUNK_THRESHOLD;
+    const mountChunked = !!onDocumentLimitExceeded || initialContent.length > MARKDOWN_CHUNK_THRESHOLD;
 
     const editor = useEditor({
       immediatelyRender: false,
@@ -574,10 +591,22 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
             ed.storage as { markdown?: { manager?: MarkdownManagerLike } }
           ).markdown?.manager;
           if (manager) {
-            ed.commands.setContent(
-              parseMarkdownChunked(manager, initialContent),
-              { emitUpdate: false },
-            );
+            try {
+              ed.commands.setContent(
+                parseMarkdownChunked(manager, initialContent,
+                  initialContent.length <= MARKDOWN_CHUNK_THRESHOLD ? Infinity : undefined,
+                  onDocumentLimitExceededRef.current ? DESCRIPTION_BUDGET : undefined),
+                { emitUpdate: false },
+              );
+            } catch (error) {
+              if (!(error instanceof DocumentBudgetExceeded)) throw error;
+              rejectDocument(initialMarkdown);
+              return;
+            }
+          } else if (onDocumentLimitExceededRef.current) {
+            // Never fall back to an unbounded parse when a budget was requested.
+            rejectDocument(initialMarkdown);
+            return;
           } else {
             ed.commands.setContent(initialContent, {
               emitUpdate: false,
@@ -647,7 +676,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
           click(_view, event) {
             const target = event.target as HTMLElement;
             // Skip links inside NodeView wrappers — they handle their own clicks
-            if (target.closest("[data-node-view-wrapper]")) return false;
+            if (isInNodeViewChrome(target)) return false;
 
             const link = target.closest("a");
             const href = link?.getAttribute("href");
@@ -668,7 +697,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
           auxclick(_view, event) {
             if (event.button !== 1) return false;
             const target = event.target as HTMLElement;
-            if (target.closest("[data-node-view-wrapper]")) return false;
+            if (isInNodeViewChrome(target)) return false;
             const href = target.closest("a")?.getAttribute("href");
             if (!href || isMentionHref(href)) return false;
             event.preventDefault();
@@ -763,6 +792,10 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     const applyExternalContent = useCallback(
       (markdown: string) => {
         if (!editor || editor.isDestroyed) return;
+        if (onDocumentLimitExceededRef.current && exceedsDescriptionBudget(markdown)) {
+          rejectDocument(markdown);
+          return;
+        }
         documentBaseRef.current = normalizeMarkdown(markdown);
         const before = normalizeEditorMarkdown(editor);
 
@@ -788,14 +821,25 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
         const { from, to } = editor.state.selection;
         // Same chunked path on WS-driven re-parse of a large description.
         const manager =
-          incoming.length > MARKDOWN_CHUNK_THRESHOLD
+          onDocumentLimitExceededRef.current || incoming.length > MARKDOWN_CHUNK_THRESHOLD
             ? (editor.storage as { markdown?: { manager?: MarkdownManagerLike } })
                 .markdown?.manager
             : undefined;
         if (manager) {
-          editor.commands.setContent(parseMarkdownChunked(manager, incoming), {
-            emitUpdate: false,
-          });
+          try {
+            editor.commands.setContent(parseMarkdownChunked(manager, incoming,
+              incoming.length <= MARKDOWN_CHUNK_THRESHOLD ? Infinity : undefined,
+              onDocumentLimitExceededRef.current ? DESCRIPTION_BUDGET : undefined), {
+              emitUpdate: false,
+            });
+          } catch (error) {
+            if (!(error instanceof DocumentBudgetExceeded)) throw error;
+            rejectDocument(markdown);
+            return;
+          }
+        } else if (onDocumentLimitExceededRef.current) {
+          rejectDocument(markdown);
+          return;
         } else {
           editor.commands.setContent(incoming, {
             emitUpdate: false,
@@ -817,7 +861,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
 
         lastEmittedRef.current = normalizeEditorMarkdown(editor);
       },
-      [editor],
+      [editor, rejectDocument],
     );
 
     // Sync explicit external `value` changes into the editor. `defaultValue`
