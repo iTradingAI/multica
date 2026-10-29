@@ -102,6 +102,40 @@ func TestFinalizeStreamResultPreservesErrorResultWhenContextEnds(t *testing.T) {
 	}
 }
 
+func TestFinalizeStreamResultTerminalBoundary(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		state  streamTerminalState
+		runErr error
+		guard  string
+		want   string
+	}{
+		{"delivered then control writer cancels", streamTerminalState{sawResult: true, finalResultText: "delivered"}, context.Canceled, "", "completed"},
+		{"delivered then cleanup deadline", streamTerminalState{sawResult: true, finalResultText: "delivered"}, context.DeadlineExceeded, "", "completed"},
+		{"delivered empty result then cancel", streamTerminalState{sawResult: true}, context.Canceled, "", "completed"},
+		{"delivered then stdout closed", streamTerminalState{sawResult: true, finalResultText: "delivered", scanErr: fmt.Errorf("file already closed")}, context.Canceled, "", "completed"},
+		{"cancel before result", streamTerminalState{lastAssistantText: "partial"}, context.Canceled, "", "aborted"},
+		{"deadline before result", streamTerminalState{lastAssistantText: "partial"}, context.DeadlineExceeded, "", "timeout"},
+		{"structured error wins", streamTerminalState{sawResult: true, terminalReasonError: "context exhausted"}, context.Canceled, "", "failed"},
+		{"background guard still fails", streamTerminalState{sawResult: true}, context.Canceled, "background task", "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, output, errText := finalizeStreamResult("claude", time.Second, tc.runErr, nil, nil, "session", tc.state, tc.guard)
+			if status != tc.want {
+				t.Fatalf("status=%s error=%q, want %s", status, errText, tc.want)
+			}
+			if status == "completed" {
+				if output != tc.state.finalResultText || errText != "" {
+					t.Fatalf("lost terminal output: %q / %q", output, errText)
+				}
+			} else if output != "" || errText == "" {
+				t.Fatalf("failure leaked output or lost error: %q / %q", output, errText)
+			}
+		})
+	}
+}
+
 func TestStreamProtocolObservationDoesNotLogContent(t *testing.T) {
 	t.Parallel()
 

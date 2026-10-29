@@ -74,6 +74,30 @@ func TestMain(m *testing.M) {
 	case "async_launched_tool_result":
 		runFakeClaudeAsyncLaunchedToolResult()
 		os.Exit(0)
+	case "terminal_then_cancel", "terminal_then_control_error":
+		reader := bufio.NewReader(os.Stdin)
+		if mode == "terminal_then_control_error" {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				os.Exit(30)
+			}
+			var init map[string]any
+			if json.Unmarshal(line, &init) != nil || init["type"] != "control_request" {
+				os.Exit(30)
+			}
+			_ = writeClaudeFrame(os.Stdout, map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": init["request_id"], "response": map[string]any{}}})
+		}
+		if _, err := reader.ReadString('\n'); err != nil {
+			os.Exit(31)
+		}
+		fmt.Println(`{"type":"result","subtype":"success","is_error":false,"session_id":"delivered-session","result":"delivered comment","modelUsage":{"glm-5.3":{"inputTokens":9237,"outputTokens":4062}}}`)
+		if mode == "terminal_then_control_error" {
+			// Reading the result closes stdin. This later control response must
+			// hit that closed pipe and cancel the backend's internal context.
+			_ = json.NewEncoder(os.Stdout).Encode(claudeSupplementHook("Stop", ""))
+		}
+		time.Sleep(time.Minute)
+		os.Exit(32)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown CLAUDE_FAKE_MODE: %q\n", mode)
 		os.Exit(2)

@@ -56,6 +56,11 @@ type Reason string
 const agentErrorPrefix = "agent_error."
 
 const (
+	// ReasonCancelled is a deliberate stop, not a failure. The daemon can
+	// report it through the legacy /fail endpoint; the server settles it as
+	// cancelled and emits no failure event. It is excluded from AllReasons.
+	ReasonCancelled Reason = "cancelled"
+
 	// Platform / scheduler side: failure attributable to Multica
 	// infrastructure rather than anything the agent process did. These
 	// are emitted by server-side sweepers (ExpireStaleQueuedTasks,
