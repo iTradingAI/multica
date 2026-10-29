@@ -10,12 +10,30 @@ import {
   saveUpdaterPreferences,
   updaterPreferencesPath,
 } from "./updater-preferences";
+import { openExternalSafely } from "./external-url";
 
-// Silent background updates: electron-updater downloads on its own as soon
-// as `update-available` fires; we only surface UI when the package is fully
-// downloaded and ready to install on next quit.
-autoUpdater.autoDownload = true;
+// Silent background updates download on non-macOS platforms. Squirrel.Mac
+// requires signed apps, while this fork's macOS builds are unsigned, so macOS
+// checks only and sends members to the matching installer instead.
+autoUpdater.autoDownload = process.platform !== "darwin";
 autoUpdater.autoInstallOnAppQuit = true;
+
+const MAC_RELEASES_URL = "https://github.com/iTradingAI/multica/releases/download";
+
+export function macInstallerDownloadUrl(
+  version: string,
+  arch: string = process.arch,
+): string | null {
+  // Update metadata is remote input. Keep the host, path shape, and architecture
+  // local, and accept only version strings that electron-builder can produce.
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
+    return null;
+  }
+  if (arch !== "arm64" && arch !== "x64") return null;
+
+  const fileName = `multica-desktop-${version}-mac-${arch}.dmg`;
+  return `${MAC_RELEASES_URL}/v${encodeURIComponent(version)}/${encodeURIComponent(fileName)}`;
+}
 
 // Windows arm64 ships its own update metadata channel because
 // electron-builder's `latest.yml` is not arch-suffixed on Windows — both
@@ -116,6 +134,7 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null): voi
   let startupCheckElapsed = false;
   let startupTimer: ReturnType<typeof setTimeout> | null = null;
   let periodicTimer: ReturnType<typeof setInterval> | null = null;
+  let availableMacUpdateVersion: string | null = null;
   const preferencesReady = loadUpdaterPreferences(preferencesFilePath).then(
     (preferences) => {
       automaticUpdatesEnabled = preferences.automaticUpdates;
@@ -170,11 +189,15 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null): voi
   };
 
   autoUpdater.on("update-available", (info) => {
-    // Forwarded for renderer-side state tracking only; the notification UI
-    // does not render an "available" affordance with autoDownload=true.
+    // Non-macOS renderers track availability until their background download
+    // completes; macOS renders the manual installer action immediately.
+    const manualInstall =
+      process.platform === "darwin" && macInstallerDownloadUrl(info.version) !== null;
+    if (manualInstall) availableMacUpdateVersion = info.version;
     sendToLiveRenderer(getMainWindow(), "updater:update-available", {
       version: info.version,
       releaseNotes: info.releaseNotes,
+      manualInstall,
     });
   });
 
@@ -195,13 +218,27 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null): voi
     console.error("Auto-updater error:", err);
   });
 
-  // Retained for IPC back-compat with older renderer bundles. With
-  // autoDownload=true the renderer no longer triggers this path.
+  // Retained for IPC back-compat with older renderer bundles. Non-macOS
+  // builds download automatically; macOS users receive an installer link.
   ipcMain.handle("updater:download", () => {
+    if (process.platform === "darwin") {
+      const url = availableMacUpdateVersion
+        ? macInstallerDownloadUrl(availableMacUpdateVersion)
+        : null;
+      if (!url) throw new Error("No compatible macOS update is available");
+      return openExternalSafely(url);
+    }
     return autoUpdater.downloadUpdate();
   });
 
   ipcMain.handle("updater:install", () => {
+    if (process.platform === "darwin") {
+      const url = availableMacUpdateVersion
+        ? macInstallerDownloadUrl(availableMacUpdateVersion)
+        : null;
+      if (!url) throw new Error("No compatible macOS update is available");
+      return openExternalSafely(url);
+    }
     autoUpdater.quitAndInstall(false, true);
   });
 
@@ -253,11 +290,22 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null): voi
       // those cases updateInfo.version differs from app.getVersion() but no
       // `update-available` event fires, so showing "available" here would
       // promise a download prompt that never appears.
+      const available = result?.isUpdateAvailable ?? false;
+      const latestVersion = result?.updateInfo.version ?? currentVersion;
+      const manualInstall =
+        process.platform === "darwin" &&
+        available &&
+        macInstallerDownloadUrl(latestVersion) !== null;
+      if (process.platform === "darwin" && available && !manualInstall) {
+        return { ok: false, error: "No compatible macOS update is available" };
+      }
+      if (manualInstall) availableMacUpdateVersion = latestVersion;
       return {
         ok: true,
         currentVersion,
-        latestVersion: result?.updateInfo.version ?? currentVersion,
-        available: result?.isUpdateAvailable ?? false,
+        latestVersion,
+        available,
+        manualInstall,
       };
     } catch (err) {
       return {

@@ -6,6 +6,7 @@ import { setApiInstance } from "@multica/core/api";
 import type { ApiClient } from "@multica/core/api/client";
 import { NavigationProvider } from "../../navigation";
 import type { NavigationAdapter } from "../../navigation";
+import { IssueDetail } from "./issue-detail";
 import {
   IssueDetailRoute,
   parseCommentHighlightHash,
@@ -60,7 +61,7 @@ describe("useCanonicalIssueUrl", () => {
     expect(replace).not.toHaveBeenCalled();
 
     rerender({ identifier: "TRS-134" });
-    expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134");
+    expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134", { preservePage: true });
     expect(push).not.toHaveBeenCalled();
   });
 
@@ -87,7 +88,7 @@ describe("useCanonicalIssueUrl", () => {
   // to the issue's real identifier rather than left as typed.
   it("normalizes a differently-cased identifier segment", () => {
     renderHook(() => useCanonicalIssueUrl("trs-134", "TRS-134"), { wrapper });
-    expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134");
+    expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134", { preservePage: true });
   });
 
   it("preserves a source-comment deep link while canonicalizing a UUID", () => {
@@ -99,7 +100,7 @@ describe("useCanonicalIssueUrl", () => {
       ),
       { wrapper },
     );
-    expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134#comment-comment-7");
+    expect(replace).toHaveBeenCalledWith("/acme/issues/TRS-134#comment-comment-7", { preservePage: true });
   });
 });
 
@@ -123,6 +124,7 @@ describe("IssueDetailRoute with an identifier that names no issue", () => {
   // failed — an unbounded request loop that never reached "not found".
   // Retry is off so any count above 1 can only be a remount refetch.
   it("settles on not-found without looping requests", async () => {
+    expect(vi.isMockFunction(IssueDetail)).toBe(false);
     replace.mockClear();
     push.mockClear();
     const getIssue = vi.fn().mockRejectedValue(new Error("issue not found"));

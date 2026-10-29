@@ -2,12 +2,13 @@
 #
 # The upstream release.yml gates its `desktop` job behind the upstream
 # `release` job (owner-check), so forks get no installers from it. This
-# workflow fills that gap: on a version tag it packages unsigned Linux and
-# Windows installers and attaches them to the tag's GitHub Release.
+# workflow fills that gap: on a version tag it packages unsigned Linux,
+# Windows and macOS installers and attaches them to the tag's GitHub Release.
 #
-# macOS stays a local build — the official pipeline signs + notarizes with
-# Apple credentials we deliberately do not hold in CI; self-built users run
-# `CSC_IDENTITY_AUTO_DISCOVERY=false pnpm package` on their Mac.
+# macOS builds have no Developer ID signing or notarization. First launch
+# may require right-click > Open in Gatekeeper. Apple credentials (option 2)
+# remain an owner decision; no credentials are needed for these builds.
+# PR/manual runs only retain workflow artifacts and never publish a release.
 
 name: Desktop release (fork)
 
@@ -16,9 +17,17 @@ on:
     tags:
       - "v*.*.*"
       - "!v*-dirty*"
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/fork-desktop-release.yml
+      - apps/desktop/scripts/package.mjs
+      - apps/desktop/scripts/bundle-cli.mjs
+      - apps/desktop/electron-builder.yml
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   desktop:
@@ -29,6 +38,7 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux
+            arch: x64
           # NOT windows-latest: the windows-2025 image no longer exposes a
           # Visual Studio instance node-gyp can find, so the node-pty
           # rebuild during install-app-deps fails with "Could not find any
@@ -36,12 +46,20 @@ jobs:
           # C++ toolchain that node-gyp detects.
           - os: windows-2022
             target: win
+            arch: x64
+          - os: macos-15
+            target: mac
+            arch: arm64
+          - os: macos-15-intel
+            target: mac
+            arch: x64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout (full history for git describe versioning)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install rpmbuild (Linux)
         if: matrix.target == 'linux'
@@ -79,53 +97,67 @@ jobs:
         # electron-builder's default publish policy attempts a GitHub
         # Release upload, which fails without GH_TOKEN. The explicit
         # upload steps below handle publishing instead.
-        run: node scripts/package.mjs --${{ matrix.target }} --x64 --publish never
+        run: node scripts/package.mjs --${{ matrix.target }} --${{ matrix.arch }} --publish never
 
-      - name: Upload installers to the GitHub Release
-        if: matrix.target == 'linux'
+      - name: Verify macOS installers and update metadata
+        if: matrix.target == 'mac'
         shell: bash
         working-directory: apps/desktop
         env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmg=(dist/multica-desktop-*-mac-"$ARCH".dmg)
+          zip=(dist/multica-desktop-*-mac-"$ARCH".zip)
+          test "${#dmg[@]}" -eq 1
+          test "${#zip[@]}" -eq 1
+          metadata=dist/latest-mac.yml
+          if [ "$ARCH" = x64 ]; then metadata=dist/latest-x64-mac.yml; fi
+          test -s "$metadata"
+
+      - name: Retain installers and update metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target }}-${{ matrix.arch }}
+          path: |
+            apps/desktop/dist/multica-desktop-*
+            apps/desktop/dist/latest*.yml
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    # A manual run on a tag is still a dry run. Only tag pushes publish.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: desktop
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Collect all platform installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: dist
+          merge-multiple: true
+
+      - name: Upload installers to the GitHub Release
+        env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           shopt -s nullglob
-          # Include electron-updater metadata (latest.yml / latest-linux.yml)
-          # alongside the installers — without them installed clients cannot
-          # discover or verify new versions from this release.
+          # Include blockmaps and both architecture-specific macOS feeds.
           files=(dist/multica-desktop-* dist/latest*.yml)
           if [ ${#files[@]} -eq 0 ]; then
             echo "::error::No installer artifacts found in dist/"
             exit 1
           fi
+          # release.yml can create the same release concurrently.
           gh release view "$TAG" --json name >/dev/null 2>&1 \
-            || gh release create "$TAG" --title "$TAG" --generate-notes
-          gh release upload "$TAG" "${files[@]}" --clobber
-          echo "Uploaded:"; printf '  %s\n' "${files[@]}"
-
-      - name: Upload installers (Windows)
-        if: matrix.target == 'win'
-        shell: bash
-        working-directory: apps/desktop
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          # latest.yml + blockmap feed electron-updater's Windows flow.
-          files=(dist/multica-desktop-* dist/latest*.yml)
-          # The linux job creates the release; wait briefly so both jobs
-          # never race release creation. On a rare race the check below
-          # retries.
-          for i in 1 2 3 4 5 6; do
-            if gh release view "$TAG" --json name >/dev/null 2>&1; then
-              break
-            fi
-            sleep 60
-          done
-          gh release view "$TAG" --json name >/dev/null 2>&1 \
-            || gh release create "$TAG" --title "$TAG" --generate-notes
+            || gh release create "$TAG" --title "$TAG" --generate-notes \
+            || gh release view "$TAG" --json name >/dev/null
           gh release upload "$TAG" "${files[@]}" --clobber
           echo "Uploaded:"; printf '  %s\n' "${files[@]}"

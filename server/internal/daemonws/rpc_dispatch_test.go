@@ -17,8 +17,10 @@ import (
 // client conn plus the hub.
 func dialRPCTestConn(t *testing.T, hub *Hub, identity ClientIdentity) *websocket.Conn {
 	t.Helper()
+	ready := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hub.HandleWebSocket(w, r, identity)
+		close(ready)
 	}))
 	t.Cleanup(server.Close)
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
@@ -27,6 +29,13 @@ func dialRPCTestConn(t *testing.T, hub *Hub, identity ClientIdentity) *websocket
 		t.Fatalf("Dial: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ready:
+	case <-timer.C:
+		t.Fatal("timed out waiting for daemon WebSocket registration")
+	}
 	return conn
 }
 
@@ -87,6 +96,46 @@ func TestRPCDispatch_RoundTrip(t *testing.T) {
 	}
 	if gotMethod != "tasks.claim" || gotDaemonID != "daemon-1" {
 		t.Fatalf("handler saw method=%q daemon=%q, want tasks.claim/daemon-1", gotMethod, gotDaemonID)
+	}
+}
+
+func TestRPCDispatch_ResponsePrecedesCleanup(t *testing.T) {
+	hub := NewHub()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	hub.SetRPCHandler(func(ctx context.Context, _ ClientIdentity, _ string, _ json.RawMessage) (int, json.RawMessage, error) {
+		if !AfterRPCResponse(ctx, func() {
+			close(entered)
+			<-release
+			close(finished)
+		}) {
+			t.Error("hub request has no completion phase")
+		}
+		return http.StatusOK, json.RawMessage(`{"ok":true}`), nil
+	})
+	defer func() {
+		close(release)
+		select {
+		case <-finished:
+		case <-time.After(2 * time.Second):
+			t.Error("RPC cleanup did not finish")
+		}
+	}()
+	conn := dialRPCTestConn(t, hub, ClientIdentity{DaemonID: "daemon-cleanup", RuntimeIDs: []string{"rt-cleanup"}})
+	resp := sendRPCRequest(t, conn, protocol.RPCRequestPayload{RequestID: "cleanup", Method: "tasks.claim"})
+	if resp.Status != http.StatusOK || string(resp.Body) != `{"ok":true}` {
+		t.Fatalf("response = %+v", resp)
+	}
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleanup was not called")
+	}
+	select {
+	case <-finished:
+		t.Fatal("cleanup finished before being released")
+	default:
 	}
 }
 

@@ -45,10 +45,11 @@ type RepoData struct {
 // ProjectResourceData mirrors handler.ProjectResourceData — a single project
 // resource as delivered to the daemon. resource_ref is type-specific JSON.
 type ProjectResourceData struct {
-	ID           string          `json:"id"`
-	ResourceType string          `json:"resource_type"`
-	ResourceRef  json.RawMessage `json:"resource_ref"`
-	Label        string          `json:"label,omitempty"`
+	BindingGeneration int64           `json:"binding_generation,omitempty"`
+	ID                string          `json:"id"`
+	ResourceType      string          `json:"resource_type"`
+	ResourceRef       json.RawMessage `json:"resource_ref"`
+	Label             string          `json:"label,omitempty"`
 }
 
 // ConnectedAppData keeps the claim-response field local to daemon types while
@@ -65,9 +66,19 @@ type IssueStatusData struct {
 	Description string `json:"description,omitempty"`
 }
 
+// ProjectWorkflowData mirrors the claim payload's project workflow (MUL-7420).
+// Brief is rendered by the server for this run — the assignee's or an
+// observer's — and goes into the per-turn prompt as is.
+type ProjectWorkflowData struct {
+	Brief string `json:"brief"`
+}
+
 // Task represents a claimed task from the server.
 // Agent data (name, skills) is populated by the claim endpoint.
 type Task struct {
+	// Never inject this task-bound machine credential into provider env/config.
+	FileTouchDaemonToken  string `json:"file_touch_daemon_token,omitempty"`
+	FileTouchProofVersion int    `json:"file_touch_proof_version,omitempty"`
 	// StartClaimSupported gates retries when talking to older servers.
 	StartClaimSupported  bool                   `json:"start_claim_supported,omitempty"`
 	DispatchedAt         string                 `json:"dispatched_at,omitempty"`
@@ -98,6 +109,7 @@ type Task struct {
 	// the built-in-only form. IssueStatusesOmitted is the cap overflow count.
 	IssueStatuses                 []IssueStatusData      `json:"issue_statuses,omitempty"`
 	IssueStatusesOmitted          int                    `json:"issue_statuses_omitted,omitempty"`
+	ProjectWorkflow               *ProjectWorkflowData   `json:"project_workflow,omitempty"`
 	ThreadName                    string                 `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
 	Agent                         *AgentData             `json:"agent,omitempty"`
 	ConnectedApps                 []ConnectedAppData     `json:"connected_apps,omitempty"` // per-run app capabilities mounted through runtime MCP overlays

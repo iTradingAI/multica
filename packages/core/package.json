@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "exports": {
+    "./workspace-files": "./workspace-files/index.ts",
     ".": "./index.ts",
     "./markdown": "./markdown/index.ts",
     "./types": "./types/index.ts",
@@ -34,6 +35,10 @@
     "./issue-statuses/queries": "./issue-statuses/queries.ts",
     "./issue-statuses/hooks": "./issue-statuses/hooks.ts",
     "./issue-statuses/mutations": "./issue-statuses/mutations.ts",
+    "./issue-workflows": "./issue-workflows/index.ts",
+    "./issue-workflows/queries": "./issue-workflows/queries.ts",
+    "./issue-workflows/hooks": "./issue-workflows/hooks.ts",
+    "./issue-workflows/mutations": "./issue-workflows/mutations.ts",
     "./issues": "./issues/index.ts",
     "./issues/batch": "./issues/batch.ts",
     "./issues/canonical-id": "./issues/canonical-id.ts",
@@ -164,7 +169,8 @@
     "./skills/frontmatter": "./skills/frontmatter.ts",
     "./skills/pack-archive": "./skills/pack-archive.ts",
     "./skills/stores": "./skills/stores/index.ts",
-    "./autopilots/stores": "./autopilots/stores/index.ts"
+    "./autopilots/stores": "./autopilots/stores/index.ts",
+    "./runtimes/qoder": "./runtimes/qoder.ts"
   },
   "dependencies": {
     "@formatjs/intl-localematcher": "catalog:",

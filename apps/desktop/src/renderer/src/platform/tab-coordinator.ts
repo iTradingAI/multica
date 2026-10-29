@@ -14,24 +14,10 @@ import {
 } from "@/stores/tab-store";
 
 /**
- * Tab Coordinator (MUL-4741 Phase 2) — the ONLY writer of the single app
- * router.
- *
- * Architecture: the tab store is the source of truth; the router is a
- * projection of the active session's URL. The Coordinator subscribes to the
- * store and *reconciles* the router to `activeSession.url`, stamping every
- * navigation with a token. All entry points (tab bar clicks, adapter
- * push/replace, shell back/forward, error recovery) mutate the store — none
- * of them touch the router. This makes invariant 1 hold by construction:
- *
- *   - Router location change WITH a pending token   → expected, consume it.
- *   - Router location change WITHOUT a pending token → protocol error →
- *     bounded recovery (re-reconcile toward the session URL, capped).
- *
- * The router's own history is never used: the Coordinator always navigates
- * with `replace`, and per-tab back/forward is a session operation over the
- * session's virtual history stack. A POP therefore can only come from
- * unforeseen code and is handled by the same protocol-error path.
+ * Project the active tab session onto the single app router. Navigation entry
+ * points mutate the store; only this coordinator writes the router, using replace
+ * and a pending token. Untokened location changes trigger bounded reconciliation.
+ * Per-tab virtual history owns back/forward; router POP is a protocol error.
  */
 
 let router: DataRouter | null = null;
@@ -245,8 +231,18 @@ function handleStoreChange(): void {
     lastIdentity = identity;
     lastActiveTabId = active?.id ?? null;
     lastActiveUrl = activeUrl;
-    if (outgoingTabId && outgoingUrl) {
-      const routeKey = splitTabUrl(outgoingUrl).pathname;
+    // The fallback has no page scroll roots yet. Preserve the saved memento
+    // until the real page mounts, including across tab/workspace switches.
+    const pageUnavailable = activeHostElement?.querySelector(
+      "[data-route-pending], [data-route-load-error]",
+    );
+    const routeKey = outgoingUrl ? splitTabUrl(outgoingUrl).pathname : null;
+    // Store notifications can outrun React commits. Never attribute the old
+    // page's still-mounted DOM to a destination that has not rendered yet.
+    const mountedPath = activeHostElement
+      ?.querySelector("[data-route-pathname]")
+      ?.getAttribute("data-route-pathname");
+    if (outgoingTabId && routeKey && !pageUnavailable && (!mountedPath || mountedPath === routeKey)) {
       // Always commit — REPLACE semantics clear entries for containers that
       // scrolled back to 0; the store skips the write when nothing changed.
       useTabStore

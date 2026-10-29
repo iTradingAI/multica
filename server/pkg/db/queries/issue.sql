@@ -478,6 +478,21 @@ LIMIT 1;
 WITH target AS (
     SELECT issue.id FROM issue WHERE issue.id = $1 AND issue.workspace_id = $2
 ),
+cleared_file_touch_execution AS (
+ DELETE FROM file_touch_execution WHERE file_touch_execution.issue_id IN (SELECT target.id FROM target)
+),
+cleared_issue_file_touch_pending AS (
+ DELETE FROM issue_file_touch_pending WHERE issue_file_touch_pending.issue_id IN (SELECT target.id FROM target)
+),
+cleared_issue_file_touch_event AS (
+ DELETE FROM issue_file_touch_event WHERE issue_file_touch_event.issue_id IN (SELECT target.id FROM target)
+),
+cleared_issue_file_touches AS (
+ DELETE FROM issue_file_touches WHERE issue_file_touches.issue_id IN (SELECT target.id FROM target)
+),
+cleared_issue_file_touch_backfill AS (
+ DELETE FROM issue_file_touch_backfill WHERE issue_file_touch_backfill.run_id IN (SELECT id FROM agent_task_queue WHERE issue_id IN (SELECT target.id FROM target))
+),
 cleared_wakeup_receipts AS (
  DELETE FROM issue_wakeup_receipt WHERE wakeup_id IN (SELECT id FROM issue_wakeup WHERE issue_id IN (SELECT target.id FROM target))
 ),

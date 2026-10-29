@@ -82,7 +82,7 @@ func TestWorkspaceFilesReadFramesStayBoundedAndPreserveUTF8(t *testing.T) {
 	if len(data) != workspaceFilesMaxReadBytes {
 		t.Fatalf("fixture length = %d", len(data))
 	}
-	frames, err := buildWorkspaceFilesReadFrames("daemon-req", "runtime", "resource", data)
+	frames, err := buildWorkspaceFilesReadFrames("daemon-req", "runtime", "resource", data, protocol.WorkspaceFilesGeneration{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,10 +113,10 @@ func TestWorkspaceFilesReadFramesStayBoundedAndPreserveUTF8(t *testing.T) {
 	if !bytes.Equal(combined, data) {
 		t.Fatal("chunk reconstruction differs from the validated input")
 	}
-	if _, err := buildWorkspaceFilesReadFrames("id", "r", "x", []byte{0xff}); err == nil {
+	if _, err := buildWorkspaceFilesReadFrames("id", "r", "x", []byte{0xff}, protocol.WorkspaceFilesGeneration{}); err == nil {
 		t.Fatal("read builder accepted invalid UTF-8")
 	}
-	empty, err := buildWorkspaceFilesReadFrames("id", "r", "x", nil)
+	empty, err := buildWorkspaceFilesReadFrames("id", "r", "x", nil, protocol.WorkspaceFilesGeneration{})
 	if err != nil || len(empty) != 1 {
 		t.Fatalf("empty file frames=%d err=%v", len(empty), err)
 	}
@@ -134,7 +134,7 @@ func TestWorkspaceFilesListFramesStayBoundedAndMarkOnlyFinalFrame(t *testing.T) 
 	for i := range entries {
 		entries[i] = protocol.WorkspaceFilesEntry{Name: strings.Repeat("a", 230) + string(rune('a'+i%26)), Type: "regular"}
 	}
-	frames, err := buildWorkspaceFilesListFrames("request", "runtime", "resource", entries, "opaque-cursor", 7)
+	frames, err := buildWorkspaceFilesListFrames("request", "runtime", "resource", entries, "opaque-cursor", 7, protocol.WorkspaceFilesGeneration{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestWorkspaceFilesListFramesStayBoundedAndMarkOnlyFinalFrame(t *testing.T) 
 	if count != len(entries) {
 		t.Fatalf("framed %d entries, want %d", count, len(entries))
 	}
-	if frame := buildWorkspaceFilesErrorFrame("req", "runtime", "resource", "C:\\secret\\path"); frame == nil {
+	if frame := buildWorkspaceFilesErrorFrame("req", "runtime", "resource", "C:\\secret\\path", protocol.WorkspaceFilesGeneration{}); frame == nil {
 		t.Fatal("failed to build fixed error frame")
 	} else {
 		if len(frame) > workspaceFilesMaxFrameBytes || bytes.Contains(frame, []byte("C:\\secret")) {
@@ -305,7 +305,7 @@ func TestWorkspaceFilesTimeoutCancelDuplicateAndConcurrency(t *testing.T) {
 	deadline := time.Now().Add(100 * time.Millisecond).UnixMilli()
 	ch.start("timeout-id", "runtime", "resource", deadline, func(p *workspaceFilesPending) {
 		ch.runRead(p, protocol.WorkspaceFilesReadPayload{DaemonReqID: p.id, RuntimeID: p.runtimeID, ResourceID: p.resourceID, RootPath: `C:\virtual`, Path: "blocked.txt"})
-	})
+	}, protocol.WorkspaceFilesGeneration{})
 	if _, err := waitFakeSignal(blocking.readStarted, time.Second); err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +320,7 @@ func TestWorkspaceFilesTimeoutCancelDuplicateAndConcurrency(t *testing.T) {
 	cancelCh, cancelOut, cancelBlocking := newBlockingChannel()
 	cancelCh.start("cancel-id", "runtime", "resource", 0, func(p *workspaceFilesPending) {
 		cancelCh.runRead(p, protocol.WorkspaceFilesReadPayload{DaemonReqID: p.id, RuntimeID: p.runtimeID, ResourceID: p.resourceID, RootPath: `C:\virtual`, Path: "blocked.txt"})
-	})
+	}, protocol.WorkspaceFilesGeneration{})
 	if _, err := waitFakeSignal(cancelBlocking.readStarted, time.Second); err != nil {
 		t.Fatal(err)
 	}
@@ -341,18 +341,18 @@ func TestWorkspaceFilesTimeoutCancelDuplicateAndConcurrency(t *testing.T) {
 	wrongRuntimeCh, wrongRuntimeOut := newWorkspaceFilesTestChannel(wrongRuntimeRoot)
 	wrongRuntimeCh.start("runtime-bound-id", "runtime-a", "resource", 0, func(p *workspaceFilesPending) {
 		wrongRuntimeCh.runRead(p, protocol.WorkspaceFilesReadPayload{DaemonReqID: p.id, RuntimeID: p.runtimeID, ResourceID: p.resourceID, RootPath: `C:\virtual`, Path: "blocked.txt"})
-	})
+	}, protocol.WorkspaceFilesGeneration{})
 	if _, err := waitFakeSignal(wrongRuntimeBlocking.readStarted, time.Second); err != nil {
 		t.Fatal(err)
 	}
-	wrongRuntimeCh.cancelPendingForRuntime("runtime-bound-id", "runtime-b")
+	wrongRuntimeCh.cancelPendingForRuntime("runtime-bound-id", "runtime-b", protocol.WorkspaceFilesGeneration{})
 	wrongRuntimeCh.mu.Lock()
 	stillPending := wrongRuntimeCh.pending["runtime-bound-id"] != nil
 	wrongRuntimeCh.mu.Unlock()
 	if !stillPending {
 		t.Fatal("cancel from another runtime canceled the request")
 	}
-	wrongRuntimeCh.cancelPendingForRuntime("runtime-bound-id", "runtime-a")
+	wrongRuntimeCh.cancelPendingForRuntime("runtime-bound-id", "runtime-a", protocol.WorkspaceFilesGeneration{})
 	if _, err := waitFakeSignal(wrongRuntimeBlocking.closedSignal, time.Second); err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +374,7 @@ func TestWorkspaceFilesTimeoutCancelDuplicateAndConcurrency(t *testing.T) {
 		id := fmtWorkspaceFilesIndex(i)
 		concurrentCh.start(id, "runtime", "resource", 0, func(p *workspaceFilesPending) {
 			concurrentCh.runRead(p, protocol.WorkspaceFilesReadPayload{DaemonReqID: p.id, RuntimeID: p.runtimeID, ResourceID: p.resourceID, RootPath: `C:\virtual`, Path: "blocked.txt"})
-		})
+		}, protocol.WorkspaceFilesGeneration{})
 	}
 	if _, err := waitFakeSignal(concurrentBlocking.readStarted, time.Second); err != nil {
 		t.Fatal(err)
@@ -384,14 +384,14 @@ func TestWorkspaceFilesTimeoutCancelDuplicateAndConcurrency(t *testing.T) {
 	concurrentCh.mu.Unlock()
 	concurrentCh.start(fmtWorkspaceFilesIndex(0), "other-runtime", "other-resource", 0, func(*workspaceFilesPending) {
 		t.Fatal("duplicate internal ID started a second worker")
-	})
+	}, protocol.WorkspaceFilesGeneration{})
 	concurrentCh.mu.Lock()
 	gotFirst := concurrentCh.pending[fmtWorkspaceFilesIndex(0)]
 	concurrentCh.mu.Unlock()
 	if gotFirst != first || first.runtimeID != "runtime" {
 		t.Fatal("duplicate internal ID replaced the existing pending request")
 	}
-	concurrentCh.start("overflow", "runtime", "resource", 0, func(*workspaceFilesPending) { t.Fatal("busy request started a worker") })
+	concurrentCh.start("overflow", "runtime", "resource", 0, func(*workspaceFilesPending) { t.Fatal("busy request started a worker") }, protocol.WorkspaceFilesGeneration{})
 	if got := parseWorkspaceFilesError(t, waitWorkspaceFilesFrame(t, concurrentOut)); got != protocol.WorkspaceFilesErrorBusy {
 		t.Fatalf("fifth request error code = %q", got)
 	}
@@ -421,7 +421,7 @@ func TestWorkspaceFilesTimedOutStuckWorkersRemainBounded(t *testing.T) {
 		path := fmtWorkspaceFilesIndex(i)
 		ch.start(id, "runtime", "resource", deadline, func(p *workspaceFilesPending) {
 			ch.runRead(p, protocol.WorkspaceFilesReadPayload{DaemonReqID: p.id, RuntimeID: p.runtimeID, ResourceID: p.resourceID, RootPath: `C:\virtual`, Path: path})
-		})
+		}, protocol.WorkspaceFilesGeneration{})
 	}
 	for _, file := range blocked {
 		if _, err := waitFakeSignal(file.readStarted, time.Second); err != nil {
@@ -442,7 +442,7 @@ func TestWorkspaceFilesTimedOutStuckWorkersRemainBounded(t *testing.T) {
 	}
 	ch.start("after-timeouts", "runtime", "resource", 0, func(*workspaceFilesPending) {
 		t.Fatal("request started while all bounded workers remain stuck")
-	})
+	}, protocol.WorkspaceFilesGeneration{})
 	if got := parseWorkspaceFilesError(t, waitWorkspaceFilesFrame(t, out)); got != protocol.WorkspaceFilesErrorBusy {
 		t.Fatalf("request after stuck timeouts error = %q", got)
 	}
@@ -535,7 +535,7 @@ func newWorkspaceFilesTestChannel(root *fakeWorkspaceFilesHandle) (*workspaceFil
 func runWorkspaceFilesList(t *testing.T, ch *workspaceFilesChannel, out <-chan []byte, id string, payload protocol.WorkspaceFilesListPayload) workspaceFilesTestResult {
 	t.Helper()
 	payload.DaemonReqID = id
-	ch.start(id, payload.RuntimeID, payload.ResourceID, payload.DeadlineMS, func(p *workspaceFilesPending) { ch.runList(p, payload) })
+	ch.start(id, payload.RuntimeID, payload.ResourceID, payload.DeadlineMS, func(p *workspaceFilesPending) { ch.runList(p, payload) }, protocol.WorkspaceFilesGeneration{})
 	result := workspaceFilesTestResult{}
 	for {
 		frame := waitWorkspaceFilesFrame(t, out)
@@ -565,7 +565,7 @@ func runWorkspaceFilesRead(t *testing.T, ch *workspaceFilesChannel, out <-chan [
 		rootPath = rootOverride[0]
 	}
 	payload := protocol.WorkspaceFilesReadPayload{DaemonReqID: id, RuntimeID: "runtime", ResourceID: "resource", RootPath: rootPath, Path: path}
-	ch.start(id, payload.RuntimeID, payload.ResourceID, 0, func(p *workspaceFilesPending) { ch.runRead(p, payload) })
+	ch.start(id, payload.RuntimeID, payload.ResourceID, 0, func(p *workspaceFilesPending) { ch.runRead(p, payload) }, protocol.WorkspaceFilesGeneration{})
 	result := workspaceFilesTestResult{}
 	for {
 		frame := waitWorkspaceFilesFrame(t, out)
@@ -865,7 +865,7 @@ func waitFakeSignal(ch <-chan struct{}, timeout time.Duration) (struct{}, error)
 }
 
 func TestWorkspaceFilesStableErrorFramesNeverEchoUnderlyingErrors(t *testing.T) {
-	frame := buildWorkspaceFilesErrorFrame("req", "runtime", "resource", protocol.WorkspaceFilesErrorSymlinkDenied)
+	frame := buildWorkspaceFilesErrorFrame("req", "runtime", "resource", protocol.WorkspaceFilesErrorSymlinkDenied, protocol.WorkspaceFilesGeneration{})
 	if frame == nil || bytes.Contains(frame, []byte("C:\\private")) || bytes.Contains(frame, []byte("/home/secret")) {
 		t.Fatalf("error frame contains a path or is empty: %q", frame)
 	}
@@ -893,7 +893,7 @@ func TestWorkspaceFilesOnlyReturnsStableErrorCodes(t *testing.T) {
 	if got := workspaceFilesErrorCode(errors.New(`open C:\secret\file: permission denied`), protocol.WorkspaceFilesErrorUnavailable); got != protocol.WorkspaceFilesErrorUnavailable {
 		t.Fatalf("unknown OS error mapping = %q", got)
 	}
-	if frame := buildWorkspaceFilesErrorFrame("req", "runtime", "resource", `open C:\secret\file`); bytes.Contains(frame, []byte("secret")) {
+	if frame := buildWorkspaceFilesErrorFrame("req", "runtime", "resource", `open C:\secret\file`, protocol.WorkspaceFilesGeneration{}); bytes.Contains(frame, []byte("secret")) {
 		t.Fatalf("arbitrary error text escaped into frame: %q", frame)
 	}
 }

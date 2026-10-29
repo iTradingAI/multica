@@ -46,7 +46,9 @@ export function NavigationProvider({
     () => ({
       ...value,
       push: (path: string) => startTransition(() => value.push(path)),
-      replace: (path: string) => startTransition(() => value.replace(path)),
+      replace: (path, options) => startTransition(() =>
+        options ? value.replace(path, options) : value.replace(path),
+      ),
     }),
     [value],
   );

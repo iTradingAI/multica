@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Outlet, useParams } from "react-router-dom";
+import { Suspense, useEffect, useState } from "react";
+import { Outlet, useLocation, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import {
@@ -10,9 +10,9 @@ import { getCurrentSlug, setCurrentWorkspace } from "@multica/core/platform";
 import { isWorkspaceDeletePending } from "@multica/core/workspace/pending-delete";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceSeen } from "@multica/views/workspace/use-workspace-seen";
-import { WelcomeAfterOnboarding } from "@multica/views/workspace/welcome-after-onboarding";
 import { WorkspacePresencePrefetch } from "@multica/views/layout";
 import { SourceBackfillModal } from "@multica/views/onboarding";
+import { PageLoading } from "./page-loading";
 import { useTabStore } from "@/stores/tab-store";
 import { useWindowOverlayStore } from "@/stores/window-overlay-store";
 
@@ -47,6 +47,7 @@ let singletonOwner: symbol | null = null;
  * the WindowOverlay takes over (zero valid workspaces).
  */
 export function WorkspaceRouteLayout() {
+  const { pathname } = useLocation();
   const { workspaceSlug } = useParams<{ workspaceSlug: string }>();
   // Identity for this mounted instance. A Symbol so two layouts can never
   // compare equal — including the incoming and outgoing layout of a
@@ -57,12 +58,11 @@ export function WorkspaceRouteLayout() {
   const isAuthLoading = useAuthStore((s) => s.isLoading);
   // While a WindowOverlay is open (onboarding, accept-invite, new-workspace),
   // the underlying tab is still mounted in the React tree — so this layout
-  // and its WelcomeAfterOnboarding Modal would render UNDER the overlay.
+  // and its SourceBackfillModal would render UNDER the overlay.
   // Because the modal uses a Portal that targets document.body, it ends up
   // rendered LATER in the DOM and visually outranks the overlay's z-50.
-  // Suppress the modal whenever any overlay is active; the moment the
-  // overlay closes the welcome hook re-evaluates and pops if its store
-  // signal is still set.
+  // Suppress the modal whenever any overlay is active; it re-evaluates the
+  // moment the overlay closes.
   const overlayActive = useWindowOverlayStore((s) => s.overlay !== null);
 
   // Workspace routes require auth. App.tsx renders <DesktopLoginPage>
@@ -178,21 +178,20 @@ export function WorkspaceRouteLayout() {
   return (
     <WorkspaceSlugProvider slug={workspaceSlug}>
       <WorkspacePresencePrefetch />
-      <Outlet />
-      {/* Reads the welcome-store transient signal parked by
-       *  OnboardingFlow.handleRuntimeNext. Suppressed while a WindowOverlay
-       *  (onboarding / accept-invite / new-workspace) is open so the modal
-       *  doesn't portal-jump in front of an active pre-workspace flow.
-       *  Once the overlay closes the hook re-evaluates and pops the
-       *  Modal — unless the store signal has already been consumed, in
-       *  which case the hook renders null. */}
-      {!overlayActive && <WelcomeAfterOnboarding />}
+      <div data-route-pathname={pathname} style={{ display: "contents" }}>
+        <Suspense key={pathname} fallback={<PageLoading />}>
+          <Outlet />
+        </Suspense>
+      </div>
+      {/* Upstream MUL-8047 replaced the post-onboarding welcome modal with
+       * opening the runtime guide issue directly; the fork component was
+       * retired with the merge. */}
       {/* Source-attribution backfill: same Dialog the web shell mounts
        *  inside DashboardLayout. Desktop's WorkspaceRouteLayout doesn't
        *  wrap DashboardLayout, so the modal has to be wired in directly
-       *  here. Same overlay-suppression rule as WelcomeAfterOnboarding —
-       *  a portal-rendered Dialog at z-50 would otherwise sit above an
-       *  active pre-workspace overlay. */}
+       *  here. Suppressed while a WindowOverlay is open — a portal-rendered
+       *  Dialog at z-50 would otherwise sit above an active pre-workspace
+       *  overlay. */}
       {!overlayActive && <SourceBackfillModal />}
     </WorkspaceSlugProvider>
   );

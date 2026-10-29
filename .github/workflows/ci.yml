@@ -6,8 +6,11 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    - cron: "23 3 * * *"
+    - cron: "24 3 * * *"
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
@@ -34,6 +37,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -41,7 +47,7 @@ jobs:
           node-version: 22
 
       - name: Test CI selection and gates
-        run: node --test scripts/ci-scope.test.mjs scripts/check-image-budget.test.mjs
+        run: node --test scripts/ci-scope.test.mjs scripts/check-image-budget.test.mjs scripts/fork-sync.test.mjs
 
       - name: Filter paths
         id: filter
@@ -58,6 +64,7 @@ jobs:
         id: decide
         env:
           EVENT_NAME: ${{ github.event_name }}
+          CANDIDATE_BRANCH: ${{ github.head_ref || github.ref_name }}
           FILTER_RESULTS: ${{ toJSON(steps.filter.outputs) }}
         run: node scripts/ci-scope.mjs decide
 
@@ -68,11 +75,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: "~1.27.3"
           check-latest: true
           cache-dependency-path: server/go.sum
 
@@ -104,6 +114,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -160,6 +173,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -216,6 +232,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -255,6 +274,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Check frontend job results
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
@@ -343,14 +365,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Setup Go
         id: go
         uses: actions/setup-go@v5
         with:
-          # Deliberately independent from the minimum patch in server/go.mod:
-          # CI follows the newest 1.26 patch available to setup-go.
-          go-version: "1.26.x"
+          # Keep the security floor even when the setup-go manifest lags;
+          # continue accepting newer patches within Go 1.27.
+          go-version: "~1.27.3"
           check-latest: true
           cache: false
 
@@ -445,12 +470,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Setup Go
         id: go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: "~1.27.3"
           check-latest: true
           cache: false
 
@@ -484,13 +512,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          # Deliberately independent from the minimum patch in server/go.mod:
-          # CI follows the newest 1.26 patch available to setup-go.
-          go-version: "1.26.x"
+          # Keep the security floor even when the setup-go manifest lags;
+          # continue accepting newer patches within Go 1.27.
+          go-version: "~1.27.3"
           check-latest: true
           cache-dependency-path: server/go.sum
 
@@ -506,6 +537,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Check backend job results
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
@@ -523,15 +557,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          # Deliberately independent from the minimum patch in server/go.mod:
-          # CI follows the newest 1.26 patch available to setup-go.
-          go-version: "1.26.x"
+          # Keep the security floor even when the setup-go manifest lags;
+          # continue accepting newer patches within Go 1.27.
+          go-version: "~1.27.3"
           check-latest: true
           cache-dependency-path: server/go.sum
+
+      - name: Test Windows WeCom media streaming and plaintext cleanup
+        working-directory: server
+        # These tests need no database. Windows must prove private file access,
+        # streaming without buffered fallback, and cleanup after process exit.
+        run: go test ./internal/integrations/wecom -v -run '^(TestStreamingDecrypt|TestMediaTempFile|TestPeekFile|TestIngest|TestTheStreamingPath)' -count=1 -timeout=5m
 
       - name: Test Windows execution-environment isolation
         working-directory: server
@@ -546,6 +589,13 @@ jobs:
         # platform-native Hermes home; otherwise discovery scans the runner's
         # real skills instead of the test directories.
         run: go test ./internal/daemon -v -run '^(TestListRuntimeLocalSkills_HermesFollowsTaskHome|TestLocalSkills_DiscoversACPProviderRoots)$' -count=1 -timeout=5m
+
+      - name: Test Windows Git Bash temp lifecycle
+        working-directory: server
+        run: |
+          $env:MULTICA_TEST_GIT_BASH = "$env:ProgramFiles\Git\usr\bin\bash.exe"
+          if (-not (Test-Path -LiteralPath $env:MULTICA_TEST_GIT_BASH)) { throw "Git for Windows is required" }
+          go test -tags=gitbashintegration ./internal/daemon -v -run '^(TestWindowsGitBashTaskTempLifecycle|TestTaskMulticaEnvironment.*|TestTaskTempBaseDir)$' -count=1 -timeout=5m
 
       - name: Test Windows agent launcher argv/stdin handling
         working-directory: server
@@ -786,9 +836,13 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: "~1.27.3"
+          check-latest: true
           cache-dependency-path: server/go.sum
       - name: Verify Cursor background lifecycle and watchdog races
         shell: bash
@@ -814,27 +868,48 @@ jobs:
   image-budget:
     # Soft gate against the 21.7MB of raw PNG/JPG that MUL-6352 cleared out:
     # a bitmap added or grown past 300KB fails until the PR description says
-    # why. Pull requests only — a push to main has no description to read,
-    # and the branch it came from was already checked.
+    # why. PRs and dispatched sync candidates read the PR description.
+    # Main has no description; its source branch was already checked.
     needs: changes
-    if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.images == 'true' }}
+    if: ${{ needs.changes.outputs.images == 'true' && (github.event_name == 'pull_request' || startsWith(github.ref_name, 'sync/upstream-')) }}
+    permissions:
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
           fetch-depth: 1
 
       - name: Fetch comparison base
+        if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: git fetch --no-tags --depth=1 origin "$BASE_SHA"
 
       - name: Check image budget
+        if: github.event_name == 'pull_request'
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: node scripts/check-image-budget.mjs --base "$BASE_SHA"
+
+      - name: Check candidate images against current PR base
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh pr view "$GITHUB_REF_NAME" --repo "$GH_REPO" --json baseRefOid,body > "$RUNNER_TEMP/sync-pr.json"
+          BASE_SHA=$(jq -er '.baseRefOid' "$RUNNER_TEMP/sync-pr.json")
+          PR_BODY=$(jq -r '.body' "$RUNNER_TEMP/sync-pr.json")
+          export BASE_SHA PR_BODY
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          node scripts/check-image-budget.mjs --base "$BASE_SHA"
+
 
   installer:
     # Stub-driven shell tests for scripts/install.sh and scripts/install.ps1.
@@ -854,6 +929,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Test shell installers
         if: runner.os != 'Windows'
@@ -875,12 +953,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: 22
 
       - name: Test self-host env derivation
         run: bash scripts/selfhost-config.test.sh
+
+      - name: Test check script
+        run: bash scripts/check.test.sh
 
       - name: Test worktree database cleanup
         run: bash scripts/worktree-db.test.sh
@@ -918,6 +1002,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v6
         with:
@@ -928,3 +1015,21 @@ jobs:
 
       - name: Check frontend quality
         uses: ./.github/actions/frontend-quality
+
+  # Stable required check: every selected scope must pass, including all
+  # full-run platform jobs for sync candidates and manual validation.
+  ci-required:
+    if: ${{ always() }}
+    needs: [changes, frontend, backend, sqlc-check, windows-execenv, macos-runtime, installer, script-checks, image-budget]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Enforce all selected checks
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+          CANDIDATE_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: node scripts/ci-scope.mjs required

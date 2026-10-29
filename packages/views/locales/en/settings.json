@@ -79,7 +79,11 @@
       "cancelled": "Decided not to do."
     },
     "pr_auto_complete_badge": "Set when PRs merge",
-    "built_in_locked": "Built-in statuses drive system behavior, so they can't be edited or archived. You can still reorder them."
+    "built_in_locked": "Built-in statuses drive system behavior, so they can't be edited or archived. You can still reorder them.",
+    "builtin_badge": "Built-in",
+    "workflow_usage_one": "{{count}} workflow uses it",
+    "workflow_usage_other": "{{count}} workflows use it",
+    "workflow_usage_none": "In no workflow"
   },
   "wakeups": {
     "description": "Platform rules that apply to every issue. Each issue can change them in its Wakeups section.",
@@ -139,6 +143,8 @@
     "field_name": "Name",
     "field_name_placeholder": "Code Review",
     "field_target": "Runs as",
+    "no_target": "No target",
+    "no_target_hint": "Posts a message without mentioning anyone.",
     "field_prompt": "Prompt",
     "field_prompt_placeholder": "Review the code linked to this issue. Focus on correctness and edge cases.",
     "prompt_hint": "Sent as written. The agent already sees the issue.",
@@ -405,7 +411,8 @@
       "billing": "Billing",
       "code": "Code",
       "channels": "Messaging",
-      "apps": "Connected apps"
+      "apps": "Connected apps",
+      "workflows": "Workflows"
     },
     "groups": {
       "personal": "Personal",
@@ -475,6 +482,7 @@
       "secret_set": "Saved — enter a new value to replace it"
     },
     "scopes": {
+      "files_read": "Read the file selected in Files",
       "issues_read": "Read issues",
       "issues_write": "Create and edit issues",
       "comments_read": "Read comments",
@@ -544,7 +552,9 @@
       "checkbox": "Checkbox",
       "url": "URL",
       "actor": "Member",
-      "multi_actor": "Members"
+      "multi_actor": "Members",
+      "multi_text": "Text list",
+      "multi_url": "URL list"
     },
     "actions": {
       "open": "Actions for {{name}}",
@@ -673,8 +683,7 @@
     },
     "system": {
       "title": "System Notifications",
-      "description": "Show system notifications when Multica is in the background.",
-      "label": "Show system notifications"
+      "label": "Show system notifications when Multica is in the background"
     },
     "browser": {
       "label": "Browser notifications",
@@ -1217,16 +1226,29 @@
     "tabs": {
       "updates": "Updates"
     },
+    "tab_bar": {
+      "pin": "Pin tab",
+      "unpin": "Unpin tab",
+      "close": "Close tab",
+      "close_others": "Close other tabs",
+      "open_window": "Open as new window",
+      "new": "New tab",
+      "pinned_name": "{{title}} (pinned)"
+    },
     "updates": {
       "title": "Updates",
       "current_version": "Current version",
       "automatic_updates_title": "Automatic background updates",
       "automatic_updates_description": "Check shortly after launch and every hour, then download available updates in the background.",
+      "automatic_updates_description_macos": "Check shortly after launch and every hour for available updates.",
       "automatic_updates_save_failed": "Failed to save automatic update settings",
       "check_section_title": "Check for updates",
       "check_section_description": "You'll be prompted to restart when the download is ready.",
+      "check_section_description_macos": "Available updates open the matching macOS download.",
       "up_to_date": "You're on the latest version.",
       "downloading": "v{{version}} is downloading in the background — you'll be notified when it's ready to install.",
+      "manual_download": "v{{version}} is ready to download and install.",
+      "open_download": "Open download",
       "check_now": "Check now",
       "checking": "Checking…"
     },

@@ -1,9 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { CoreProvider } from "@multica/core/platform";
 import { pickLocale, type SupportedLocale } from "@multica/core/i18n";
 import { useAuthStore } from "@multica/core/auth";
-import { useWelcomeStore } from "@multica/core/onboarding";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { useWorkspaceList } from "@multica/core/workspace";
 import { api } from "@multica/core/api";
@@ -16,7 +15,9 @@ import { DesktopLoginPage } from "./pages/login";
 import { DesktopAuthRecoveryPage } from "./pages/auth-recovery";
 import { DesktopShell } from "./components/desktop-layout";
 import { UpdateNotification } from "./components/update-notification";
-import { IssueWindow } from "./components/issue-window";
+import { DragStrip } from "@multica/views/platform";
+import { loadPage } from "./platform/lazy-page";
+import { PageLoading } from "./components/page-loading";
 import { useTabStore } from "./stores/tab-store";
 import { useWindowOverlayStore } from "./stores/window-overlay-store";
 import { useOpenSettingsShortcut } from "./hooks/use-open-settings-shortcut";
@@ -36,6 +37,10 @@ import {
   tearDownOnSessionExpiry,
   type SessionTeardown,
 } from "./platform/session-teardown";
+
+const IssueWindow = lazy(() =>
+  loadPage(import("./components/issue-window").then((m) => ({ default: m.IssueWindow }))),
+);
 
 // BCP-47 region tags for the <html lang> attribute, mirroring
 // apps/web/app/layout.tsx HTML_LANG. index.html ships a static lang="en";
@@ -102,7 +107,16 @@ function IssueWindowContent() {
     );
   }
 
-  return user ? <IssueWindow context={context} /> : <DesktopLoginPage />;
+  return user ? (
+    <Suspense fallback={
+      <div className="flex h-screen flex-col">
+        <DragStrip />
+        <PageLoading />
+      </div>
+    }>
+      <IssueWindow context={context} />
+    </Suspense>
+  ) : <DesktopLoginPage />;
 }
 
 function AppContent() {
@@ -365,7 +379,6 @@ const sessionTeardown: SessionTeardown = {
     window.desktopAPI.reportAuthSession?.(userId),
   resetTabs: () => useTabStore.getState().reset(),
   closeOverlay: () => useWindowOverlayStore.getState().close(),
-  resetWelcome: () => useWelcomeStore.getState().reset(),
   clearDaemonToken: () => window.daemonAPI.clearToken(),
   stopDaemon: () => window.daemonAPI.stop(),
 };

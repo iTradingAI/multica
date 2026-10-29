@@ -5,10 +5,14 @@ export default [
   ...reactConfig,
   { ignores: ["out/", "dist/"] },
   {
-    files: ["scripts/**/*.{mjs,js}"],
+    files: ["scripts/**/*.{mjs,js,cjs}"],
     languageOptions: {
       globals: { ...globals.node },
     },
+  },
+  {
+    files: ["scripts/**/*.cjs"],
+    rules: { "@typescript-eslint/no-require-imports": "off" },
   },
   // Security: every renderer-controlled URL that reaches the OS shell or the
   // native download system must flow through the safe wrappers in

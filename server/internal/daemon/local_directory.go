@@ -45,9 +45,10 @@ type localDirectoryRef struct {
 // absolute path; the path mutex keys on it so two different routes to the
 // same directory are serialised.
 type localDirectoryAssignment struct {
-	Ref      localDirectoryRef
-	AbsPath  string // user-provided path, cleaned but not symlink-resolved
-	RealPath string // canonical key for the path mutex
+	ResourceID string
+	Ref        localDirectoryRef
+	AbsPath    string // user-provided path, cleaned but not symlink-resolved
+	RealPath   string // canonical key for the path mutex
 }
 
 // UsesWorktree reports whether this assignment runs each task in its own git
@@ -205,9 +206,10 @@ func findLocalDirectoryAssignment(resources []ProjectResourceData, daemonID stri
 			return nil, err
 		}
 		match = &localDirectoryAssignment{
-			Ref:      ref,
-			AbsPath:  absPath,
-			RealPath: realPath,
+			ResourceID: r.ID,
+			Ref:        ref,
+			AbsPath:    absPath,
+			RealPath:   realPath,
 		}
 	}
 	return match, nil

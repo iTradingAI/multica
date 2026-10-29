@@ -93,6 +93,7 @@ func workspaceFilesContextError(err error) error {
 type workspaceFilesSendFunc func(context.Context, []byte) bool
 
 type workspaceFilesPending struct {
+	generation protocol.WorkspaceFilesGeneration
 	id         string
 	runtimeID  string
 	resourceID string
@@ -223,7 +224,10 @@ func (c *workspaceFilesChannel) HandleMessage(messageType string, raw json.RawMe
 			}
 		}
 		if id != "" {
-			c.sendImmediateError(id, runtimeID, resourceID, protocol.WorkspaceFilesErrorUnsupported)
+			var generation protocol.WorkspaceFilesGeneration
+			if json.Unmarshal(raw, &generation) == nil {
+				c.sendImmediateError(id, runtimeID, resourceID, protocol.WorkspaceFilesErrorUnsupported, generation)
+			}
 		}
 		return
 	}
@@ -235,7 +239,7 @@ func (c *workspaceFilesChannel) HandleMessage(messageType string, raw json.RawMe
 		}
 		c.start(payload.DaemonReqID, payload.RuntimeID, payload.ResourceID, payload.DeadlineMS, func(p *workspaceFilesPending) {
 			c.runList(p, payload)
-		})
+		}, payload.WorkspaceFilesGeneration)
 	case protocol.EventWorkspaceFilesRead:
 		var payload protocol.WorkspaceFilesReadPayload
 		if json.Unmarshal(raw, &payload) != nil {
@@ -243,21 +247,21 @@ func (c *workspaceFilesChannel) HandleMessage(messageType string, raw json.RawMe
 		}
 		c.start(payload.DaemonReqID, payload.RuntimeID, payload.ResourceID, payload.DeadlineMS, func(p *workspaceFilesPending) {
 			c.runRead(p, payload)
-		})
+		}, payload.WorkspaceFilesGeneration)
 	case protocol.EventWorkspaceFilesCancel:
 		var payload protocol.WorkspaceFilesCancelPayload
 		if json.Unmarshal(raw, &payload) == nil {
-			c.cancelPendingForRuntime(payload.DaemonReqID, payload.RuntimeID)
+			c.cancelPendingForRuntime(payload.DaemonReqID, payload.RuntimeID, payload.WorkspaceFilesGeneration)
 		}
 	}
 }
 
-func (c *workspaceFilesChannel) start(id, runtimeID, resourceID string, deadlineMS int64, run func(*workspaceFilesPending)) {
+func (c *workspaceFilesChannel) start(id, runtimeID, resourceID string, deadlineMS int64, run func(*workspaceFilesPending), generation protocol.WorkspaceFilesGeneration) {
 	if id == "" || len(id) > 128 {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), workspaceFilesRequestBudget(deadlineMS))
-	p := &workspaceFilesPending{id: id, runtimeID: runtimeID, resourceID: resourceID, ctx: ctx, cancel: cancel}
+	p := &workspaceFilesPending{generation: generation, id: id, runtimeID: runtimeID, resourceID: resourceID, ctx: ctx, cancel: cancel}
 	c.mu.Lock()
 	if _, exists := c.active[id]; exists {
 		c.mu.Unlock()
@@ -269,7 +273,7 @@ func (c *workspaceFilesChannel) start(id, runtimeID, resourceID string, deadline
 	default:
 		c.mu.Unlock()
 		cancel()
-		c.sendImmediateError(id, runtimeID, resourceID, protocol.WorkspaceFilesErrorBusy)
+		c.sendImmediateError(id, runtimeID, resourceID, protocol.WorkspaceFilesErrorBusy, p.generation)
 		return
 	}
 	c.pending[id] = p
@@ -325,14 +329,14 @@ func (c *workspaceFilesChannel) cancelPendingRequest(p *workspaceFilesPending) {
 	})
 }
 
-func (c *workspaceFilesChannel) cancelPendingForRuntime(id, runtimeID string) {
+func (c *workspaceFilesChannel) cancelPendingForRuntime(id, runtimeID string, generation protocol.WorkspaceFilesGeneration) {
 	if id == "" || runtimeID == "" {
 		return
 	}
 	c.mu.Lock()
 	p := c.pending[id]
 	c.mu.Unlock()
-	if p == nil || p.runtimeID != runtimeID {
+	if p == nil || p.runtimeID != runtimeID || p.generation != generation {
 		return
 	}
 	c.cancelPendingRequest(p)
@@ -368,7 +372,7 @@ func (c *workspaceFilesChannel) finishFrames(p *workspaceFilesPending, frames []
 }
 
 func (c *workspaceFilesChannel) finishError(p *workspaceFilesPending, code string) {
-	frame := buildWorkspaceFilesErrorFrame(p.id, p.runtimeID, p.resourceID, code)
+	frame := buildWorkspaceFilesErrorFrame(p.id, p.runtimeID, p.resourceID, code, p.generation)
 	p.done.Do(func() {
 		p.closeActive()
 		p.cancel()
@@ -401,8 +405,8 @@ func (c *workspaceFilesChannel) sendFrame(ctx context.Context, frame []byte) boo
 	return send != nil && send(ctx, frame)
 }
 
-func (c *workspaceFilesChannel) sendImmediateError(id, runtimeID, resourceID, code string) {
-	frame := buildWorkspaceFilesErrorFrame(id, runtimeID, resourceID, code)
+func (c *workspaceFilesChannel) sendImmediateError(id, runtimeID, resourceID, code string, generation protocol.WorkspaceFilesGeneration) {
+	frame := buildWorkspaceFilesErrorFrame(id, runtimeID, resourceID, code, generation)
 	if frame == nil {
 		return
 	}
@@ -501,7 +505,7 @@ func (c *workspaceFilesChannel) runList(p *workspaceFilesPending, payload protoc
 			return
 		}
 	}
-	frames, err := buildWorkspaceFilesListFrames(payload.DaemonReqID, payload.RuntimeID, payload.ResourceID, entries, nextCursor, skipped)
+	frames, err := buildWorkspaceFilesListFrames(payload.DaemonReqID, payload.RuntimeID, payload.ResourceID, entries, nextCursor, skipped, p.generation)
 	if err != nil {
 		c.finishError(p, protocol.WorkspaceFilesErrorUnavailable)
 		return
@@ -554,7 +558,11 @@ func (c *workspaceFilesChannel) runRead(p *workspaceFilesPending, payload protoc
 		c.finishError(p, protocol.WorkspaceFilesErrorInvalidUTF8)
 		return
 	}
-	frames, err := buildWorkspaceFilesReadFrames(payload.DaemonReqID, payload.RuntimeID, payload.ResourceID, data)
+	if protocol.WorkspaceFilesBinaryContent(data) {
+		c.finishError(p, protocol.WorkspaceFilesErrorBinaryContent)
+		return
+	}
+	frames, err := buildWorkspaceFilesReadFrames(payload.DaemonReqID, payload.RuntimeID, payload.ResourceID, data, p.generation)
 	if err != nil {
 		c.finishError(p, protocol.WorkspaceFilesErrorUnavailable)
 		return
@@ -748,13 +756,14 @@ func (s *workspaceFilesCursorSigner) mac(resourceID, path string, payload []byte
 	return h.Sum(nil)
 }
 
-func buildWorkspaceFilesListFrames(reqID, runtimeID, resourceID string, entries []protocol.WorkspaceFilesEntry, nextCursor string, skipped int) ([][]byte, error) {
+func buildWorkspaceFilesListFrames(reqID, runtimeID, resourceID string, entries []protocol.WorkspaceFilesEntry, nextCursor string, skipped int, generation protocol.WorkspaceFilesGeneration) ([][]byte, error) {
 	frames := make([][]byte, 0, 1)
 	current := make([]protocol.WorkspaceFilesEntry, 0, len(entries))
 	for _, entry := range entries {
 		candidate := append(current, entry)
 		frame, err := marshalWorkspaceFilesFrame(protocol.EventWorkspaceFilesListResult, protocol.WorkspaceFilesListResultPayload{
-			DaemonReqID: reqID, RuntimeID: runtimeID, ResourceID: resourceID, Seq: len(frames), Entries: candidate,
+			WorkspaceFilesGeneration: generation,
+			DaemonReqID:              reqID, RuntimeID: runtimeID, ResourceID: resourceID, Seq: len(frames), Entries: candidate,
 			NextCursor: nextCursor, Skipped: skipped, Final: true,
 		})
 		if err != nil {
@@ -764,7 +773,7 @@ func buildWorkspaceFilesListFrames(reqID, runtimeID, resourceID string, entries 
 			if len(current) == 0 {
 				return nil, errors.New("entry exceeds frame limit")
 			}
-			frames = append(frames, mustMarshalWorkspaceFilesList(reqID, runtimeID, resourceID, len(frames), current, "", 0, false))
+			frames = append(frames, mustMarshalWorkspaceFilesList(reqID, runtimeID, resourceID, len(frames), current, "", 0, false, generation))
 			current = []protocol.WorkspaceFilesEntry{entry}
 		} else {
 			current = candidate
@@ -774,7 +783,8 @@ func buildWorkspaceFilesListFrames(reqID, runtimeID, resourceID string, entries 
 		current = []protocol.WorkspaceFilesEntry{}
 	}
 	last, err := marshalWorkspaceFilesFrame(protocol.EventWorkspaceFilesListResult, protocol.WorkspaceFilesListResultPayload{
-		DaemonReqID: reqID, RuntimeID: runtimeID, ResourceID: resourceID, Seq: len(frames), Entries: current,
+		WorkspaceFilesGeneration: generation,
+		DaemonReqID:              reqID, RuntimeID: runtimeID, ResourceID: resourceID, Seq: len(frames), Entries: current,
 		NextCursor: nextCursor, Skipped: skipped, Final: true,
 	})
 	if err != nil || len(last) > workspaceFilesMaxFrameBytes {
@@ -784,21 +794,23 @@ func buildWorkspaceFilesListFrames(reqID, runtimeID, resourceID string, entries 
 	return frames, nil
 }
 
-func mustMarshalWorkspaceFilesList(reqID, runtimeID, resourceID string, seq int, entries []protocol.WorkspaceFilesEntry, cursor string, skipped int, final bool) []byte {
+func mustMarshalWorkspaceFilesList(reqID, runtimeID, resourceID string, seq int, entries []protocol.WorkspaceFilesEntry, cursor string, skipped int, final bool, generation protocol.WorkspaceFilesGeneration) []byte {
 	frame, _ := marshalWorkspaceFilesFrame(protocol.EventWorkspaceFilesListResult, protocol.WorkspaceFilesListResultPayload{
-		DaemonReqID: reqID, RuntimeID: runtimeID, ResourceID: resourceID, Seq: seq, Entries: entries,
+		WorkspaceFilesGeneration: generation,
+		DaemonReqID:              reqID, RuntimeID: runtimeID, ResourceID: resourceID, Seq: seq, Entries: entries,
 		NextCursor: cursor, Skipped: skipped, Final: final,
 	})
 	return frame
 }
 
-func buildWorkspaceFilesReadFrames(reqID, runtimeID, resourceID string, data []byte) ([][]byte, error) {
+func buildWorkspaceFilesReadFrames(reqID, runtimeID, resourceID string, data []byte, generation protocol.WorkspaceFilesGeneration) ([][]byte, error) {
 	if !utf8.Valid(data) {
 		return nil, errors.New("invalid utf-8")
 	}
 	if len(data) == 0 {
 		frame, err := marshalWorkspaceFilesFrame(protocol.EventWorkspaceFilesReadChunk, protocol.WorkspaceFilesReadChunkPayload{
-			DaemonReqID: reqID, RuntimeID: runtimeID, ResourceID: resourceID, Data: []byte{}, EOF: true,
+			WorkspaceFilesGeneration: generation,
+			DaemonReqID:              reqID, RuntimeID: runtimeID, ResourceID: resourceID, Data: []byte{}, EOF: true,
 		})
 		if err != nil || len(frame) > workspaceFilesMaxFrameBytes {
 			return nil, errors.New("empty read chunk exceeds frame limit")
@@ -821,7 +833,8 @@ func buildWorkspaceFilesReadFrames(reqID, runtimeID, resourceID string, data []b
 		for {
 			chunk := data[offset:end]
 			payload := protocol.WorkspaceFilesReadChunkPayload{
-				DaemonReqID: reqID, RuntimeID: runtimeID, ResourceID: resourceID, Seq: len(frames), Data: chunk,
+				WorkspaceFilesGeneration: generation,
+				DaemonReqID:              reqID, RuntimeID: runtimeID, ResourceID: resourceID, Seq: len(frames), Data: chunk,
 				EOF: end == len(data),
 			}
 			frame, err := marshalWorkspaceFilesFrame(protocol.EventWorkspaceFilesReadChunk, payload)
@@ -845,12 +858,13 @@ func buildWorkspaceFilesReadFrames(reqID, runtimeID, resourceID string, data []b
 	return frames, nil
 }
 
-func buildWorkspaceFilesErrorFrame(reqID, runtimeID, resourceID, code string) []byte {
+func buildWorkspaceFilesErrorFrame(reqID, runtimeID, resourceID, code string, generation protocol.WorkspaceFilesGeneration) []byte {
 	if !workspaceFilesStableError(code) {
 		code = protocol.WorkspaceFilesErrorUnavailable
 	}
 	frame, err := marshalWorkspaceFilesFrame(protocol.EventWorkspaceFilesError, protocol.WorkspaceFilesErrorPayload{
-		DaemonReqID: reqID, RuntimeID: runtimeID, ResourceID: resourceID, Code: code,
+		WorkspaceFilesGeneration: generation,
+		DaemonReqID:              reqID, RuntimeID: runtimeID, ResourceID: resourceID, Code: code,
 	})
 	if err != nil || len(frame) > workspaceFilesMaxFrameBytes {
 		return nil
@@ -862,7 +876,7 @@ func workspaceFilesStableError(code string) bool {
 	switch code {
 	case protocol.WorkspaceFilesErrorInvalidPath, protocol.WorkspaceFilesErrorSymlinkDenied,
 		protocol.WorkspaceFilesErrorNotRegular, protocol.WorkspaceFilesErrorNotDirectory,
-		protocol.WorkspaceFilesErrorTooLarge, protocol.WorkspaceFilesErrorInvalidUTF8,
+		protocol.WorkspaceFilesErrorTooLarge, protocol.WorkspaceFilesErrorInvalidUTF8, protocol.WorkspaceFilesErrorBinaryContent,
 		protocol.WorkspaceFilesErrorTimeout, protocol.WorkspaceFilesErrorBusy,
 		protocol.WorkspaceFilesErrorUnsupported, protocol.WorkspaceFilesErrorInvalidCursor,
 		protocol.WorkspaceFilesErrorUnavailable:

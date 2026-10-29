@@ -10,6 +10,14 @@ formulae, and container images.
 The verification job runs the Go tests and `govulncheck` before any publishing
 job starts. The vulnerability scan is fail-closed by default.
 
+CI and release jobs require Go `~1.27.3`: at least 1.27.3, while accepting
+newer 1.27 patches. This security floor is independent of the development
+minimum in `server/go.mod`. A plain `1.27.x` can resolve to an older patch
+while the `setup-go` version manifest catches up with an official Go release.
+When raising the security floor, update all Go workflows and the pinned
+Go builder image in `Dockerfile` together so shipped binaries also receive
+the fixes.
+
 ## Emergency vulnerability-scan bypass
 
 Use the bypass only when `govulncheck` itself or its live vulnerability database
@@ -32,3 +40,11 @@ unresolved reachable vulnerability.
 
 Every Go binary retains its compiler version in the standard Go build metadata;
 use `go version -m <binary>` when auditing a downloaded release artifact.
+
+## Downstream desktop installers
+
+The fork's separate desktop workflow builds unsigned Linux, Windows, and macOS
+installers on tag pushes. PR and manual runs only retain workflow artifacts;
+even a manual run targeting a tag cannot publish. See the
+[downstream desktop release guide](../docs/README.md) for architecture-specific
+update metadata, Gatekeeper handling, and dry-run verification.

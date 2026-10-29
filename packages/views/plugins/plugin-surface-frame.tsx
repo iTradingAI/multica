@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect, useId, useMemo, useRef, useState,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { pluginSurfaceLaunchOptions } from "@multica/core/plugins";
 import type { PluginInstallation, PluginSurface } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../i18n";
 import { buildSurfaceFrameDocument, readThemeTokens } from "./surface-document";
-import { createSurfaceBridge } from "./surface-bridge";
+import { createSurfaceBridge, type SurfaceBridge } from "./surface-bridge";
 
 const DEFAULT_HEIGHT = 220;
 
@@ -17,6 +20,8 @@ interface PluginSurfaceFrameProps {
   surface: PluginSurface;
   issueId?: string;
   className?: string;
+  readSelected?: (digest: string) => Promise<{ text: string }>;
+  onFailure?: () => void;
 }
 
 /**
@@ -26,22 +31,29 @@ interface PluginSurfaceFrameProps {
  * boundary and is always `sandbox="allow-scripts"` without
  * `allow-same-origin`; see buildSurfaceFrameDocument.
  */
-export function PluginSurfaceFrame({ wsId, installation, surface, issueId, className }: PluginSurfaceFrameProps) {
+export function PluginSurfaceFrame({ wsId, installation, surface, issueId, className,
+  readSelected,
+  onFailure,
+}: PluginSurfaceFrameProps) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const anchorRef = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
   const launchInstance = useId();
+  const readyLaunch = useRef("");
 
   // Every mounted frame gets its own launch. The artifact is immutable, but the
   // bridge proof is deliberately neither cacheable nor shareable.
-  const { data: launch, isPending, isError } = useQuery(
-    pluginSurfaceLaunchOptions(wsId, installation.id, surface.key, installation.package_version_id, launchInstance, issueId),
+  const { data: launch, isPending, isError,
+  } = useQuery(
+    pluginSurfaceLaunchOptions(wsId, installation.id, surface.key, installation.package_version_id, launchInstance, issueId,
+    ),
   );
 
   const surfaceDocument = useMemo(() => {
     if (!launch?.url || !launch.bridge_token) return null;
     try {
-      return buildSurfaceFrameDocument({ url: launch.url, bridgeToken: launch.bridge_token });
+      return buildSurfaceFrameDocument({ url: launch.url, bridgeToken: launch.bridge_token,
+      });
     } catch {
       return null;
     }
@@ -50,7 +62,8 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
   // Terminal state belongs to one rendered document on one issue. Comparing
   // the instance keeps an old failure/navigation from surviving a replacement
   // launch even though the new iframe is running normally.
-  const surfaceInstance = useMemo(() => ({ issueId, surfaceDocument }), [issueId, surfaceDocument]);
+  const surfaceInstance = useMemo(() => ({ issueId, surfaceDocument }), [issueId, surfaceDocument],
+  );
   const [failedSurfaceInstance, setFailedSurfaceInstance] = useState<typeof surfaceInstance | null>(null);
   const [navigatedSurfaceInstance, setNavigatedSurfaceInstance] = useState<typeof surfaceInstance | null>(null);
   const failed = failedSurfaceInstance === surfaceInstance;
@@ -60,19 +73,36 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
   // therefore restarts the guest's handshake — so the old bridge is finished:
   // close() is terminal, and reusing a closed one across a document change is
   // exactly how the panel ends up permanently blank.
-  const bridge = useMemo(
+  const bridgeRef = useRef<SurfaceBridge | null>(null);
+  const makeBridge = useCallback(
     () => createSurfaceBridge({
       installationId: installation.id,
       bridgeToken: launch?.bridge_token ?? "",
       issueId,
       onResize: setHeight,
-    }),
-    [installation.id, launch?.bridge_token, issueId],
+        ...(readSelected
+          ? {
+              readSelected: () => readSelected(launch?.digest ?? ""),
+              onFailure,
+              onConnected: () => {
+                readyLaunch.current = launch?.bridge_token ?? "";
+              },
+            }
+          : {}),
+      }),
+    [installation.id, launch?.bridge_token,
+      launch?.digest,
+      issueId,
+      readSelected,
+      onFailure,
+    ],
   );
 
   // The listener is armed BEFORE srcdoc is assigned. That makes the guest-first
   // one-shot port transfer race-free without retries or a reusable token.
   useEffect(() => {
+    const bridge = makeBridge();
+    bridgeRef.current = bridge;
     const frame = frameRef.current;
     if (!frame || !surfaceDocument) return () => bridge.close();
     const onMessage = (event: MessageEvent) => {
@@ -83,6 +113,10 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
       // Same window-identity rule as the bridge: without it any frame on the
       // page could light up the failure banner on every other panel.
       if (!frame.contentWindow || event.source !== frame.contentWindow) return;
+      if (readSelected) {
+        bridge.close();
+        onFailure?.();
+      }
       if (type === "multica:plugin-surface-error") setFailedSurfaceInstance(surfaceInstance);
       else setNavigatedSurfaceInstance(surfaceInstance);
     };
@@ -94,17 +128,46 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
     return () => {
       window.removeEventListener("message", onMessage);
       bridge.close();
+      if (bridgeRef.current === bridge) bridgeRef.current = null;
       frame.removeAttribute("srcdoc");
     };
-  }, [bridge, surfaceDocument, surfaceInstance]);
+  }, [makeBridge, surfaceDocument, surfaceInstance, readSelected, onFailure]);
 
   useEffect(() => {
-    if (navigated) bridge.close();
-  }, [navigated, bridge]);
+    if (!readSelected) return;
+    if (isError || (!isPending && !surfaceDocument)) {
+      onFailure?.();
+      return;
+    }
+    // Code fetch and handshake have terminal bounds; runtime/navigation errors
+    // use the same teardown before the parent's freshly authorized fallback.
+    const timer = setTimeout(() => {
+      if (
+        !launch?.bridge_token ||
+        readyLaunch.current !== launch.bridge_token
+      ) {
+        bridgeRef.current?.close();
+        onFailure?.();
+      }
+    }, 10_000);
+    return () => clearTimeout(timer);
+  }, [
+    isError,
+    isPending,
+    surfaceDocument,
+    readSelected,
+    onFailure,
+    launch?.bridge_token,
+  ]);
+
+  useEffect(() => {
+    if (navigated) bridgeRef.current?.close();
+  }, [navigated]);
 
   if (navigated) {
     return (
-      <div ref={anchorRef} className={cn("rounded-lg border border-surface-border px-4 py-3 text-caption text-muted-foreground", className)}>
+      <div ref={anchorRef} className={cn("rounded-lg border border-surface-border px-4 py-3 text-caption text-muted-foreground", className,
+        )}>
         <PluginSurfaceNotice installation={installation} kind="navigated" />
       </div>
     );
@@ -112,7 +175,8 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
 
   if (!surfaceDocument) {
     return (
-      <div ref={anchorRef} className={cn("rounded-lg border border-surface-border px-4 py-3 text-caption text-muted-foreground", className)}>
+      <div ref={anchorRef} className={cn("rounded-lg border border-surface-border px-4 py-3 text-caption text-muted-foreground", className,
+        )}>
         {/* Three states share this box on purpose: still loading, the request
             failed, and the installed version carries no code for this surface.
             All three mean "nothing to render yet"; only the last is permanent,
@@ -124,7 +188,8 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
   }
 
   return (
-    <div ref={anchorRef} className={cn("overflow-hidden rounded-lg border border-surface-border", className)}>
+    <div ref={anchorRef} className={cn("overflow-hidden rounded-lg border border-surface-border", className,
+      )}>
       {failed ? (
         <div className="px-4 py-3 text-caption text-muted-foreground">
           <PluginSurfaceNotice installation={installation} kind="failed" />
@@ -155,8 +220,19 @@ function PluginSurfaceNotice({
   kind: "unavailable" | "failed" | "loading" | "navigated";
 }) {
   const { t } = useT("issues");
-  if (kind === "failed") return <>{t(($) => $.plugins.surface_failed, { name: installation.name })}</>;
-  if (kind === "loading") return <>{t(($) => $.plugins.surface_loading, { name: installation.name })}</>;
-  if (kind === "navigated") return <>{t(($) => $.plugins.surface_navigated, { name: installation.name })}</>;
-  return <>{t(($) => $.plugins.surface_unavailable, { name: installation.name })}</>;
+  if (kind === "failed")
+    return (
+      <>{t(($) => $.plugins.surface_failed, { name: installation.name })}</>
+    );
+  if (kind === "loading")
+    return (
+      <>{t(($) => $.plugins.surface_loading, { name: installation.name })}</>
+    );
+  if (kind === "navigated")
+    return (
+      <>{t(($) => $.plugins.surface_navigated, { name: installation.name })}</>
+    );
+  return (
+    <>{t(($) => $.plugins.surface_unavailable, { name: installation.name })}</>
+  );
 }

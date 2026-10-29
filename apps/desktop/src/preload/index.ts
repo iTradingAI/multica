@@ -314,8 +314,17 @@ const daemonAPI = {
 };
 
 const updaterAPI = {
-  onUpdateAvailable: (callback: (info: { version: string; releaseNotes?: string }) => void) => {
-    const handler = (_: unknown, info: { version: string; releaseNotes?: string }) => callback(info);
+  onUpdateAvailable: (
+    callback: (info: {
+      version: string;
+      releaseNotes?: string;
+      manualInstall?: boolean;
+    }) => void,
+  ) => {
+    const handler = (
+      _: unknown,
+      info: { version: string; releaseNotes?: string; manualInstall?: boolean },
+    ) => callback(info);
     ipcRenderer.on("updater:update-available", handler);
     return () => ipcRenderer.removeListener("updater:update-available", handler);
   },
