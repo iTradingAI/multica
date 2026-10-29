@@ -30,8 +30,8 @@ import (
 // when more than one source is set, or when stdin/file is requested but
 // produces no body. Inline flag values are passed through
 // util.UnescapeBackslashEscapes so bash-double-quoted `\n` becomes a real
-// newline; stdin and file bodies are returned verbatim so literal backslashes
-// survive intact.
+// newline; stdin and file bodies preserve literal backslashes and remove one
+// complete trailing line ending. Files containing CR also warn on stderr.
 //
 // The `-file` source exists for Windows agents: piping HEREDOC content to
 // `--<name>-stdin` from Windows PowerShell silently drops non-ASCII bytes
@@ -65,7 +65,7 @@ func resolveTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) 
 		if err != nil {
 			return "", false, fmt.Errorf("read stdin for --%s: %w", stdinFlag, err)
 		}
-		body := strings.TrimSuffix(string(data), "\n")
+		body := trimTextFlagFinalNewline(string(data))
 		if body == "" {
 			return "", false, fmt.Errorf("stdin content for --%s is empty", stdinFlag)
 		}
@@ -79,7 +79,10 @@ func resolveTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) 
 		if err != nil {
 			return "", false, fmt.Errorf("read file for --%s: %w", fileFlag, err)
 		}
-		body := strings.TrimSuffix(string(data), "\n")
+		if strings.ContainsRune(string(data), '\r') {
+			cmd.PrintErrf("Warning: --%s contains CR line endings (possibly CRCRLF from Windows text-mode writes). Use LF and write UTF-8 without newline translation.\n", fileFlag)
+		}
+		body := trimTextFlagFinalNewline(string(data))
 		if body == "" {
 			return "", false, fmt.Errorf("file content for --%s is empty", fileFlag)
 		}
@@ -89,6 +92,16 @@ func resolveTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) 
 		return "", false, nil
 	}
 	return util.UnescapeBackslashEscapes(inline), true, nil
+}
+
+// Strip one complete trailing line ending. Removing just the LF of CRCRLF
+// strands two CRs, which the server would interpret as two standalone newlines.
+// The rest of the body (including literal backslashes) remains verbatim.
+func trimTextFlagFinalNewline(body string) string {
+	if !strings.HasSuffix(body, "\n") {
+		return body
+	}
+	return strings.TrimRight(strings.TrimSuffix(body, "\n"), "\r")
 }
 
 // ensureFileFlagWithinWorkdir fails closed when a --<name>-file path resolves
