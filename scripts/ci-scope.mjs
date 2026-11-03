@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 // Path filtering and aggregate gates share this fail-closed decision contract.
+// The one deliberate opening: a hosted job GitHub abandoned without a runner
+// never executed product code, so the gates tolerate that verdict loudly
+// instead of reporting a regression that was never tested.
 import { appendFileSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -25,6 +28,23 @@ export function decideScopes(event, filtered, branch = "") {
   return outputs;
 }
 
+// GitHub marks a hosted job "abandoned" when no runner ever acquired it —
+// most often macOS arm64 capacity. No product code ran, so failing the gate
+// would report a regression that was never tested. Only that exact verdict is
+// tolerated, and loudly: a warning annotation plus a job-summary entry name
+// the coverage gap. Matrix legs abandoned under fail-fast still aggregate to
+// failure/cancelled and fail as before.
+const abandonedJobs = [];
+
+function tolerateAbandoned(job) {
+  abandonedJobs.push(job);
+  const note = `${job} was never acquired by a hosted runner (abandoned); its scope was not verified in this run.`;
+  console.log(`::warning title=${job} abandoned::${note}`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `> [!WARNING]\n> ${note}\n\n`);
+  }
+}
+
 export function checkGate(needs, jobScopes) {
   if (needs.changes?.result !== "success") {
     throw new Error("Path filtering did not succeed");
@@ -35,8 +55,13 @@ export function checkGate(needs, jobScopes) {
       throw new Error(`Missing or invalid scope: ${scope}`);
     }
     const expected = selected === "true" ? "success" : "skipped";
-    if (needs[job]?.result !== expected) {
-      throw new Error(`${job}: expected ${expected}, got ${needs[job]?.result ?? "missing"}`);
+    const result = needs[job]?.result;
+    if (expected === "success" && result === "abandoned") {
+      tolerateAbandoned(job);
+      continue;
+    }
+    if (result !== expected) {
+      throw new Error(`${job}: expected ${expected}, got ${result ?? "missing"}`);
     }
   }
   // A newly added dependency must have a declared scope before the gate can pass.
@@ -60,7 +85,12 @@ export function checkRequired(needs, event, branch = "") {
     if (!["true", "false"].includes(selected)) throw new Error(`Invalid scope: ${scope}`);
     const expected = selected === "true" && (job !== "image-budget" || event === "pull_request" || branch.startsWith("sync/upstream-"))
       ? "success" : "skipped";
-    if (needs[job]?.result !== expected) throw new Error(`${job}: expected ${expected}`);
+    const result = needs[job]?.result;
+    if (expected === "success" && result === "abandoned") {
+      tolerateAbandoned(job);
+      continue;
+    }
+    if (result !== expected) throw new Error(`${job}: expected ${expected}`);
   }
   const allowed = new Set(["changes", "frontend", "backend", ...Object.keys(scopes)]);
   for (const job of Object.keys(needs)) {
@@ -80,10 +110,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       case "required":
         checkRequired(JSON.parse(process.env.NEEDS_JSON), process.env.EVENT_NAME, process.env.CANDIDATE_BRANCH);
         break;
-      case "gate":
+      case "gate": {
         checkGate(JSON.parse(process.env.NEEDS_JSON), JSON.parse(process.env.JOB_SCOPES));
-        console.log("All selected CI jobs succeeded; only unselected jobs were skipped.");
+        console.log(abandonedJobs.length
+          ? `All executed CI jobs succeeded; unselected jobs were skipped; abandoned without a runner: ${abandonedJobs.join(", ")}.`
+          : "All selected CI jobs succeeded; only unselected jobs were skipped.");
         break;
+      }
       default:
         throw new Error("Usage: node scripts/ci-scope.mjs decide|gate");
     }

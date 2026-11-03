@@ -5,7 +5,7 @@ import { join, matchesGlob } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { checkGate, decideScopes, filters } from "./ci-scope.mjs";
+import { checkGate, checkRequired, decideScopes, filters } from "./ci-scope.mjs";
 
 // The filters use only literal paths, * and **; Node's matcher exercises those
 // against realistic changes, including files removed or renamed by a PR.
@@ -163,7 +163,47 @@ for (const gate of ["frontend", "backend"]) {
     extra.extra = { result: "failure" };
     assert.throws(() => checkGate(extra, mapping), /Unchecked dependency/);
   });
+
+  test(`production ${gate} gate tolerates a job abandoned without a hosted runner`, () => {
+    const mapping = productionMapping(gate);
+    for (const job of Object.keys(mapping)) {
+      // Same selections as the rejection test: docs-only selects the standalone
+      // quality runner; a full run selects every other dependency.
+      const outputs = job === "frontend-quality"
+        ? decideScopes("pull_request", filterFiles(["apps/docs/content/docs/guide.mdx"]))
+        : decideScopes("workflow_dispatch", {});
+      const input = productionNeeds(gate, outputs);
+      assert.equal(input[job].result, "success");
+      input[job].result = "abandoned";
+      checkGate(input, mapping);
+    }
+  });
 }
+
+test("the required gate tolerates abandoned jobs and rejects every other verdict", () => {
+  const outputs = { full: "true", ...Object.fromEntries(Object.keys(filters).map((scope) => [scope, "true"])) };
+  // ci-required's dependencies on a scheduled full run; image-budget is
+  // main-branch-skipped because only PRs and sync branches have descriptions.
+  const base = {
+    changes: { result: "success", outputs },
+    frontend: { result: "success" },
+    backend: { result: "success" },
+    "sqlc-check": { result: "success" },
+    "windows-execenv": { result: "success" },
+    "macos-runtime": { result: "success" },
+    installer: { result: "success" },
+    "script-checks": { result: "success" },
+    "image-budget": { result: "skipped" },
+  };
+  for (const job of ["macos-runtime", "windows-execenv", "installer", "script-checks", "sqlc-check"]) {
+    const abandoned = { ...base, [job]: { result: "abandoned" } };
+    checkRequired(abandoned, "schedule", "");
+    for (const result of ["failure", "cancelled", "timed_out", undefined]) {
+      const failed = { ...base, [job]: { result } };
+      assert.throws(() => checkRequired(failed, "schedule", ""), new RegExp(job));
+    }
+  }
+});
 
 test("the backend gate owns the three-platform installer matrix", () => {
   assert.equal(productionMapping("backend").installer, "installer");
@@ -210,4 +250,13 @@ test("the CLI writes real Actions outputs and exits nonzero on a failed gate", (
   });
   assert.equal(gate.status, 1);
   assert.match(gate.stderr, /backend-tests/);
+  const abandoned = productionNeeds("backend", decideScopes("workflow_dispatch", {}));
+  abandoned["macos-runtime"].result = "abandoned";
+  const tolerated = spawnSync(process.execPath, [script, "gate"], {
+    env: { ...process.env, NEEDS_JSON: JSON.stringify(abandoned), JOB_SCOPES: JSON.stringify(productionMapping("backend")) },
+    encoding: "utf8",
+  });
+  assert.equal(tolerated.status, 0, tolerated.stderr);
+  assert.match(tolerated.stdout, /::warning title=macos-runtime abandoned::/);
+  assert.match(tolerated.stdout, /abandoned without a runner: macos-runtime/);
 });
