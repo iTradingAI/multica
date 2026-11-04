@@ -5,7 +5,7 @@ import { join, matchesGlob } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { checkGate, checkRequired, decideScopes, filters } from "./ci-scope.mjs";
+import { checkGate, checkRequired, decideScopes, filters, neverRanCancelled } from "./ci-scope.mjs";
 
 // The filters use only literal paths, * and **; Node's matcher exercises those
 // against realistic changes, including files removed or renamed by a PR.
@@ -44,7 +44,7 @@ for (const [name, files, selected] of [
   ["radius policy", ["scripts/check-ui-radius-tokens.mjs"], ["quality"]],
   ["shared quality action", [".github/actions/frontend-quality/action.yml"], ["frontend", "quality"]],
   ["new bitmap", ["apps/web/public/hero.png"], ["frontend", "quality", "images"]],
-  ["mixed docs and migration", ["apps/docs/content/guide.mdx", "server/migrations/999_example.up.sql"], ["quality", "backend", "sqlc"]],
+  ["mixed docs and migration", ["apps/docs/content/docs/guide.mdx", "server/migrations/999_example.up.sql"], ["quality", "backend", "sqlc"]],
   ["CI configuration", [".github/ci-paths.json"], Object.keys(filters)],
 ]) {
   test(`PR and main select only affected scopes: ${name}`, () => {
@@ -100,10 +100,12 @@ function productionNeeds(gate, outputs) {
 }
 
 for (const gate of ["frontend", "backend"]) {
-  test(`production ${gate} gate matches every dependency, condition and scope output`, () => {
+  test(`production ${gate} gate matches every dependency, condition and scope output`, async () => {
     const mapping = productionMapping(gate);
     assert.match(jobs[gate], /^    if: \$\{\{ !cancelled\(\) \}\}$/m);
     assert.match(jobs[gate], /^          NEEDS_JSON: \$\{\{ toJSON\(needs\) \}\}$/m);
+    assert.match(jobs[gate], /^          GITHUB_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}$/m);
+    assert.match(jobs[gate], /^    permissions:\n      contents: read\n(?:      # .*\n)?      actions: read\n/m);
     assert.match(jobs[gate], /^        run: node scripts\/ci-scope\.mjs gate$/m);
     for (const scope of Object.values(mapping)) {
       assert.ok(jobs.changes.includes(`      ${scope}: \${{ steps.decide.outputs.${scope} }}`));
@@ -114,57 +116,59 @@ for (const gate of ["frontend", "backend"]) {
     for (let mask = 0; mask < 2 ** scopes.length; mask++) {
       const filtered = Object.fromEntries(scopes.map((scope, bit) => [scope, String(Boolean(mask & (1 << bit)))]));
       const outputs = decideScopes("pull_request", filtered);
-      checkGate(productionNeeds(gate, outputs), mapping);
+      await checkGate(productionNeeds(gate, outputs), mapping);
     }
     for (const event of ["schedule", "workflow_dispatch"]) {
-      checkGate(productionNeeds(gate, decideScopes(event, {})), mapping);
+      await checkGate(productionNeeds(gate, decideScopes(event, {})), mapping);
     }
   });
 
-  test(`production ${gate} gate rejects unsuccessful or missing selected jobs`, () => {
+  test(`production ${gate} gate rejects unsuccessful or missing selected jobs`, async () => {
     const mapping = productionMapping(gate);
     for (const job of Object.keys(mapping)) {
       // A docs-only run selects the standalone quality runner; a full run
       // selects every other dependency, including the installer matrix.
       const outputs = job === "frontend-quality"
-        ? decideScopes("pull_request", filterFiles(["apps/docs/content/guide.mdx"]))
+        ? decideScopes("pull_request", filterFiles(["apps/docs/content/docs/guide.mdx"]))
         : decideScopes("workflow_dispatch", {});
       for (const result of ["failure", "cancelled", "skipped", undefined]) {
         const input = productionNeeds(gate, outputs);
         assert.equal(input[job].result, "success");
         input[job].result = result;
-        assert.throws(() => checkGate(input, mapping), new RegExp(job));
+        // "cancelled" only passes with API proof of zero steps; with the
+        // default verifier (no token, no network) every verdict fails closed.
+        await assert.rejects(() => checkGate(input, mapping), new RegExp(job));
       }
       const missing = productionNeeds(gate, outputs);
       delete missing[job];
-      assert.throws(() => checkGate(missing, mapping), new RegExp(job));
+      await assert.rejects(() => checkGate(missing, mapping), new RegExp(job));
     }
   });
 
-  test(`production ${gate} gate rejects invalid filtering and unchecked dependencies`, () => {
+  test(`production ${gate} gate rejects invalid filtering and unchecked dependencies`, async () => {
     const mapping = productionMapping(gate);
     const unselected = () => productionNeeds(gate, decideScopes("pull_request", filterFiles([])));
     for (const result of ["failure", "cancelled", "skipped", undefined]) {
       const input = unselected();
       input.changes.result = result;
-      assert.throws(() => checkGate(input, mapping), /Path filtering/);
+      await assert.rejects(() => checkGate(input, mapping), /Path filtering/);
     }
     for (const [job, scope] of Object.entries(mapping)) {
       const failed = unselected();
       failed[job].result = "failure";
-      assert.throws(() => checkGate(failed, mapping), new RegExp(job));
+      await assert.rejects(() => checkGate(failed, mapping), new RegExp(job));
       for (const value of [undefined, "", "unknown"]) {
         const invalid = unselected();
         invalid.changes.outputs[scope] = value;
-        assert.throws(() => checkGate(invalid, mapping), /scope/);
+        await assert.rejects(() => checkGate(invalid, mapping), /scope/);
       }
     }
     const extra = unselected();
     extra.extra = { result: "failure" };
-    assert.throws(() => checkGate(extra, mapping), /Unchecked dependency/);
+    await assert.rejects(() => checkGate(extra, mapping), /Unchecked dependency/);
   });
 
-  test(`production ${gate} gate tolerates a job abandoned without a hosted runner`, () => {
+  test(`production ${gate} gate tolerates a job abandoned without a hosted runner`, async () => {
     const mapping = productionMapping(gate);
     for (const job of Object.keys(mapping)) {
       // Same selections as the rejection test: docs-only selects the standalone
@@ -175,12 +179,31 @@ for (const gate of ["frontend", "backend"]) {
       const input = productionNeeds(gate, outputs);
       assert.equal(input[job].result, "success");
       input[job].result = "abandoned";
-      checkGate(input, mapping);
+      await checkGate(input, mapping);
+    }
+  });
+
+  test(`production ${gate} gate tolerates a cancelled job only with proof it never ran`, async () => {
+    const mapping = productionMapping(gate);
+    for (const job of Object.keys(mapping)) {
+      const outputs = job === "frontend-quality"
+        ? decideScopes("pull_request", filterFiles(["apps/docs/content/docs/guide.mdx"]))
+        : decideScopes("workflow_dispatch", {});
+      const input = productionNeeds(gate, outputs);
+      assert.equal(input[job].result, "success");
+      input[job].result = "cancelled";
+      // Only the cancelled verdict consults the verifier; tolerance requires
+      // its zero-steps proof, and its refusal must still fail the gate.
+      await checkGate(input, mapping, async (queried) => {
+        assert.equal(queried, job);
+        return true;
+      });
+      await assert.rejects(() => checkGate(input, mapping, async () => false), new RegExp(job));
     }
   });
 }
 
-test("the required gate tolerates abandoned jobs and rejects every other verdict", () => {
+test("the required gate tolerates abandoned jobs and rejects every other verdict", async () => {
   const outputs = { full: "true", ...Object.fromEntries(Object.keys(filters).map((scope) => [scope, "true"])) };
   // ci-required's dependencies on a scheduled full run; image-budget is
   // main-branch-skipped because only PRs and sync branches have descriptions.
@@ -195,14 +218,59 @@ test("the required gate tolerates abandoned jobs and rejects every other verdict
     "script-checks": { result: "success" },
     "image-budget": { result: "skipped" },
   };
+  assert.match(jobs["ci-required"], /^          GITHUB_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}$/m);
+  assert.match(jobs["ci-required"], /^    permissions:\n      contents: read\n(?:      # .*\n)?      actions: read\n/m);
   for (const job of ["macos-runtime", "windows-execenv", "installer", "script-checks", "sqlc-check"]) {
     const abandoned = { ...base, [job]: { result: "abandoned" } };
-    checkRequired(abandoned, "schedule", "");
-    for (const result of ["failure", "cancelled", "timed_out", undefined]) {
+    await checkRequired(abandoned, "schedule", "");
+    const cancelled = { ...base, [job]: { result: "cancelled" } };
+    await checkRequired(cancelled, "schedule", "", async () => true);
+    await assert.rejects(() => checkRequired(cancelled, "schedule", ""), new RegExp(job));
+    for (const result of ["failure", "timed_out", undefined]) {
       const failed = { ...base, [job]: { result } };
-      assert.throws(() => checkRequired(failed, "schedule", ""), new RegExp(job));
+      await assert.rejects(() => checkRequired(failed, "schedule", ""), new RegExp(job));
     }
   }
+});
+
+test("cancelled tolerance needs API proof that nothing executed, else fails closed", async (t) => {
+  const saved = ["GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_TOKEN"].map((key) => [key, process.env[key]]);
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  process.env.GITHUB_REPOSITORY = "octocat/demo";
+  process.env.GITHUB_RUN_ID = "42";
+  process.env.GITHUB_TOKEN = "test-token";
+  const respondWith = (json, ok = true) => {
+    globalThis.fetch = async () => ({ ok, json: async () => json });
+  };
+  const leg = (name, conclusion, steps) => ({ name, status: "completed", conclusion, steps });
+  respondWith({ jobs: [leg("macos-runtime", "cancelled", [])] });
+  assert.equal(await neverRanCancelled("macos-runtime"), true);
+  // A recorded step means product code ran; the verdict is no longer pure
+  // infrastructure and must fail the gate.
+  respondWith({ jobs: [leg("macos-runtime", "cancelled", [{ name: "Set up job", conclusion: "success" }])] });
+  assert.equal(await neverRanCancelled("macos-runtime"), false);
+  respondWith({ jobs: [leg("macos-runtime", "failure", [])] });
+  assert.equal(await neverRanCancelled("macos-runtime"), false);
+  respondWith({ jobs: [leg("unrelated-job", "cancelled", [])] });
+  assert.equal(await neverRanCancelled("macos-runtime"), false);
+  // Matrix legs count as the job only when every leg stayed unexecuted.
+  respondWith({ jobs: [leg("installer (ubuntu-latest)", "cancelled", []), leg("installer (macos-latest)", "cancelled", [])] });
+  assert.equal(await neverRanCancelled("installer"), true);
+  respondWith({ jobs: [leg("installer (ubuntu-latest)", "cancelled", [{ name: "Set up job", conclusion: "success" }]), leg("installer (macos-latest)", "cancelled", [])] });
+  assert.equal(await neverRanCancelled("installer"), false);
+  // API errors and missing wiring fail closed.
+  respondWith({}, false);
+  assert.equal(await neverRanCancelled("macos-runtime"), false);
+  delete process.env.GITHUB_TOKEN;
+  respondWith({ jobs: [leg("macos-runtime", "cancelled", [])] });
+  assert.equal(await neverRanCancelled("macos-runtime"), false);
 });
 
 test("the backend gate owns the three-platform installer matrix", () => {
@@ -258,5 +326,5 @@ test("the CLI writes real Actions outputs and exits nonzero on a failed gate", (
   });
   assert.equal(tolerated.status, 0, tolerated.stderr);
   assert.match(tolerated.stdout, /::warning title=macos-runtime abandoned::/);
-  assert.match(tolerated.stdout, /abandoned without a runner: macos-runtime/);
+  assert.match(tolerated.stdout, /never run: macos-runtime \(abandoned\)/);
 });
