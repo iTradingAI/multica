@@ -99,18 +99,18 @@ function requiredNeeds(event = 'workflow_dispatch') {
       .map(job => [job, { result: job === 'image-budget' && event !== 'pull_request' ? 'skipped' : 'success' }])),
   };
 }
-test('required check rejects failed, cancelled, missing and unexpectedly skipped dependencies', () => {
-  checkRequired(requiredNeeds(), 'workflow_dispatch');
-  checkRequired(requiredNeeds('pull_request'), 'pull_request');
+test('required check rejects failed, cancelled, missing and unexpectedly skipped dependencies', async () => {
+  await checkRequired(requiredNeeds(), 'workflow_dispatch');
+  await checkRequired(requiredNeeds('pull_request'), 'pull_request');
   for (const job of Object.keys(requiredNeeds())) {
     for (const result of ['failure', 'cancelled', 'skipped', undefined]) {
       if (job === 'image-budget' && result === 'skipped') continue;
       const needs = requiredNeeds();
       needs[job].result = result;
-      assert.throws(() => checkRequired(needs, 'workflow_dispatch'));
+      await assert.rejects(() => checkRequired(needs, 'workflow_dispatch'));
     }
   }
-  assert.throws(() => checkRequired({...requiredNeeds(), newJob: {result:'success'}}, 'workflow_dispatch'));
+  await assert.rejects(() => checkRequired({...requiredNeeds(), newJob: {result:'success'}}, 'workflow_dispatch'));
 });
 
 test('changed workflow definitions are quarantined before push or dispatch', () => {
@@ -122,9 +122,9 @@ test('changed workflow definitions are quarantined before push or dispatch', () 
   } finally { f.cleanup(); }
 });
 
-test('candidate dispatch cannot skip its image budget', () => {
+test('candidate dispatch cannot skip its image budget', async () => {
   const needs = requiredNeeds();
-  assert.throws(() => checkRequired(needs, 'workflow_dispatch', 'sync/upstream-abc'));
+  await assert.rejects(() => checkRequired(needs, 'workflow_dispatch', 'sync/upstream-abc'));
   needs['image-budget'].result = 'success';
-  checkRequired(needs, 'workflow_dispatch', 'sync/upstream-abc');
+  await checkRequired(needs, 'workflow_dispatch', 'sync/upstream-abc');
 });

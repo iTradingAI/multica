@@ -272,6 +272,10 @@ jobs:
     needs: [changes, frontend-build, frontend-test, frontend-views-test, frontend-quality]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The gate verifies a cancelled job never started via the Actions API.
+      actions: read
     steps:
       - uses: actions/checkout@v6
         with:
@@ -280,6 +284,7 @@ jobs:
       - name: Check frontend job results
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           JOB_SCOPES: '{"frontend-build":"frontend","frontend-test":"frontend","frontend-views-test":"frontend","frontend-quality":"quality_only"}'
         run: node scripts/ci-scope.mjs gate
 
@@ -535,6 +540,10 @@ jobs:
     needs: [changes, backend-tests, backend-agent-tests, sqlc-check, go-vulnerability-scan, macos-runtime, windows-execenv, script-checks, installer]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The gate verifies a cancelled job never started via the Actions API.
+      actions: read
     steps:
       - uses: actions/checkout@v6
         with:
@@ -543,6 +552,7 @@ jobs:
       - name: Check backend job results
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           JOB_SCOPES: '{"backend-tests":"backend","backend-agent-tests":"backend","sqlc-check":"sqlc","go-vulnerability-scan":"backend","macos-runtime":"full","windows-execenv":"runtime","script-checks":"scripts","installer":"installer"}'
         run: node scripts/ci-scope.mjs gate
 
@@ -1022,6 +1032,10 @@ jobs:
     if: ${{ always() }}
     needs: [changes, frontend, backend, sqlc-check, windows-execenv, macos-runtime, installer, script-checks, image-budget]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The gate verifies a cancelled job never started via the Actions API.
+      actions: read
     steps:
       - uses: actions/checkout@v6
         with:
@@ -1030,6 +1044,7 @@ jobs:
       - name: Enforce all selected checks
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
           CANDIDATE_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: node scripts/ci-scope.mjs required
