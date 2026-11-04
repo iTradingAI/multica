@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, X } from "lucide-react";
+import { RefreshCw, X } from "@multica/ui/icons";
 
 // Non-macOS downloads run silently in the background. macOS instead exposes
 // a manual installer because its unsigned builds cannot use Squirrel.Mac.

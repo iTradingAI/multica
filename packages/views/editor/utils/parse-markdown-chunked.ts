@@ -1,5 +1,6 @@
 import type { JSONContent } from "@tiptap/core";
 import { DocumentBudgetExceeded } from "./document-budget";
+import { findBlockCodeRanges } from "@multica/ui/markdown/linkify";
 
 /**
  * Above this source size, ContentEditor parses markdown in chunks instead of in
@@ -43,11 +44,19 @@ export function parseMarkdownChunked(
   const chunks: string[] = [];
   let current: string[] = [];
   let currentLen = 0;
-  let inFence = false;
+  const codeRanges = findBlockCodeRanges(markdown);
+  let rangeIndex = 0;
+  let offset = 0;
 
   for (const line of lines) {
-    // Track fenced code blocks so a cut never lands inside one.
-    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+    // Use the same fence boundaries as link preprocessing; shorter or mixed
+    // literal fences inside a code block must not create chunk boundaries.
+    while (codeRanges[rangeIndex] && offset >= codeRanges[rangeIndex]!.end) {
+      rangeIndex += 1;
+    }
+    const range = codeRanges[rangeIndex];
+    const inFence = range !== undefined && offset >= range.start;
+    offset += line.length + 1;
     current.push(line);
     currentLen += line.length + 1;
 
