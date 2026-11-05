@@ -449,14 +449,14 @@ describe("Windows update installation", () => {
     rmSync(ctx.userDataPath, { recursive: true, force: true });
   });
 
-  it("keeps macOS and Linux on the existing install path", async () => {
-    for (const platform of ["darwin", "linux"] as const) {
-      const gate = makeGate();
-      setupAutoUpdater(() => [], { daemonGate: gate, platform });
-      await invokeIpc("updater:install");
-      expect(gate.prepare).not.toHaveBeenCalled();
-    }
-    expect(ctx.quitAndInstall).toHaveBeenCalledTimes(2);
+  // macOS is downstream's manual-installer path and covered by the dedicated
+  // macOS suite above; only Linux keeps the stock install path.
+  it("keeps Linux on the existing install path", async () => {
+    const gate = makeGate();
+    setupAutoUpdater(() => [], { daemonGate: gate, platform: "linux" });
+    await invokeIpc("updater:install");
+    expect(gate.prepare).not.toHaveBeenCalled();
+    expect(ctx.quitAndInstall).toHaveBeenCalledTimes(1);
     expect(ctx.appHandlers.get("before-quit")).toBeUndefined();
   });
 

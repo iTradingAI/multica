@@ -23,6 +23,48 @@ vi.mock("@multica/core/auth", () => ({
   useAuthStore: (selector: (s: { user: { id: string }; isLoading: boolean }) => unknown) =>
     selector({ user: { id: "test-user" }, isLoading: false }),
 }));
+// IssueViewUrlSync resolves its workspace through the real query path, which
+// the @multica/core/workspace mock below cannot seed (paths/hooks imports the
+// options via a package-relative specifier). Derive the id from the slug the
+// layout publishes so the container key stays per-workspace.
+vi.mock("@multica/core/hooks", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@multica/core/hooks")>();
+  return {
+    ...actual,
+    useWorkspaceId: () => {
+      const slug = useWorkspaceSlug();
+      if (!slug) throw new Error("useWorkspaceId: no workspace selected — ensure component renders inside a workspace route");
+      return slug;
+    },
+  };
+});
+// IssueViewUrlSync navigates through the shared adapter; the full desktop
+// provider needs window.desktopAPI, which this suite never sets up. Derive
+// the adapter's location members from the active tab URL the same way
+// DesktopNavigationProvider does.
+vi.mock("@multica/views/navigation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@multica/views/navigation")>();
+  return {
+    ...actual,
+    useNavigation: () =>
+      ({
+        ...useActiveTabLocation(),
+        replace: () => {},
+      }) as unknown as NavigationAdapter,
+  };
+});
+
+function useActiveTabLocation() {
+  const url = useActiveTabUrl() ?? "/";
+  const { pathname, suffix } = splitTabUrl(url);
+  const hashIdx = suffix.indexOf("#");
+  const search = hashIdx === -1 ? suffix : suffix.slice(0, hashIdx);
+  return {
+    pathname,
+    hash: hashIdx === -1 ? "" : suffix.slice(hashIdx),
+    searchParams: new URLSearchParams(search),
+  };
+}
 vi.mock("@multica/core/workspace", () => ({
   workspaceBySlugOptions: (slug: string) => ({
     queryKey: ["test-workspace", slug],
@@ -59,8 +101,9 @@ vi.mock("@multica/views/projects/components", async () => {
   } };
 });
 
+import type { NavigationAdapter } from "@multica/views/navigation";
 import { TabContent } from "./components/tab-content";
-import { getActiveTab, useTabStore } from "./stores/tab-store";
+import { getActiveTab, splitTabUrl, useActiveTabUrl, useTabStore } from "./stores/tab-store";
 import { getAppRouter } from "./platform/tab-coordinator";
 import { createAppRouter } from "./routes";
 
