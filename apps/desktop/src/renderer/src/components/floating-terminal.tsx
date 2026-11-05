@@ -19,7 +19,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal, type ITheme } from "@xterm/xterm";
-import { Loader2, RotateCcw, SquareTerminal, X } from "lucide-react";
+import { Loader2, RotateCcw, SquareTerminal, X } from "@multica/ui/icons";
 import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
 import { useTheme } from "@multica/ui/components/common/theme-provider";
