@@ -12,7 +12,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger,
 } from "@multica/ui/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger, TabsContent,
 } from "@multica/ui/components/ui/tabs";
-import { PanelRightOpen } from "lucide-react";
+import { PanelRightOpen } from "@multica/ui/icons";
 import { useT } from "../i18n";
 import { isDesktopShell } from "../platform/local-directory";
 import { SidebarPanel, sidebarPanels } from "./sidebar-panel";

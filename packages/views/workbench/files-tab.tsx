@@ -10,7 +10,7 @@ import {
   type WorkspaceFilesTransport,
 } from "@multica/core/workspace-files";
 import { Button } from "@multica/ui/components/ui/button";
-import { ChevronRight, File, Folder } from "lucide-react";
+import { ChevronRight, File, Folder } from "@multica/ui/icons";
 import { useT } from "../i18n";
 import { FileSelectionPreview } from "./file-selection-preview";
 import { IssueFileTouches } from "./issue-file-touches";
