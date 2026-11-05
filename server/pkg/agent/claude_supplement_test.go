@@ -509,14 +509,16 @@ func TestClaudeResultDrainsPendingControlReplies(t *testing.T) {
 			if !released {
 				t.Fatalf("stdout did not drain past result: %+v", result)
 			}
-			want := "completed"
-			if cancelRun {
-				want = "aborted"
+			// Downstream (MAX-207) diverges from upstream here: once the
+			// terminal result event was delivered, a cancellation landing
+			// after it must not discard the answer — an autonomous run whose
+			// cancel races delivery keeps status "completed" with its output
+			// instead of flipping to "aborted" and being re-run. Runs with no
+			// delivered result still classify as aborted (claude_cancel_unix_test).
+			if result.Status != "completed" {
+				t.Fatalf("status = %s, want completed: %+v", result.Status, result)
 			}
-			if result.Status != want {
-				t.Fatalf("status = %s, want %s: %+v", result.Status, want, result)
-			}
-			if !cancelRun && result.Output != "done" {
+			if result.Output != "done" {
 				t.Fatalf("output = %q", result.Output)
 			}
 		})
