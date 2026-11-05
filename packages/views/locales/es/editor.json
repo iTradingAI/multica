@@ -182,5 +182,9 @@
     "clear_filter": "Borrar filtro",
     "no_matches": "Ninguna fila coincide",
     "close": "Cerrar"
+  },
+  "large_document": {
+    "notice": "Descripción extensa: vista previa de solo lectura. Las líneas en blanco están contraídas y solo se muestra un extracto. Descarga el original para leer o editar el texto completo.",
+    "download": "Descargar el Markdown original"
   }
 }

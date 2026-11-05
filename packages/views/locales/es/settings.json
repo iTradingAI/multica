@@ -477,7 +477,8 @@
       "storage_user": "Guardar datos de cada miembro individualmente",
       "storage_workspace": "Guardar datos compartidos del espacio de trabajo",
       "net": "Enviar datos a {{domain}}",
-      "unknown": "Acceso no reconocido: no instalar"
+      "unknown": "Acceso no reconocido: no instalar",
+      "files_read": "Leer el archivo seleccionado en Archivos"
     },
     "hook_circuit_open": "La entrega de hooks se detuvo tras fallos repetidos.",
     "hook_recent_failures": "{{count}} llamadas a hooks recientes fallaron.",
@@ -1255,7 +1256,11 @@
       "up_to_date": "Tienes la última versión.",
       "downloading": "v{{version}} se está descargando en segundo plano: te avisaremos cuando esté lista para instalar.",
       "check_now": "Buscar ahora",
-      "checking": "Comprobando…"
+      "checking": "Comprobando…",
+      "automatic_updates_description_macos": "Comprueba si hay actualizaciones poco después de iniciar y cada hora.",
+      "check_section_description_macos": "Las actualizaciones disponibles abren la descarga correspondiente de macOS.",
+      "manual_download": "v{{version}} está lista para descargar e instalar.",
+      "open_download": "Abrir descarga"
     },
     "daemon": {
       "title": "Daemon",
@@ -1331,6 +1336,24 @@
       "reconnect_failed": "No se ha podido reconectar el daemon",
       "try_again_moment": "Inténtalo de nuevo en un momento.",
       "try_again": "Inténtalo de nuevo."
+    },
+    "terminal": {
+      "title": "Terminal",
+      "hide": "Ocultar la terminal",
+      "restart": "Reiniciar shell",
+      "retry": "Reconectar",
+      "close_tab": "Cerrar pestaña",
+      "exited": "La shell finalizó (código {{code}})",
+      "spawn_failed": "No se pudo iniciar la shell.",
+      "target_machine": "Máquina de destino",
+      "local_machine": "Esta máquina",
+      "connecting": "Conectando a {{machine}}…",
+      "daemon_offline": "{{machine}} se ha desconectado. La terminal se ha cerrado.",
+      "err_in_use": "Máquina en uso",
+      "err_forbidden": "Sin permiso",
+      "err_unsupported": "Terminal no compatible",
+      "err_offline": "Máquina sin conexión",
+      "err_generic": "Error de terminal"
     }
   },
   "members": {

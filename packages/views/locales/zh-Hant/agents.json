@@ -982,7 +982,9 @@
     "tool_kind_write": "編輯",
     "tool_kind_read": "讀取",
     "tool_kind_misc": "其他",
-    "trigger_wakeup": "喚醒觸發"
+    "trigger_wakeup": "喚醒觸發",
+    "output_preview_clipped": "輸出內容過長，此處僅顯示預覽。下載原始記錄可查看完整的已儲存內容。",
+    "download_output_record": "下載原始記錄"
   },
   "task_failure": {
     "cancelled_by_system": "已由系統取消",

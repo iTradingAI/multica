@@ -491,7 +491,8 @@
       "storage_user": "為每位成員單獨儲存資料",
       "storage_workspace": "儲存工作區共享資料",
       "net": "向 {{domain}} 傳送資料",
-      "unknown": "無法識別的權限 — 請勿安裝"
+      "unknown": "無法識別的權限 — 請勿安裝",
+      "files_read": "讀取檔案標籤頁中選取的檔案"
     },
     "hook_circuit_open": "連續失敗後已停止投遞該 hook。",
     "hook_recent_failures": "最近有 {{count}} 次 hook 呼叫失敗。",
@@ -1267,7 +1268,11 @@
       "up_to_date": "已是最新版本。",
       "downloading": "v{{version}} 正在後臺下載——準備好安裝時會通知你。",
       "check_now": "立即檢查",
-      "checking": "檢查中..."
+      "checking": "檢查中...",
+      "automatic_updates_description_macos": "開啟後，桌面端會在啟動後和每小時檢查可用更新。",
+      "check_section_description_macos": "發現可用更新後會開啟對應的 macOS 下載。",
+      "manual_download": "v{{version}} 已可下載並安裝。",
+      "open_download": "開啟下載"
     },
     "daemon": {
       "title": "守護程序",
@@ -1339,6 +1344,24 @@
       "reconnect_failed": "無法重新連線守護程序",
       "try_again_moment": "請稍後重試。",
       "try_again": "請重試。"
+    },
+    "terminal": {
+      "title": "終端機",
+      "hide": "隱藏終端機",
+      "restart": "重新啟動 shell",
+      "retry": "重新連線",
+      "close_tab": "關閉標籤頁",
+      "exited": "shell 已結束（代碼 {{code}}）",
+      "spawn_failed": "無法啟動 shell。",
+      "target_machine": "目標機器",
+      "local_machine": "本機",
+      "connecting": "正在連線 {{machine}}…",
+      "daemon_offline": "{{machine}} 已離線，終端機已關閉。",
+      "err_in_use": "機器使用中",
+      "err_forbidden": "無權限",
+      "err_unsupported": "不支援終端機",
+      "err_offline": "離線",
+      "err_generic": "終端機錯誤"
     }
   },
   "members": {

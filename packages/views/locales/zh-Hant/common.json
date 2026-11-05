@@ -135,5 +135,37 @@
   },
   "navigation": {
     "open_in_new_tab": "在新標籤頁開啟"
+  },
+  "workbench": {
+    "files": {
+      "title": "檔案",
+      "resource": "目錄",
+      "breadcrumb": "檔案位置",
+      "root": "根目錄",
+      "refresh": "重新整理",
+      "more": "載入更多",
+      "empty": "目錄為空。",
+      "expand": "展開",
+      "collapse": "收起",
+      "loading": "正在載入檔案…",
+      "too_large": "檔案超過 1 MiB，無法預覽。",
+      "binary": "二進位或無效 UTF-8 內容，無法預覽。",
+      "touches": "檔案觸達",
+      "touch_counts": "計數為寫入工具呼叫數，包含失敗呼叫；不涵蓋 Bash。",
+      "coverage": "未知 {{unknown}} · 無法存取 {{unavailable}} · 不確定 {{uncertain}} · 衝突 {{conflicting}} · 待投影 {{pending}}"
+    },
+    "title": "工作台",
+    "diagnostics": "目錄狀態",
+    "loading": "正在檢查目錄存取…",
+    "no_project": "此 Issue 尚未關聯專案。",
+    "no_resources": "此專案沒有本地目錄資源。",
+    "forbidden": "你無權存取此目錄。",
+    "unavailable": "目錄通道無法使用。",
+    "daemon_offline": "目錄守護程序已離線。",
+    "daemon_upgrade_required": "請更新目錄守護程序後重試。",
+    "timeout": "目錄檢查逾時。",
+    "ready": "目錄可用。",
+    "retry": "重試",
+    "directory": "目錄 {{number}}"
   }
 }

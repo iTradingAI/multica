@@ -989,7 +989,9 @@
     "tool_kind_read": "Lecturas",
     "tool_kind_misc": "Otros",
     "trigger_wakeup": "Activación",
-    "kind_text": "Agente"
+    "kind_text": "Agente",
+    "output_preview_clipped": "Salida extensa: solo se muestra una vista previa. Descarga el registro original almacenado para ver todo el contenido guardado.",
+    "download_output_record": "Descargar el registro original"
   },
   "task_failure": {
     "cancelled_by_system": "Cancelada por el sistema",

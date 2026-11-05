@@ -135,5 +135,37 @@
     "unknown": "Este servidor no ha confirmado sus ajustes de conexión. Pide a tu administrador que actualice el servidor.",
     "incomplete": "Los ajustes de conexión están incompletos. Pide a tu administrador que configure las URL públicas de este servidor."
   },
-  "more_actions": "Más acciones"
+  "more_actions": "Más acciones",
+  "workbench": {
+    "files": {
+      "title": "Archivos",
+      "resource": "Directorio",
+      "breadcrumb": "Ubicación del archivo",
+      "root": "Raíz",
+      "refresh": "Actualizar",
+      "more": "Cargar más",
+      "empty": "Este directorio está vacío.",
+      "expand": "Expandir",
+      "collapse": "Contraer",
+      "loading": "Cargando archivos…",
+      "too_large": "Vista previa no disponible: el archivo supera 1 MiB.",
+      "binary": "Vista previa no disponible: contenido binario o UTF-8 no válido.",
+      "touches": "Actividad de archivos",
+      "touch_counts": "Los recuentos son llamadas a la herramienta de escritura, incluidas las fallidas; no cubre Bash.",
+      "coverage": "Desconocidos {{unknown}} · No disponibles {{unavailable}} · Inciertos {{uncertain}} · En conflicto {{conflicting}} · Pendientes {{pending}}"
+    },
+    "title": "Mesa de trabajo",
+    "diagnostics": "Estado del directorio",
+    "loading": "Comprobando el acceso al directorio…",
+    "no_project": "Esta tarea no tiene proyecto asociado.",
+    "no_resources": "Este proyecto no tiene directorios locales adjuntos.",
+    "forbidden": "No tienes acceso a este directorio.",
+    "unavailable": "El canal del directorio no está disponible.",
+    "daemon_offline": "El daemon del directorio está desconectado.",
+    "daemon_upgrade_required": "Actualiza el daemon del directorio para continuar.",
+    "timeout": "La comprobación del directorio ha agotado el tiempo de espera.",
+    "ready": "El directorio está disponible.",
+    "retry": "Reintentar",
+    "directory": "Directorio {{number}}"
+  }
 }

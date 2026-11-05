@@ -557,7 +557,9 @@
     "thread_nav_show_replies_one": "Mostrar {{count}} respuesta",
     "thread_nav_show_replies_other": "Mostrar {{count}} respuestas",
     "thread_nav_hide_replies": "Ocultar respuestas",
-    "not_found_title": "Tarea no encontrada"
+    "not_found_title": "Tarea no encontrada",
+    "sub_issues_empty": "Sin subtareas.",
+    "sub_issues_load_failed": "No se han podido cargar las subtareas."
   },
   "timeline": {
     "loading": "Cargando...",

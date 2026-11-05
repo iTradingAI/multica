@@ -178,5 +178,9 @@
     "clear_filter": "清除篩選",
     "no_matches": "沒有匹配的行",
     "close": "關閉"
+  },
+  "large_document": {
+    "notice": "描述過大，已顯示唯讀預覽，連續空行已摺疊且僅顯示部分內容。下載原文可查看或編輯完整內容。",
+    "download": "下載 Markdown 原文"
   }
 }
