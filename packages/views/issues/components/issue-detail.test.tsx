@@ -789,9 +789,9 @@ describe("IssueDetail (shared)", () => {
       renderIssueDetail();
       const panel = await screen.findByTestId("sidebar-sub-issues");
       const parentToggle = await screen.findByRole("button", { name: "Parent issue" });
-      expect(parentToggle.parentElement?.nextElementSibling).toBe(panel);
+      expect(panel.previousElementSibling).toContainElement(parentToggle);
       fireEvent.click(parentToggle);
-      expect(parentToggle.parentElement?.nextElementSibling).toBe(panel);
+      expect(panel.previousElementSibling).toContainElement(parentToggle);
       expect(within(panel).getByRole("link", { name: /TES-2.*Child task/ })).toBeInTheDocument();
     });
 
@@ -808,13 +808,17 @@ describe("IssueDetail (shared)", () => {
     it("keeps the sidebar list available when the body's sub-issues are collapsed", async () => {
       mockApiObj.listChildIssues.mockResolvedValue({ issues: [child] });
       renderIssueDetail();
-      const panel = within(await screen.findByTestId("sidebar-sub-issues"));
+      const panelEl = await screen.findByTestId("sidebar-sub-issues");
+      const panel = within(panelEl);
       await panel.findByRole("link", { name: /TES-2.*Child task/ });
       expect(screen.getAllByRole("link", { name: /TES-2.*Child task/ })).toHaveLength(2);
-      fireEvent.click(screen.getByRole("button", { name: "Sub-issues" }));
+      // The minimap's outline entry carries the same name; the body toggle is
+      // the one outside the sidebar panel.
+      const bodyToggle = screen.getAllByRole("button", { name: "Sub-issues" }).find((b) => !panelEl.contains(b))!;
+      fireEvent.click(bodyToggle);
       expect(panel.getByRole("link", { name: /TES-2.*Child task/ })).toBeInTheDocument();
       expect(screen.getAllByRole("link", { name: /TES-2.*Child task/ })).toHaveLength(1);
-      fireEvent.click(screen.getByRole("button", { name: "Sub-issues" }));
+      fireEvent.click(bodyToggle);
       expect(screen.getAllByRole("link", { name: /TES-2.*Child task/ })).toHaveLength(2);
     });
 
@@ -3294,10 +3298,13 @@ describe("IssueDetail (shared)", () => {
         issues: [subIssue({ id: "child-1", title: "Child destination" })],
       });
       const { container } = renderIssueDetail();
-      await screen.findByText("Child destination");
+      // The fork's sidebar panel renders the same row; wait for the load via
+      // the sidebar, then scope this test's queries to the body section.
+      await within(await screen.findByTestId("sidebar-sub-issues")).findByText("Child destination");
       const section = container.querySelector<HTMLDivElement>(".group\\/sub-issues")!;
+      await within(section).findByText("Child destination");
       fireEvent.click(within(section).getByRole("button", { name: "Sub-issues" }));
-      expect(screen.queryByText("Child destination")).not.toBeInTheDocument();
+      expect(within(section).queryByText("Child destination")).not.toBeInTheDocument();
 
       const scroller = container.querySelector<HTMLDivElement>("[data-tab-scroll-root]")!;
       scroller.scrollTop = 600;
@@ -3306,7 +3313,7 @@ describe("IssueDetail (shared)", () => {
       fireEvent.click(within(screen.getByRole("navigation", { name: "Quick navigation" }))
         .getByRole("button", { name: "Sub-issues" }));
 
-      expect(await screen.findByText("Child destination")).toBeInTheDocument();
+      expect(await within(section).findByText("Child destination")).toBeInTheDocument();
       await waitFor(() => expect(scroller.scrollTop).toBe(284));
     });
 
