@@ -1,9 +1,14 @@
-import { lazy, useEffect } from "react";
-import { createMemoryRouter, Outlet, useMatches } from "react-router-dom";
+import { lazy, useEffect, useLayoutEffect } from "react";
+import { createMemoryRouter, Outlet, useLocation, useMatches } from "react-router-dom";
 import type { RouteObject } from "react-router-dom";
 import { WorkspaceRouteLayout } from "./components/workspace-route-layout";
 import { DesktopRouteErrorPage } from "./components/route-error-page";
 import { loadPage } from "./platform/lazy-page";
+import { IssueViewUrlSync } from "./platform/issue-view-tabs";
+import { useRenderedRouteStore } from "./stores/rendered-route-store";
+
+const WORKSPACE_VIEW_SCOPE = { scope_type: "workspace" } as const;
+const MY_VIEW_SCOPE = { scope_type: "my" } as const;
 
 const IssueDetailPage = lazy(() =>
   loadPage(import("./pages/issue-detail-page").then((m) => ({ default: m.IssueDetailPage }))),
@@ -77,6 +82,9 @@ const SquadsPage = lazy(() =>
 const SquadDetailPageView = lazy(() =>
   loadPage(import("@multica/views/squads/components").then((m) => ({ default: m.SquadDetailPage }))),
 );
+const AllViewsPage = lazy(() =>
+  loadPage(import("@multica/views/issue-views").then((m) => ({ default: m.AllViewsPage }))),
+);
 const InboxPage = lazy(() =>
   loadPage(import("@multica/views/inbox").then((m) => ({ default: m.InboxPage }))),
 );
@@ -107,11 +115,25 @@ function TitleSync() {
   return null;
 }
 
+/**
+ * Publishes the committed pathname. A layout effect, so the shell's update
+ * lands in the same frame as the page it describes.
+ */
+function RenderedPathnameSync() {
+  const { pathname } = useLocation();
+  const setPathname = useRenderedRouteStore((s) => s.setPathname);
+  useLayoutEffect(() => {
+    setPathname(pathname);
+  }, [pathname, setPathname]);
+  return null;
+}
+
 /** Wrapper that renders route children + TitleSync */
 function PageShell() {
   return (
     <>
       <TitleSync />
+      <RenderedPathnameSync />
       <Outlet />
     </>
   );
@@ -152,7 +174,11 @@ export const appRoutes: RouteObject[] = [
           { index: true, element: null },
           {
             path: "issues",
-            element: <IssuesPage />,
+            element: (
+              <IssueViewUrlSync scope={WORKSPACE_VIEW_SCOPE}>
+                <IssuesPage />
+              </IssueViewUrlSync>
+            ),
             handle: { title: "Issues" },
           },
           {
@@ -182,7 +208,11 @@ export const appRoutes: RouteObject[] = [
           },
           {
             path: "my-issues",
-            element: <MyIssuesPage />,
+            element: (
+              <IssueViewUrlSync scope={MY_VIEW_SCOPE}>
+                <MyIssuesPage />
+              </IssueViewUrlSync>
+            ),
             handle: { title: "My Issues" },
           },
           {
@@ -243,6 +273,7 @@ export const appRoutes: RouteObject[] = [
             handle: { title: "Member" },
           },
           { path: "squads", element: <SquadsPage />, handle: { title: "Squads" } },
+          { path: "views", element: <AllViewsPage />, handle: { title: "Views" } },
           {
             path: "squads/:id",
             element: <SquadDetailPageView />,

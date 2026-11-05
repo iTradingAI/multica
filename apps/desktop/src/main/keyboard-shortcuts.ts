@@ -48,6 +48,8 @@ const ZOOM_MAX = 4.5;
  *   request to the tabbed main window
  * - `"toggle-terminal"`: Ctrl+` intercepted — caller should route the
  *   request to the tabbed main window
+ * - `"new-window"`: intercepted — caller should route the request to a main
+ *   window
  * - `{ action: "select-tab", key }`: Cmd/Ctrl+1..9 intercepted — caller
  *   should route the requested browser-style tab position to the main window
  */
@@ -56,6 +58,7 @@ export type ShortcutResult =
   | "close-tab"
   | "open-settings"
   | "toggle-terminal"
+  | "new-window"
   | { action: "select-tab"; key: TabSelectionShortcutKey };
 
 export function handleAppShortcut(
@@ -152,6 +155,13 @@ export function handleAppShortcut(
     // Holding the chord must not queue one request per repeat.
     if (input.isAutoRepeat) return true;
     return "open-settings";
+  }
+
+  // Cmd/Ctrl + Shift + N → open another workspace in a new window. The
+  // renderer owns the workspace list, so main only forwards the request.
+  if (input.key.toLowerCase() === "n" && input.shift) {
+    if (input.isAutoRepeat) return true;
+    return "new-window";
   }
 
   // Cmd/Ctrl + W → close active tab (or window if last tab).

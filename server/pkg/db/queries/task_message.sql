@@ -110,6 +110,19 @@ SELECT * FROM task_message
 WHERE task_id = $1 AND seq > $2
 ORDER BY seq ASC;
 
+-- name: ListTaskProgressSince :many
+-- The rows a WeCom bubble shows while a run works: tool calls, reasoning and
+-- errors past the last seq the bubble has folded in. Read by the replica that
+-- holds the bubble, which is how a step reported to any replica reaches it
+-- without the step's text crossing the realtime relay. Only the columns the
+-- bubble renders: output (a tool's result) is the block the bubble never
+-- shows, and routinely the largest column in the table.
+SELECT seq, type, tool, content, input FROM task_message
+WHERE task_id = @task_id
+  AND seq > @after_seq
+  AND type IN ('tool_use', 'thinking', 'error')
+ORDER BY seq ASC;
+
 -- name: DeleteTaskMessages :exec
 WITH cleared_file_touch_execution AS (
  DELETE FROM file_touch_execution WHERE file_touch_execution.task_id = $1
