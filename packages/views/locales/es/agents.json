@@ -282,7 +282,7 @@
     "environment": "Entorno",
     "custom_args": "Argumentos personalizados",
     "mcp_config": "MCP",
-    "composio_mcp": "Apps MCP",
+    "composio_mcp": "Aplicaciones",
     "integrations": "Integraciones",
     "runtime_config": "Enrutado",
     "discard_dialog_title": "¿Descartar los cambios sin guardar?",
@@ -584,7 +584,8 @@
       "reveal_action": "Revelar y editar",
       "revealing": "Revelando…",
       "reveal_failed_toast": "No se han podido cargar los valores del entorno",
-      "empty_editable": "No hay variables de entorno configuradas."
+      "empty_editable": "No hay variables de entorno configuradas.",
+      "bulk_invalid_key_toast": "La edición masiva solo admite nombres como API_KEY: edita \"{{key}}\" como fila"
     },
     "custom_args": {
       "intro": "Añade argumentos de CLI que se pasan al arrancar este agente.",
@@ -786,7 +787,7 @@
       "add_failed_toast": "No se ha podido añadir la skill"
     },
     "integrations": {
-      "members_note": "Solo los propietarios y administradores del espacio de trabajo pueden gestionar esta conexión. Puedes ver los bots conectados en Ajustes → Integraciones."
+      "members_note": "Consulta y gestiona los canales de mensajería en la página del agente."
     },
     "activity": {
       "status": {
@@ -834,6 +835,27 @@
       "started_prefix": "Iniciada {{when}}",
       "dispatched_prefix": "Enviada {{when}}",
       "queued_prefix": "En cola {{when}}"
+    },
+    "connected_apps": {
+      "loading": "Cargando aplicaciones…",
+      "load_failed": "No se pudieron cargar las aplicaciones de este agente.",
+      "empty": "No hay apps conectadas disponibles.",
+      "level": "Nivel",
+      "team_connected": "Cuenta del equipo conectada",
+      "team_missing": "Cuenta del equipo sin conectar",
+      "personal_connected": "Tu cuenta está conectada",
+      "personal_missing": "No has conectado esta aplicación",
+      "team_admin_only": "Solo los administradores del espacio de trabajo pueden dar a un agente acceso a una cuenta del equipo.",
+      "team_shared_warning": "Cualquiera que pueda ejecutar este agente podrá usar esta cuenta de equipo a través de él.",
+      "manage_link": "Gestionar cuentas en Ajustes → Aplicaciones conectadas",
+      "save_failed_toast": "No se pudo guardar. Inténtalo de nuevo",
+      "team_help": "Cuenta compartida del espacio de trabajo, conectada por administradores.",
+      "personal_help": "Cada ejecución usa la cuenta de quien la inicia. Cada persona debe conectar su propia cuenta.",
+      "available_accounts": "Disponible: {{accounts}}",
+      "enable": "Activar {{app}}",
+      "account_for": "Cuenta de {{app}}",
+      "connect_hint": "¿No encuentras la app que necesitas? Conecta una cuenta en Ajustes.",
+      "available_personal": "Tu cuenta"
     }
   },
   "char_counter": {
@@ -991,7 +1013,40 @@
     "trigger_wakeup": "Activación",
     "kind_text": "Agente",
     "output_preview_clipped": "Salida extensa: solo se muestra una vista previa. Descarga el registro original almacenado para ver todo el contenido guardado.",
-    "download_output_record": "Descargar el registro original"
+    "download_output_record": "Descargar el registro original",
+    "context_receipt_title": "Contexto recibido",
+    "context_receipt_summary_one": "{{count}} fuente · {{size}}",
+    "context_receipt_summary_other": "{{count}} fuentes · {{size}}",
+    "context_receipt_model": "Modelo",
+    "context_receipt_session": "Sesión",
+    "context_receipt_session_resumed": "Reanudó una sesión anterior (su historial también está en el contexto)",
+    "context_receipt_session_new": "Sesión nueva",
+    "context_receipt_session_fresh_retry": "Sesión nueva tras rechazarse la reanudación",
+    "context_receipt_mcp": "Servidores MCP",
+    "context_receipt_mcp_none": "Ninguno",
+    "context_receipt_warning": "{{source}}: {{status}}",
+    "context_receipt_col_source": "Fuente",
+    "context_receipt_col_size": "Tamaño",
+    "context_receipt_col_delivery": "Entregado vía",
+    "context_receipt_col_load": "Cargado",
+    "context_receipt_same_as_brief": "Igual que las instrucciones de ejecución",
+    "context_receipt_footnote": "Registrado por el daemon antes de que arrancara el agente. Solo tamaños y hashes cortos; no se guarda contenido. \"Verificado\" significa que se comprobó que esta versión del runtime carga el archivo. Los tamaños y hashes de los skills abarcan todo el paquete escrito.",
+    "context_source_runtime_brief": "Instrucciones de ejecución",
+    "context_source_agent_instructions": "Instrucciones del agente",
+    "context_source_project_description": "Descripción del proyecto",
+    "context_source_existing_instructions": "Instrucciones del repositorio",
+    "context_source_task_prompt": "Prompt del turno",
+    "context_source_skill": "Skill: {{name}}",
+    "context_delivery_file": "Archivo",
+    "context_delivery_inline": "Prompt de sistema",
+    "context_delivery_prompt": "Entrada del turno",
+    "context_delivery_embedded": "Dentro de las instrucciones de ejecución",
+    "context_delivery_none": "Sin canal",
+    "context_load_delivered": "Entregado",
+    "context_load_verified": "Verificado",
+    "context_load_verified_other_version": "Verificado solo en {{version}}",
+    "context_load_unverified": "Sin verificar",
+    "context_load_not_delivered": "No entregado"
   },
   "task_failure": {
     "cancelled_by_system": "Cancelada por el sistema",

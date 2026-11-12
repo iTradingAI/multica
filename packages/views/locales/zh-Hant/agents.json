@@ -288,7 +288,7 @@
     "environment": "環境變數",
     "custom_args": "自定義引數",
     "mcp_config": "MCP",
-    "composio_mcp": "MCP 應用",
+    "composio_mcp": "應用",
     "integrations": "整合",
     "runtime_config": "路由",
     "qoder_agent": "Qoder Cloud Agents",
@@ -583,7 +583,8 @@
       "reveal_action": "解鎖並編輯",
       "revealing": "正在解鎖…",
       "reveal_failed_toast": "載入環境變數值失敗",
-      "empty_editable": "暫無環境變數。"
+      "empty_editable": "暫無環境變數。",
+      "bulk_invalid_key_toast": "批次編輯只支援 API_KEY 這類變數名稱，請用逐條編輯修改 \"{{key}}\""
     },
     "custom_args": {
       "intro": "新增 AI 代理啟動時傳入的 CLI 引數。",
@@ -784,7 +785,7 @@
       "add_failed_toast": "新增 skill 失敗"
     },
     "integrations": {
-      "members_note": "只有工作區的所有者和管理員可以管理此連線。你可以在\"設定 → 整合\"中檢視已連線的 Bot。"
+      "members_note": "在 AI 代理首頁查看和管理訊息管道。"
     },
     "activity": {
       "status": {
@@ -831,6 +832,27 @@
       "started_prefix": "{{when}}啟動",
       "dispatched_prefix": "{{when}}派發",
       "queued_prefix": "{{when}}排隊"
+    },
+    "connected_apps": {
+      "loading": "正在載入應用…",
+      "load_failed": "無法載入此 AI 代理的應用。",
+      "empty": "尚無已連線的應用程式。",
+      "level": "權限",
+      "team_connected": "團隊帳號已連線",
+      "team_missing": "團隊帳號未連線",
+      "personal_connected": "你的帳號已連線",
+      "personal_missing": "你還沒有連線這個應用",
+      "team_admin_only": "只有工作區管理員可以給 AI 代理團隊帳號。",
+      "team_shared_warning": "能執行這個 AI 代理的人，都能透過它使用該團隊帳號。",
+      "manage_link": "在 設定 → 已連線應用 中管理帳號",
+      "save_failed_toast": "儲存失敗，請重試",
+      "team_help": "工作區共用的帳號，由管理員連線。",
+      "personal_help": "每次執行使用觸發者自己已連線的帳號；尚未連線時須先連線。",
+      "available_accounts": "可用：{{accounts}}",
+      "enable": "啟用 {{app}}",
+      "account_for": "{{app}} 的帳號",
+      "connect_hint": "找不到需要的應用程式？前往設定連線帳號。",
+      "available_personal": "你的帳號"
     }
   },
   "char_counter": {
@@ -984,7 +1006,39 @@
     "tool_kind_misc": "其他",
     "trigger_wakeup": "喚醒觸發",
     "output_preview_clipped": "輸出內容過長，此處僅顯示預覽。下載原始記錄可查看完整的已儲存內容。",
-    "download_output_record": "下載原始記錄"
+    "download_output_record": "下載原始記錄",
+    "context_receipt_title": "上下文回執",
+    "context_receipt_summary_other": "{{count}} 個來源 · {{size}}",
+    "context_receipt_model": "模型",
+    "context_receipt_session": "工作階段",
+    "context_receipt_session_resumed": "沿用了先前的工作階段（其歷史也在上下文中）",
+    "context_receipt_session_new": "新工作階段",
+    "context_receipt_session_fresh_retry": "恢復工作階段被拒後改用新工作階段",
+    "context_receipt_mcp": "MCP 服務",
+    "context_receipt_mcp_none": "無",
+    "context_receipt_warning": "{{source}}：{{status}}",
+    "context_receipt_col_source": "來源",
+    "context_receipt_col_size": "大小",
+    "context_receipt_col_delivery": "交付方式",
+    "context_receipt_col_load": "載入狀態",
+    "context_receipt_same_as_brief": "同執行說明",
+    "context_receipt_footnote": "由 daemon 在代理程式啟動前記錄。只保存大小和短雜湊，不保存內容。「已驗證」表示該執行環境的這個版本經過測試，確認會載入該檔案。 技能的大小和雜湊涵蓋實際寫入的整個技能包。",
+    "context_source_runtime_brief": "執行說明",
+    "context_source_agent_instructions": "代理程式指令",
+    "context_source_project_description": "專案描述",
+    "context_source_existing_instructions": "儲存庫自帶指令",
+    "context_source_task_prompt": "本輪 prompt",
+    "context_source_skill": "技能：{{name}}",
+    "context_delivery_file": "檔案",
+    "context_delivery_inline": "系統提示",
+    "context_delivery_prompt": "本輪輸入",
+    "context_delivery_embedded": "在執行說明內",
+    "context_delivery_none": "無交付管道",
+    "context_load_delivered": "已送達",
+    "context_load_verified": "已驗證",
+    "context_load_verified_other_version": "僅在 {{version}} 驗證過",
+    "context_load_unverified": "未驗證",
+    "context_load_not_delivered": "未送達"
   },
   "task_failure": {
     "cancelled_by_system": "已由系統取消",

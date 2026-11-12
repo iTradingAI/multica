@@ -21,12 +21,14 @@ import {
 } from "./daemon-manager";
 import { setupLocalDirectory } from "./local-directory";
 import { setupTerminalIpc } from "./terminal-ipc";
+import { setupThemeFolder } from "./theme-folder";
 import { configureLinuxFileDialogs } from "./linux-file-dialog";
 import { openExternalSafely, downloadURLSafely } from "./external-url";
 import { installContextMenu } from "./context-menu";
 import { handleAppShortcut } from "./keyboard-shortcuts";
 import { installNavigationGestures } from "./navigation-gestures";
 import { installNavigationGuard } from "./navigation-guard";
+import { installWindowForegroundEvents, windowForeground } from "./window-foreground";
 import { createRendererWebPreferences } from "./renderer-web-preferences";
 import { getAppVersion } from "./app-version";
 import { loadRuntimeConfig } from "./runtime-config-loader";
@@ -245,7 +247,7 @@ function handOffToWorkspaceWindow(
 ): boolean {
   if (!source || !mainWindows.has(source)) return false;
   if (!request || typeof request !== "object") return false;
-  const { workspaceSlug: rawSlug, path: rawPath } = request as Record<
+  const { workspaceSlug: rawSlug, path: rawPath, navigate } = request as Record<
     string,
     unknown
   >;
@@ -257,7 +259,11 @@ function handOffToWorkspaceWindow(
   const target = mainWindows.findByWorkspace(workspaceSlug, source);
   if (!target || target.isDestroyed()) return false;
   if (path) {
-    dispatchToMainRenderer(WORKSPACE_OPEN_PATH_CHANNEL, path, target);
+    dispatchToMainRenderer(
+      WORKSPACE_OPEN_PATH_CHANNEL,
+      { path, navigate: navigate === true },
+      target,
+    );
   } else {
     focusWindow(target);
   }
@@ -329,6 +335,12 @@ function handleDeepLink(url: string): void {
       if (id) dispatchToMainRenderer("invite:open", decodeURIComponent(id));
       return;
     }
+
+    if (parsed.hostname === "open" && parsed.pathname === "/issue") {
+      // Keep the source instance in the payload. The authenticated renderer
+      // validates it against runtime config before opening a workspace tab.
+      dispatchToMainRenderer("issue:open", url);
+    }
   } catch {
     // Ignore malformed URLs
   }
@@ -348,6 +360,7 @@ function getSystemLocale(): string {
 }
 
 function loadRenderer(window: BrowserWindow): void {
+  installWindowForegroundEvents(window);
   const rendererEntry = join(__dirname, "../renderer/index.html");
   const rendererURL =
     is.dev && process.env["ELECTRON_RENDERER_URL"]
@@ -612,6 +625,8 @@ function createIssueWindow(context: IssueWindowContext): void {
     minHeight: 520,
     title: context.title,
     titleBarStyle: "hiddenInset",
+    // Center the native controls in the issue page's 48px header, which is
+    // this window's title bar.
     trafficLightPosition: { x: 16, y: 17 },
     show: false,
     autoHideMenuBar: true,
@@ -755,6 +770,15 @@ if (!gotTheLock) {
     arg.startsWith(`${PROTOCOL}://`),
   );
   if (coldStartDeepLink) handleDeepLink(coldStartDeepLink);
+
+  // scripts/dev-env.sh starts a managed dev Desktop signed in by handing it
+  // the token a browser login would deliver. An environment variable rather
+  // than argv keeps the token out of other users' `ps`; it is removed before
+  // any child process (the daemon, agent CLIs) can inherit it. Packaged builds
+  // never read it.
+  const devAuthToken = is.dev ? process.env.MULTICA_DEV_AUTH_TOKEN : undefined;
+  delete process.env.MULTICA_DEV_AUTH_TOKEN;
+  if (devAuthToken) dispatchToMainRenderer("auth:token", devAuthToken);
 
   app.whenReady().then(async () => {
     const viteEnv = import.meta.env as ImportMetaEnv & {
@@ -971,6 +995,10 @@ if (!gotTheLock) {
       );
     });
 
+    ipcMain.handle("window:foreground", (event) =>
+      windowForeground(BrowserWindow.fromWebContents(event.sender)),
+    );
+
     // Main owns foreground detection and item-level dedupe. Every renderer
     // has its own WebSocket and `document.hasFocus()` only describes that one
     // window, so renderer-only gating can emit N duplicate system banners.
@@ -988,9 +1016,7 @@ if (!gotTheLock) {
 
       const payload = parseNativeNotificationPayload(value);
       if (!payload || !Notification.isSupported()) return;
-      const anyWindowFocused = BrowserWindow.getAllWindows().some(
-        (window) => !window.isDestroyed() && window.isFocused(),
-      );
+      const anyWindowFocused = BrowserWindow.getAllWindows().some(windowForeground);
       if (!notificationGate.shouldShow(payload.itemId, anyWindowFocused)) {
         return;
       }
@@ -1012,11 +1038,17 @@ if (!gotTheLock) {
           {
             slug: payload.slug,
             itemId: payload.itemId,
-            issueKey: payload.issueKey,
+            ...(payload.chatSessionId
+              ? { chatSessionId: payload.chatSessionId }
+              : { issueKey: payload.issueKey }),
           },
           mainWindows.findByWorkspace(payload.slug),
         );
       });
+      notification.on("failed", (_event, error) => {
+        console.warn("Native notification delivery failed:", error);
+      });
+      notification.on("show", () => console.info("Native notification displayed"));
       notification.show();
     });
 
@@ -1063,6 +1095,7 @@ if (!gotTheLock) {
     );
     setupLocalDirectory(() => mainWindows.mostRecent());
     setupTerminalIpc();
+    setupThemeFolder();
 
     // Registered after the updater and daemon gates, so a quit they hold
     // (busy daemon, pending install) leaves the session writable; only the
