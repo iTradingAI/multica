@@ -141,3 +141,12 @@ cleared_issue_file_touch_backfill AS (
 )
 DELETE FROM task_message
 WHERE task_message.task_id = $1;
+
+-- name: ListTaskReplyFragments :many
+-- Rebuild a Telegram placeholder without its progress when another replica
+-- handles cancellation. Only prose leaves this query; tool/error rows mark
+-- paragraph boundaries without loading arguments, results, or reasoning.
+SELECT type, COALESCE(CASE WHEN type = 'text' THEN content END, '')::text AS content
+FROM task_message
+WHERE task_id = $1 AND type IN ('text', 'tool_use', 'error')
+ORDER BY seq ASC;

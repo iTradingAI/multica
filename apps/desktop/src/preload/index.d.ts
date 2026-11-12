@@ -1,6 +1,7 @@
 import { ElectronAPI } from "@electron-toolkit/preload";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
 import type { NavigationGesture } from "../shared/navigation-gestures";
+import type { ContextMenuCommand, ContextMenuRequest } from "../shared/context-menu";
 import type { RendererRouteContextInput } from "../shared/renderer-route-context";
 import type { FreezeBreadcrumb } from "../shared/freeze-breadcrumb";
 import type {
@@ -24,6 +25,15 @@ import type {
   TerminalSpawnResult,
 } from "../shared/terminal-types";
 import type { DefaultShell } from "../shared/default-shell";
+import type {
+  ThemeFolderFile,
+  ThemeFolderSnapshot,
+  ThemeFolderWriteResult,
+} from "../shared/theme-folder";
+import type {
+  WorkspacePathOptions,
+  WorkspacePathRequest,
+} from "../shared/workspace-window";
 
 interface DesktopAPI {
   /** App version + normalized OS, captured synchronously at preload time. */
@@ -52,6 +62,8 @@ interface DesktopAPI {
   onAuthToken: (callback: (token: string) => void) => () => void;
   /** Listen for invitation IDs delivered via deep link. Returns an unsubscribe function. */
   onInviteOpen: (callback: (invitationId: string) => void) => () => void;
+  /** Listen for issue links from the web once authentication is ready. */
+  onIssueOpen: (callback: (url: string) => void) => () => void;
   /** Open a URL in the default browser. */
   openExternal: (url: string) => Promise<void>;
   /** Download a file by URL through Electron's native download system.
@@ -59,26 +71,34 @@ interface DesktopAPI {
   downloadURL: (url: string) => Promise<void>;
   /** Hide macOS traffic lights for full-screen modals; restore when false. */
   setImmersiveMode: (immersive: boolean) => Promise<void>;
-  /** Show a native OS notification for a new inbox item. */
+  /** Show a native OS notification for an inbox item or chat reply. */
   showNotification: (payload: {
     slug: string;
     itemId: string;
-    issueKey: string;
+    issueKey?: string;
+    chatSessionId?: string;
     title: string;
     body: string;
   }) => void;
+  getWindowForeground: () => Promise<boolean>;
+  onWindowForegroundChanged: (callback: (foreground: boolean) => void) => () => void;
   /** Update the OS dock / taskbar unread badge. Pass 0 to clear. */
   setUnreadBadge: (count: number) => void;
-  /** Listen for "open inbox row" requests from notification clicks. Returns an unsubscribe function. */
+  /** Listen for inbox/chat navigation from notification clicks. Returns an unsubscribe function. */
   onInboxOpen: (
     callback: (payload: {
       slug: string;
       itemId: string;
-      issueKey: string;
+      issueKey?: string;
+      chatSessionId?: string;
     }) => void,
   ) => () => void;
   /** Listen for native macOS back/forward swipe gestures. Returns an unsubscribe function. */
   onNavigationGesture: (callback: (gesture: NavigationGesture) => void) => () => void;
+  /** Listen for right-clicks the page left unhandled, to draw their menu. */
+  onContextMenu: (callback: (request: ContextMenuRequest) => void) => () => void;
+  /** Run the item picked in that menu. */
+  runContextMenuCommand: (command: ContextMenuCommand) => void;
   /** Report the renderer's memory-router path for recovery diagnostics. */
   setRendererRouteContext: (context: RendererRouteContextInput) => void;
   /** Open the OS folder picker and return the chosen absolute path.
@@ -110,6 +130,14 @@ interface DesktopAPI {
      *  Drives the worktree execution-mode option in the resource UI. */
     is_git_repo?: boolean;
   }>;
+  /** Read every theme in the themes folder in user data, and start watching it. */
+  readThemeFolder: () => Promise<ThemeFolderSnapshot>;
+  /** Called once a change in the themes folder settles. Returns an unsubscribe function. */
+  onThemeFolderChange: (callback: () => void) => () => void;
+  /** Open the themes folder, or one theme's folder in it, in the file manager. */
+  openThemeFolder: (name?: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Create a theme folder from files; never replaces an existing one. */
+  writeThemeFolder: (name: string, files: ThemeFolderFile[]) => Promise<ThemeFolderWriteResult>;
   /** Listen for Cmd/Ctrl+W tab-close requests from the main process.
    *  Returns an unsubscribe function. */
   onCloseActiveTab: (callback: () => void) => () => void;
@@ -137,12 +165,16 @@ interface DesktopAPI {
   getOtherWindowWorkspaces: () => string[];
   /** Hand a workspace (and optionally a path inside it) to the other main
    *  window that shows it. Returns false when no other window does. */
-  focusWorkspaceWindow: (workspaceSlug: string, path?: string) => boolean;
+  focusWorkspaceWindow: (
+    workspaceSlug: string,
+    path?: string,
+    options?: WorkspacePathOptions,
+  ) => boolean;
   /** Open a workspace in its own main window, or focus the one showing it. */
   openWorkspaceWindow: (workspaceSlug: string) => Promise<{ ok: boolean }>;
   /** Listen for workspace paths routed here from another window.
    *  Returns an unsubscribe function. */
-  onOpenWorkspacePath: (callback: (path: string) => void) => () => void;
+  onOpenWorkspacePath: (callback: (request: WorkspacePathRequest) => void) => () => void;
   /** Listen for Cmd/Ctrl+Shift+N new-window requests. Returns an
    *  unsubscribe function. */
   onNewWindowShortcut: (callback: () => void) => () => void;
@@ -153,6 +185,10 @@ type DaemonReauthResult =
   | { ok: false; reason: "session_invalid" }
   | { ok: false; reason: "transient"; message: string };
 
+type FocusEnvironmentResult =
+  | { ok: true }
+  | { ok: false; reason: "gone" | "unsupported" | "unavailable" | "failed"; error?: string };
+
 interface DaemonAPI {
   start: () => Promise<{ success: boolean; error?: string }>;
   stop: () => Promise<{ success: boolean; error?: string }>;
@@ -160,6 +196,8 @@ interface DaemonAPI {
   getStatus: () => Promise<DaemonStatus>;
   probeRuntimes: () => Promise<LocalRuntimeProbe>;
   getHostName: () => Promise<string>;
+  /** Brings forward a desktop app environment the local daemon detected. */
+  focusEnvironment: (key: string) => Promise<FocusEnvironmentResult>;
   onStatusChange: (callback: (status: DaemonStatus) => void) => () => void;
   setTargetApiUrl: (url: string) => Promise<void>;
   syncToken: (token: string, userId: string) => Promise<void>;
