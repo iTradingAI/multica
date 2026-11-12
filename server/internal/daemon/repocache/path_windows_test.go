@@ -246,7 +246,7 @@ func testLinkedJunctionGuard(t *testing.T, removal bool) {
 				// Fresh is confined to this disposable fixture and prevents a keep
 				// result from bypassing the linked removal guard.
 				var result *WorktreeResult
-				result, err = f.cache.createOrUpdateIsolatedCheckout(actualBare, f.source, linked.Path, "agent/migrated", "HEAD", true)
+				result, err = f.cache.createOrUpdateIsolatedCheckoutContext(context.Background(), actualBare, f.source, linked.Path, "agent/migrated", "HEAD", true)
 				if err == nil && (result.Kept != "" || !isIsolatedCheckout(result.Path)) {
 					t.Fatalf("migration did not establish independent metadata: %+v", result)
 				}

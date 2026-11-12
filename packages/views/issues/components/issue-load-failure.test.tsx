@@ -173,7 +173,7 @@ describe("primary issue read failures through the production API client", () => 
     await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
     // One primary read plus the existing independent reactions read.
     expect(primary).toHaveBeenCalledTimes(2);
-    if (id === uuid) expect(replace).toHaveBeenCalledWith("/synthetic/issues/SYN-1#comment-synthetic");
+    if (id === uuid) expect(replace).toHaveBeenCalledWith("/synthetic/issues/SYN-1#comment-synthetic", { preservePage: true });
   });
   it.each(["route", "inbox", "peek"] as const)("%s recovers the real detail after a manual retry returns 200", async (host) => {
     render(surface(host === "route" ? "SYN-1" : uuid, host));

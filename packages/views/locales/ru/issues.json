@@ -618,7 +618,9 @@
     "thread_nav_show_replies_many": "Показать {{count}} ответов",
     "not_found_title": "Задача не найдена",
     "load_failed": "Не удалось загрузить задачу.",
-    "load_retry": "Повторить"
+    "load_retry": "Повторить",
+    "sub_issues_empty": "Нет подзадач.",
+    "sub_issues_load_failed": "Не удалось загрузить подзадачи."
   },
   "timeline": {
     "loading": "Загрузка...",

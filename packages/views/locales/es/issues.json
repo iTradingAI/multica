@@ -1762,7 +1762,6 @@
       "brief_header": "El encargo del flujo de trabajo que recibió esta ejecución"
     },
     "detail": {
-      "follows_project": "(del proyecto)",
       "card_title": "{{workflow}} · de {{project}}"
     },
     "list_separator": ", ",
@@ -1801,10 +1800,6 @@
       "new_status": "Estado nuevo…",
       "name_placeholder": "Nombre del estado",
       "add": "Añadir"
-    },
-    "menu": {
-      "view_flow": "Ver el flujo completo",
-      "switch": "Cambiar de flujo de trabajo"
     },
     "flow": {
       "title": "Flujo de trabajo {{workflow}}",

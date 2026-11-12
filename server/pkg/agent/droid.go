@@ -267,7 +267,7 @@ func (b *droidBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 			// task deadline cannot erase a verified completion and process exit.
 			runErr = runCtx.Err()
 			ctxDone = nil
-			if waitCh == nil && (state.sawCompletion || state.failed) && runErr == nil {
+			if waitCh == nil && ((state.sawCompletion && exitErr == nil && scanErr == nil) || state.failed) && runErr == nil {
 				terminalObserved.Store(true)
 			}
 			signalProcessGroup(cmd, syscall.SIGKILL)
@@ -323,8 +323,11 @@ func (b *droidBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		_ = errR.Close()
 		_ = stdin.Close()
 		releaseProcessGroup(cmd)
+		// Unlike Claude's delivered-result protocol, Droid completion is only
+		// authoritative after a clean exit. Do not let the shared finalizer's
+		// teardown tolerance hide a crash, cancellation, or truncated stream.
 		terminal := streamTerminalState{
-			sawResult: state.sawCompletion, finalResultText: state.finalText,
+			sawResult: state.sawCompletion && exitErr == nil && runErr == nil && scanErr == nil, finalResultText: state.finalText,
 			resultIsError: state.failed, scanErr: scanErr,
 		}
 		if state.failed {

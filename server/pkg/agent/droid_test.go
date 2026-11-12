@@ -276,6 +276,9 @@ func TestDroidFailurePaths(t *testing.T) {
 			if r.Status != "failed" || r.Output != "" || !strings.Contains(r.Error, tc.want) || r.ResumeRejected || r.SessionID != "" {
 				t.Fatalf("result = %+v", r)
 			}
+			if tc.name == "crash" && s.TerminalObserved() {
+				t.Fatal("completion became authoritative after a nonzero process exit")
+			}
 		})
 	}
 }

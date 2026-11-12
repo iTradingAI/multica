@@ -1059,7 +1059,9 @@
     "context_load_verified": "Проверено",
     "context_load_verified_other_version": "Проверено только на {{version}}",
     "context_load_unverified": "Не проверено",
-    "context_load_not_delivered": "Не передано"
+    "context_load_not_delivered": "Не передано",
+    "output_preview_clipped": "Большой вывод: показан только фрагмент. Загрузите исходную сохранённую запись, чтобы получить полное содержимое.",
+    "download_output_record": "Скачать исходную запись"
   },
   "task_failure": {
     "cancelled_by_system": "Отменено системой",

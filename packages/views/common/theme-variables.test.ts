@@ -16,7 +16,7 @@ import {
  */
 
 const REPO = join(__dirname, "../../..");
-const read = (path: string) => readFileSync(join(REPO, path), "utf8");
+const read = (path: string) => readFileSync(join(REPO, path), "utf8").replace(/\r\n/g, "\n");
 
 /** Stylesheets whose fallbacks are public variables. */
 const THEMED_CSS = [
