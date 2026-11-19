@@ -302,7 +302,9 @@ jobs:
       - uses: actions/download-artifact@v4
         if: steps.sealed.outputs.id != 'missing'
         with:
-          name: container-pair
+          artifact-ids: ${{ steps.sealed.outputs.id }}
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
       - uses: actions/download-artifact@v4
         if: steps.sealed.outputs.id == 'missing'
         with:

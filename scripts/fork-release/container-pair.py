@@ -66,11 +66,26 @@ def inspect(image):
     return dict(repository=repo, digest=index, platforms=children, tag=tag, revision=revision)
 
 
+def registry_tags(repo):
+    # Only a successful, valid registry listing can establish tag absence.
+    tags = json.loads(run("skopeo", "list-tags", "docker://" + repo))["Tags"]
+    if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+        raise ValueError(f"invalid registry tag list for {repo}")
+    return tags
+
+
 def retain(tag, revision, run_id, attempt, owner, folder):
     version(tag)
+    repositories = {role: f"ghcr.io/{owner}/multica-{role}" for role in ("backend", "web")}
+    # This path is used only when the run's sealed artifact is missing. Once
+    # either image is public, rebuilt bytes cannot establish the original pair.
+    for image in repositories.values():
+        tags = registry_tags(image)
+        if tag in tags or ("latest" in tags and inspect(f"{image}:latest")["tag"] == tag):
+            raise ValueError(f"{image} already exposes {tag}, but the sealed manifest is missing")
+
     result = {}
-    for role in ("backend", "web"):
-        image = f"ghcr.io/{owner}/multica-{role}"
+    for role, image in repositories.items():
         parts = sorted(p.name for p in (folder / role).iterdir())
         if len(parts) != 2 or not all(re.fullmatch("[0-9a-f]{64}", p) for p in parts):
             raise ValueError(f"missing platform digests for {role}")
@@ -111,10 +126,7 @@ def promote(manifest, tag, revision, repository):
             raise ValueError(f"{role} does not match tag, repository, or workflow revision")
         if inspect(f"{repo}@{sealed['digest']}") != sealed:
             raise ValueError(f"{role} differs from retained manifest")
-        # A registry error must fail closed. Only a successful listing can
-        # establish that a tag has not been published yet.
-        tags = json.loads(run("skopeo", "list-tags", "docker://" + repo))["Tags"]
-        existing[role] = tag in tags
+        existing[role] = tag in registry_tags(repo)
         if existing[role] and inspect(f"{repo}:{tag}") != sealed:
             raise ValueError(f"{role} version tag already points to different bytes")
         latest[role] = inspect(f"{repo}:latest")

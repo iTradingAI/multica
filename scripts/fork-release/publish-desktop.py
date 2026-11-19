@@ -107,6 +107,24 @@ def remote_hash(url):
     return result
 
 
+def verify_public_release(repository, tag, files):
+    url = f"https://api.github.com/repos/{repository}/releases/latest"
+    with urllib.request.urlopen(url, timeout=30) as stream:
+        latest = json.load(stream)["tag_name"]
+    if stable(latest) > stable(tag):
+        print(f"{tag} is published and superseded by {latest}")
+        return
+    if latest != tag:
+        raise RuntimeError(f"anonymous latest lookup differs: expected {tag}, got {latest}")
+    for name in files:
+        url = f"https://github.com/{repository}/releases/download/{tag}/{name}"
+        request = urllib.request.Request(url, method="HEAD")
+        with urllib.request.urlopen(request, timeout=30) as stream:
+            if stream.status != 200:
+                raise RuntimeError(f"{name} isn't publicly downloadable")
+    print(f"{tag} verified as Latest with all assets publicly downloadable")
+
+
 def publish(root, tag, sha, repository):
     repo = f"repos/{repository}"
     checked_tag(repo, tag, sha)
@@ -159,7 +177,7 @@ def publish(root, tag, sha, repository):
         if not matches_file(assets[name], path, expected):
             raise ValueError(f"uploaded bytes differ for {name}")
     if not api(endpoint)["draft"]:
-        print(f"{tag} already published and verified")
+        verify_public_release(repository, tag, files)
         return
     checked_tag(repo, tag, sha)
     latest = api(f"{repo}/releases/latest")["tag_name"]
@@ -177,14 +195,7 @@ def publish(root, tag, sha, repository):
         "-f",
         "make_latest=true",
     )
-    with urllib.request.urlopen(f"https://api.github.com/{repo}/releases/latest") as stream:
-        if json.load(stream)["tag_name"] != tag:
-            raise RuntimeError("anonymous latest lookup differs")
-    for name in files:
-        url = f"https://github.com/{repository}/releases/download/{tag}/{name}"
-        with urllib.request.urlopen(urllib.request.Request(url, method="HEAD")) as stream:
-            if stream.status != 200:
-                raise RuntimeError(f"{name} isn't publicly downloadable")
+    verify_public_release(repository, tag, files)
 
 
 if __name__ == "__main__":
