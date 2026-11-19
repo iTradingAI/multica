@@ -1,4 +1,5 @@
 """Seal and promote an amd64/arm64 backend and web release pair."""
+
 import argparse
 import hashlib
 import json
@@ -33,17 +34,28 @@ def inspect(image):
     labels = set()
     for descriptor in json.loads(data)["manifests"]:
         platform = descriptor.get("platform", {})
-        if platform.get("os") == "unknown" and descriptor.get("annotations", {}).get("vnd.docker.reference.type") == "attestation-manifest":
+        if (
+            platform.get("os") == "unknown"
+            and descriptor.get("annotations", {}).get("vnd.docker.reference.type")
+            == "attestation-manifest"
+        ):
             continue
         arch = platform.get("architecture")
         child = descriptor["digest"]
-        if platform.get("os") != "linux" or arch not in PLATFORMS or arch in children or not DIGEST.fullmatch(child):
+        if (
+            platform.get("os") != "linux"
+            or arch not in PLATFORMS
+            or arch in children
+            or not DIGEST.fullmatch(child)
+        ):
             raise ValueError(f"unexpected platform in {image}: {platform}")
         config = json.loads(run("skopeo", "inspect", "--config", f"docker://{repo}@{child}"))
         if config["os"] != "linux" or config["architecture"] != arch:
             raise ValueError(f"{child} platform mismatch")
         meta = config["config"]["Labels"]
-        labels.add((meta["org.opencontainers.image.version"], meta["org.opencontainers.image.revision"]))
+        labels.add(
+            (meta["org.opencontainers.image.version"], meta["org.opencontainers.image.revision"])
+        )
         children[arch] = child
     if set(children) != PLATFORMS or len(labels) != 1:
         raise ValueError(f"inconsistent index: {image}")
@@ -64,12 +76,27 @@ def retain(tag, revision, run_id, attempt, owner, folder):
             raise ValueError(f"missing platform digests for {role}")
         # This temporary tag keeps the sealed index addressable until promotion.
         staging = f"{image}:candidate-{run_id}-{attempt}"
-        subprocess.run(["docker", "buildx", "imagetools", "create", "-t", staging, *[f"{image}@sha256:{p}" for p in parts]], check=True)
+        subprocess.run(
+            [
+                "docker",
+                "buildx",
+                "imagetools",
+                "create",
+                "-t",
+                staging,
+                *[f"{image}@sha256:{p}" for p in parts],
+            ],
+            check=True,
+        )
         item = inspect(staging)
-        if (item["tag"], item["revision"]) != (tag, revision) or inspect(f"{image}@{item['digest']}") != item:
+        if (item["tag"], item["revision"]) != (tag, revision) or inspect(
+            f"{image}@{item['digest']}"
+        ) != item:
             raise ValueError(f"staged {role} does not match this build")
         result[role] = item
-    Path("container-pair.json").write_text(json.dumps(dict(run=run_id, attempt=attempt, images=result), indent=2))
+    Path("container-pair.json").write_text(
+        json.dumps(dict(run=run_id, attempt=attempt, images=result), indent=2)
+    )
 
 
 def promote(manifest, tag, revision, repository):
@@ -97,7 +124,9 @@ def promote(manifest, tag, revision, repository):
     remote = json.loads(run("gh", "api", f"repos/{repository}/commits/{tag}"))
     if remote["sha"] != revision:
         raise ValueError("remote tag revision changed")
-    pages = json.loads(run("gh", "api", "--paginate", "--slurp", f"repos/{repository}/tags?per_page=100"))
+    pages = json.loads(
+        run("gh", "api", "--paginate", "--slurp", f"repos/{repository}/tags?per_page=100")
+    )
     highest = max(version(t["name"]) for page in pages for t in page if STABLE.fullmatch(t["name"]))
     if version(tag) != highest:
         print(f"Skipping older release {tag}")
@@ -106,7 +135,18 @@ def promote(manifest, tag, revision, repository):
         for role, sealed in pair.items():
             repo = sealed["repository"]
             if not (existing[role] if alias == tag else latest[role] == sealed):
-                subprocess.run(["docker", "buildx", "imagetools", "create", "-t", f"{repo}:{alias}", f"{repo}@{sealed['digest']}"], check=True)
+                subprocess.run(
+                    [
+                        "docker",
+                        "buildx",
+                        "imagetools",
+                        "create",
+                        "-t",
+                        f"{repo}:{alias}",
+                        f"{repo}@{sealed['digest']}",
+                    ],
+                    check=True,
+                )
             if inspect(f"{repo}:{alias}") != sealed:
                 raise ValueError(f"{role}:{alias} verification failed")
 
@@ -121,7 +161,9 @@ def consumer_inputs(repository, previous):
         if item != inspect(f"{repo}:{item['tag']}"):
             raise ValueError(f"{role}:latest differs from its stable version")
         old = previous[role]
-        if version(item["tag"]) < version(old["tag"]) or (item["tag"] == old["tag"] and item["digest"] != old["digest"]):
+        if version(item["tag"]) < version(old["tag"]) or (
+            item["tag"] == old["tag"] and item["digest"] != old["digest"]
+        ):
             raise ValueError(f"{role}:latest regressed or changed in place")
         pair[role] = item
         services[service] = {"image": f"{repo}@{item['digest']}"}
@@ -140,13 +182,24 @@ if __name__ == "__main__":
     if args.action == "pin":
         if args.last_successful is None or args.output is None:
             parser.error("pin requires --last-successful and --output")
-        pair, override = consumer_inputs(args.repository, json.loads(args.last_successful.read_text()))
+        pair, override = consumer_inputs(
+            args.repository, json.loads(args.last_successful.read_text())
+        )
         args.output.mkdir(exist_ok=False)
         (args.output / "pair.json").write_text(json.dumps(pair, indent=2))
         (args.output / "compose.json").write_text(json.dumps(override, indent=2))
         raise SystemExit(0)
-    tag, revision, repository = [os.environ[k] for k in ("GITHUB_REF_NAME", "GITHUB_SHA", "GITHUB_REPOSITORY")]
+    tag, revision, repository = [
+        os.environ[k] for k in ("GITHUB_REF_NAME", "GITHUB_SHA", "GITHUB_REPOSITORY")
+    ]
     if args.action == "retain":
-        retain(tag, revision, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], repository.split("/")[0].lower(), Path("digests"))
+        retain(
+            tag,
+            revision,
+            os.environ["GITHUB_RUN_ID"],
+            os.environ["GITHUB_RUN_ATTEMPT"],
+            repository.split("/")[0].lower(),
+            Path("digests"),
+        )
     else:
         promote(Path("container-pair.json"), tag, revision, repository)

@@ -1,4 +1,5 @@
 """Publish a complete, verified four-platform release from retained CI artifacts."""
+
 import base64
 import hashlib
 import json
@@ -43,7 +44,9 @@ def inventory(root, tag, sha):
         assets = {p.name: p for p in folder.iterdir() if p.name != "build-revision"}
         meta = yaml.safe_load(assets[channel].read_bytes())
         prefix = f"multica-desktop-{tag[1:]}-{platform}"
-        if meta["version"] != tag[1:] or (platform.startswith("mac") and meta.get("minimumSystemVersion") != "22.0.0"):
+        if meta["version"] != tag[1:] or (
+            platform.startswith("mac") and meta.get("minimumSystemVersion") != "22.0.0"
+        ):
             raise ValueError(f"{channel} version or OS floor mismatch")
         suffixes = {
             "windows-x64": [".exe", ".exe.blockmap"],
@@ -64,7 +67,12 @@ def inventory(root, tag, sha):
         refs = set()
         for entry in meta["files"]:
             name = entry["url"]
-            if name in refs or name not in assets or hashes[name] != entry["sha512"] or assets[name].stat().st_size != entry["size"]:
+            if (
+                name in refs
+                or name not in assets
+                or hashes[name] != entry["sha512"]
+                or assets[name].stat().st_size != entry["size"]
+            ):
                 raise ValueError(f"{channel} invalid reference {name}")
             refs.add(name)
         if not all(any(name.endswith("." + ext) for name in refs) for ext in required):
@@ -90,7 +98,9 @@ def checked_tag(repo, tag, sha):
 
 
 def remote_hash(url):
-    with subprocess.Popen(["gh", "api", "-H", "Accept: application/octet-stream", url], stdout=subprocess.PIPE) as cmd:
+    with subprocess.Popen(
+        ["gh", "api", "-H", "Accept: application/octet-stream", url], stdout=subprocess.PIPE
+    ) as cmd:
         result = digest(cmd.stdout)
         if cmd.wait():
             raise RuntimeError("failed reading uploaded asset")
@@ -103,17 +113,30 @@ def publish(root, tag, sha, repository):
     files = inventory(root, tag, sha)
     matches = [r for r in pages(f"{repo}/releases?per_page=100") if r["tag_name"] == tag]
     if not matches:
-        release = api(f"{repo}/releases", "-X", "POST", "-f", f"tag_name={tag}", "-F", "draft=true", "-F", "generate_release_notes=true")
+        release = api(
+            f"{repo}/releases",
+            "-X",
+            "POST",
+            "-f",
+            f"tag_name={tag}",
+            "-F",
+            "draft=true",
+            "-F",
+            "generate_release_notes=true",
+        )
     else:
-        release, = matches
+        (release,) = matches
     endpoint = f"{repo}/releases/{release['id']}"
 
     def list_assets():
         return {a["name"]: a for a in pages(f"{endpoint}/assets?per_page=100")}
 
     def matches_file(asset, path, expected):
-        return (asset["state"] == "uploaded" and asset["size"] == path.stat().st_size
-                and remote_hash(asset["url"]) == expected)
+        return (
+            asset["state"] == "uploaded"
+            and asset["size"] == path.stat().st_size
+            and remote_hash(asset["url"]) == expected
+        )
 
     if release["draft"]:
         assets = list_assets()
@@ -125,7 +148,9 @@ def publish(root, tag, sha, repository):
                 raise RuntimeError("release was published during upload")
             if existing:
                 api(existing["url"], "-X", "DELETE")
-            subprocess.run(["gh", "release", "upload", tag, str(path), "--repo", repository], check=True)
+            subprocess.run(
+                ["gh", "release", "upload", tag, str(path), "--repo", repository], check=True
+            )
 
     assets = list_assets()
     if set(files) != set(assets):
@@ -141,7 +166,17 @@ def publish(root, tag, sha, repository):
     if stable(latest) >= stable(tag):
         print(f"{tag} retained as draft, latest is {latest}")
         return
-    api(endpoint, "-X", "PATCH", "-F", "draft=false", "-F", "prerelease=false", "-f", "make_latest=true")
+    api(
+        endpoint,
+        "-X",
+        "PATCH",
+        "-F",
+        "draft=false",
+        "-F",
+        "prerelease=false",
+        "-f",
+        "make_latest=true",
+    )
     with urllib.request.urlopen(f"https://api.github.com/{repo}/releases/latest") as stream:
         if json.load(stream)["tag_name"] != tag:
             raise RuntimeError("anonymous latest lookup differs")
@@ -153,4 +188,9 @@ def publish(root, tag, sha, repository):
 
 
 if __name__ == "__main__":
-    publish(Path(sys.argv[1]), os.environ["GITHUB_REF_NAME"], os.environ["GITHUB_SHA"], os.environ["GITHUB_REPOSITORY"])
+    publish(
+        Path(sys.argv[1]),
+        os.environ["GITHUB_REF_NAME"],
+        os.environ["GITHUB_SHA"],
+        os.environ["GITHUB_REPOSITORY"],
+    )

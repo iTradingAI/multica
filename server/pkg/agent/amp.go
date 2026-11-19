@@ -329,7 +329,13 @@ func (b *ampBackend) Execute(ctx context.Context, prompt string, opts ExecOption
 		if terminalObserved.Load() && (errors.Is(exitErr, context.Canceled) || errors.Is(exitErr, context.DeadlineExceeded)) {
 			exitErr = nil
 		}
-		status, output, errText := finalizeStreamResult("amp", opts.Timeout, runErr, inputErr, exitErr, state.sessionID, terminal, "")
+		// Amp clears exitErr above for shutdowns we initiated. Any remaining
+		// native failure invalidates its result, even after a success frame.
+		var completionGuard string
+		if exitErr != nil {
+			completionGuard = fmt.Sprintf("amp exited with error: %v", exitErr)
+		}
+		status, output, errText := finalizeStreamResult("amp", opts.Timeout, runErr, inputErr, exitErr, state.sessionID, terminal, completionGuard)
 		if errText != "" {
 			errText = sanitizeAgentDiagnostic(scrub(withAgentStderr(errText, "amp", stderr.Tail())))
 		}

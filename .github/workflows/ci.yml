@@ -1099,6 +1099,12 @@ jobs:
         with:
           node-version: 22
 
+      - name: Test fork release validation
+        run: |
+          python3 -m venv "$RUNNER_TEMP/release-tests"
+          "$RUNNER_TEMP/release-tests/bin/pip" install PyYAML==6.0.3
+          "$RUNNER_TEMP/release-tests/bin/python" -m unittest discover -s scripts/fork-release
+
       - name: Test self-host env derivation
         run: bash scripts/selfhost-config.test.sh
 
