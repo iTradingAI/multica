@@ -95,7 +95,11 @@ test("missing, malformed and unsupported filter results fail closed", () => {
 // Read the production wiring without installing workspace dependencies in the
 // lightweight changes job. These fields deliberately use single-line syntax;
 // unsupported formatting fails the assertions instead of being silently ignored.
-const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+function readWorkflow(name) {
+  return readFileSync(new URL("../.github/workflows/" + name, import.meta.url), "utf8")
+    .replaceAll("\r\n", "\n");
+}
+const workflow = readWorkflow("ci.yml");
 const jobSource = workflow.slice(workflow.indexOf("\njobs:\n") + "\njobs:\n".length);
 const headings = [...jobSource.matchAll(/^  ([\w-]+):$/gm)];
 const jobs = Object.fromEntries(headings.map((match, index) => [
@@ -294,7 +298,9 @@ test("cancelled tolerance needs API proof that nothing executed, else fails clos
 
 test("the backend gate owns the three-platform installer matrix", () => {
   assert.equal(productionMapping("backend").installer, "installer");
-  assert.match(jobs.installer, /^        os: \[ubuntu-latest, macos-latest, windows-latest\]$/m);
+  const platforms = field(jobs.installer, /^        os: \[(.+)\]$/m)
+    .split(", ").map((label) => label.split("-")[0]).sort();
+  assert.deepEqual(platforms, ["macos", "ubuntu", "windows"]);
   assert.doesNotMatch(jobs.installer, /continue-on-error:/);
 });
 
@@ -310,7 +316,7 @@ test("no gated job or shared quality step continues past a failure", () => {
 // left pending behind a newer push skips its commit for good.
 test("path-filtered workflows never cancel or supersede a main run", () => {
   for (const name of ["ci.yml", "mobile-verify.yml"]) {
-    const source = readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8");
+    const source = readWorkflow(name);
     const block = field(source, /^concurrency:\n((?:  .+\n)+)/m);
     assert.match(block, /^  group: .*\$\{\{ github\.event\.pull_request\.number \|\| github\.run_id \}\}$/m, name);
     assert.match(block, /^  cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m, name);
