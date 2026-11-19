@@ -39,6 +39,7 @@ type privateRouteResolver func(f *privateRouteFixture, caller string) string
 var projectScopedRouteParams = map[string]privateRouteResolver{
 	"projects/{id}":                    func(f *privateRouteFixture, _ string) string { return f.projectID },
 	"resources/{resourceId}":           func(f *privateRouteFixture, _ string) string { return f.projectResource() },
+	"file-touches/{touchId}":           func(f *privateRouteFixture, _ string) string { return f.fileTouch() },
 	"issue-views/{id}":                 func(f *privateRouteFixture, _ string) string { return f.projectView() },
 	"issues/{id}":                      func(f *privateRouteFixture, _ string) string { return f.issue() },
 	"comments/{commentId}":             func(f *privateRouteFixture, _ string) string { return f.comment() },
@@ -251,6 +252,27 @@ func (f *privateRouteFixture) attachment() string {
 	})
 }
 
+func (f *privateRouteFixture) fileTouch() string {
+	return f.once("fileTouch", func() string {
+		ref, err := json.Marshal(map[string]string{"local_path": f.t.TempDir(), "daemon_id": uuid.NewString()})
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		resource := f.fx.Insert(f.t, "project_resource", dbfx.Cols{
+			"project_id": f.projectID, "workspace_id": f.fx.WorkspaceID,
+			"resource_type": "local_directory", "resource_ref": ref,
+		})
+		return f.fx.Insert(f.t, "issue_file_touches", dbfx.Cols{
+			"id": uuid.NewString(), "workspace_id": f.fx.WorkspaceID, "project_id": f.projectID,
+			"issue_id": f.issue(), "run_id": f.issueRun(), "resource_id": resource,
+			"source_message_id": uuid.NewString(), "event_key": uuid.NewString(), "binding_generation": 1,
+			"relative_path": "fixture.txt", "identity_key": uuid.NewString(), "op": "update",
+			"role": "target", "tool": "Edit", "observed_at": dbfx.Raw("now()"),
+			"mapping_status": "mapped", "reason": "", "extractor_version": 1,
+		})
+	})
+}
+
 func (f *privateRouteFixture) issueWakeup() string {
 	return f.once("issueWakeup", func() string {
 		return f.fx.Insert(f.t, "issue_wakeup", dbfx.Cols{
@@ -444,6 +466,8 @@ func (a routeAnswer) String() string {
 // project-scoped parameter, a workspace admin outside the project must get
 // the answer a missing id gets, and a project member must not.
 func TestEveryRouteByProjectObjectIDHidesPrivateProjects(t *testing.T) {
+	t.Setenv("MULTICA_WORKSPACE_FILES_ENABLED", "true")
+	t.Setenv("MULTICA_WORKSPACE_FILES_SINGLE_API", "true")
 	fx := dbfx.New(testPool, testWorkspaceID, testUserID)
 	fx.WorkspaceID = fx.Workspace(t, "Private project routes", "private-routes-"+uuid.NewString())
 	fx.Member(t, fx.WorkspaceID, fx.UserID, "owner")

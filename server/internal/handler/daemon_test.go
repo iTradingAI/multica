@@ -888,6 +888,7 @@ func TestDaemonRegister_ProfileReRegisterKeepsCapabilities(t *testing.T) {
 	ctx := context.Background()
 	profileID := insertRuntimeProfileFixture(t, ctx, "Custom CapMerge", "codex", "capmerge-cli")
 	const daemonID = "test-daemon-capmerge-profile"
+	dbfx.Exec(t, `UPDATE runtime_profile SET daemon_id = $1 WHERE id = $2`, daemonID, profileID)
 	t.Cleanup(func() {
 		testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE profile_id = $1`, profileID)
 	})

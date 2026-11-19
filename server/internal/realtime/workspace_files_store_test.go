@@ -59,7 +59,8 @@ func filesNativeDB(t *testing.T) *filesDBFixture {
 	// The authorization query is tested against real PostgreSQL in an isolated
 	// schema. Only columns it touches are needed; fixture rows use the shared API.
 	ddl := `CREATE TABLE member(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid NOT NULL,user_id uuid NOT NULL);
- CREATE TABLE project(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),workspace_id uuid NOT NULL);
+ CREATE TABLE project(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),workspace_id uuid NOT NULL,visibility text NOT NULL DEFAULT 'workspace');
+ CREATE TABLE project_member(project_id uuid NOT NULL, user_id uuid NOT NULL);
  CREATE TABLE issue(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),workspace_id uuid NOT NULL,project_id uuid);
  CREATE TABLE project_resource(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),workspace_id uuid NOT NULL,project_id uuid NOT NULL,resource_type text NOT NULL,resource_ref jsonb NOT NULL,label text,position int);`
 	if _, err = pool.Exec(ctx, ddl); err != nil {
@@ -101,6 +102,16 @@ func TestWorkspaceFilesDatabaseAuthorizationMatrix(t *testing.T) {
 	issueSnap, code := d.store.AuthorizeWorkspaceFiles(ctx, d.user, d.workspace, ic, d.resource)
 	if code != "" || issueSnap != snap {
 		t.Fatal("issue join", code)
+	}
+	d.f.Exec(t, "UPDATE project SET visibility='private' WHERE id=$1", d.project)
+	for _, context := range []protocol.WorkspaceFilesContext{pc, ic} {
+		if _, code := d.store.AuthorizeWorkspaceFiles(ctx, d.user, d.workspace, context, d.resource); code != "forbidden" {
+			t.Fatal("private resource requires project membership", code)
+		}
+	}
+	d.f.Exec(t, "INSERT INTO project_member(project_id,user_id) VALUES($1,$2)", d.project, d.user)
+	if _, code := d.store.AuthorizeWorkspaceFiles(ctx, d.user, d.workspace, ic, d.resource); code != "" {
+		t.Fatal("project member lost access", code)
 	}
 	crossProject := d.addResource(t, d.otherProject, d.workspace, "local_directory", "/private/cross-project")
 	crossWorkspace := d.addResource(t, d.project, uuid.NewString(), "local_directory", `\\private-server\share\directory`)
