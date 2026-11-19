@@ -1,0 +1,76 @@
+name: MAX-568 isolated R2 seal recovery
+on:
+  push:
+    branches: [verify/max568-r2-artifact-recovery]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  seal:
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Create the isolated original manifest
+        run: python3 -B .github/max568-r2-fixture.py seal
+      - uses: actions/upload-artifact@v4
+        id: upload
+        with:
+          name: container-pair
+          path: container-pair.json
+          if-no-files-found: error
+          retention-days: 7
+  recover:
+    runs-on: ubuntu-latest
+    needs: seal
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Verify release files match the PR commit
+        run: |
+          for file in .github/workflows/fork-container-release.yml scripts/fork-release/container-pair.py; do
+            git show 8626b1376d6f15e6fd14068851acd900de5719b5:"$file" | cmp "$file" -
+          done
+      - name: Find sealed release inputs from this run
+        id: sealed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          id=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" |
+            jq -er '[.[].artifacts[] | select(.name == "container-pair")] |
+              if length == 0 then "missing" elif length == 1 and (.[0].expired | not) then .[0].id else error("unavailable sealed manifest") end')
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+      - name: Verify original artifact ID
+        env:
+          SEALED_ID: ${{ steps.sealed.outputs.id }}
+          ORIGINAL_ID: ${{ needs.seal.outputs.id }}
+        run: |
+          test "$SEALED_ID" != missing
+          test "$SEALED_ID" = "$ORIGINAL_ID"
+          echo "Same original artifact $SEALED_ID from run $GITHUB_RUN_ID (now attempt $GITHUB_RUN_ATTEMPT)"
+      - uses: actions/download-artifact@v4
+        if: github.run_attempt == 1 && steps.sealed.outputs.id != 'missing'
+        with:
+          artifact-ids: ${{ steps.sealed.outputs.id }}
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
+      - uses: actions/download-artifact@v4
+        if: github.run_attempt == 2 && steps.sealed.outputs.id != 'missing'
+        with:
+          artifact-ids: ${{ steps.sealed.outputs.id }}
+          path: .
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
+      - name: Reproduce the original nested-path failure
+        if: github.run_attempt == 1
+        run: python3 -B .github/max568-r2-fixture.py red
+      - name: Recover only the sealed Web aliases and check repeat is read-only
+        if: github.run_attempt == 2
+        run: python3 -B .github/max568-r2-fixture.py green
