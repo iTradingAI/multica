@@ -29,6 +29,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
+	"github.com/multica-ai/multica/server/internal/daemon/localenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/internal/selfexec"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -707,7 +708,7 @@ type Daemon struct {
 
 	activeEnvRootsMu   sync.Mutex
 	activeEnvRootsCond *sync.Cond      // signalled when an in-flight env-root GC mutation finishes
-	activeEnvRoots     map[string]int  // env root path -> reference count (handles reuse paths marked twice)
+	activeEnvRoots     map[string]int  // env root guard key -> reference count (handles reuse paths marked twice)
 	deletingEnvRoots   map[string]bool // env roots reserved by GC; new tasks wait until the mutation finishes
 
 	activeStoresMu   sync.Mutex
@@ -721,6 +722,11 @@ type Daemon struct {
 	// come from this registry.
 	repoCheckoutTasksMu sync.RWMutex
 	repoCheckoutTasks   map[string]activeRepoCheckoutTask
+
+	// environments supervises what tasks start with `multica env start` and
+	// reports it, with the servers detected in task directories, to each
+	// task's issue. Nil when the daemon has no workspaces root.
+	environments *environmentService
 
 	// localPathLocks serialises agent tasks whose project resource is a
 	// local_directory pinned to this daemon. Two tasks targeting the same
@@ -824,6 +830,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		wsRPC:                       newWSRPCClient(wsRPCResponseGrace),
 		termChannel:                 newTermChannel(),
 		workspaceFilesChannel:       newWorkspaceFilesChannel(),
+		environments:                newEnvironmentService(cfg, client, environmentIgnoreCommands(cfg.Agents), logger),
 	}
 	d.activeEnvRootsCond = sync.NewCond(&d.activeEnvRootsMu)
 	d.activeStoresCond = sync.NewCond(&d.activeStoresMu)
@@ -1236,7 +1243,7 @@ func (d *Daemon) adoptAgentPath(ctx context.Context, provider, command, newPath,
 	// older or broken install must not be launched under the daemon's stale
 	// version policy, and must not slip past the minimum-version gate that the
 	// registration path applies (MUL-4486 review).
-	version, err := detectAgentVersion(ctx, agent.Command{Path: newPath})
+	version, err := detectAgentVersion(ctx, agent.Command{Path: newPath}.ForVersionProbe(provider))
 	if err != nil {
 		d.logger.Warn("re-resolved agent executable failed version detection; keeping pinned path",
 			"provider", provider, "command", command, "new_path", newPath, "error", err)
@@ -2192,6 +2199,7 @@ func (d *Daemon) run(ctx context.Context, healthLn net.Listener) error {
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
 	go d.tokenRenewalLoop(ctx)
+	go d.environments.run(ctx)
 
 	// Preflight succeeded and the background loops are up: the daemon has
 	// registered its runtimes and can now claim and run tasks. Flip /health
@@ -2382,6 +2390,11 @@ const (
 	builtinProbeOK builtinProbeVerdict = iota
 	builtinProbeUnavailable
 	builtinProbeBelowMinimum
+	// builtinProbeProtocolSkew: the backend and its remote counterpart
+	// (e.g. the museapp receptionist) speak different protocol versions.
+	// Deterministic like below-minimum: retrying won't fix it, and an
+	// already-registered runtime must be demoted so it stops taking tasks.
+	builtinProbeProtocolSkew
 	// builtinProbeNotExecutable: the file resolved, but the OS rejected it as
 	// not a runnable program (an npm placeholder stub whose postinstall was
 	// blocked is the case in the field — MUL-6164). Deterministic in the same
@@ -2427,7 +2440,7 @@ const (
 // learned this round.
 func demotableBuiltinProbeVerdict(verdict builtinProbeVerdict) bool {
 	switch verdict {
-	case builtinProbeBelowMinimum, builtinProbeNotExecutable, builtinProbeMissingProfile, builtinProbeProfileMigration:
+	case builtinProbeBelowMinimum, builtinProbeProtocolSkew, builtinProbeNotExecutable, builtinProbeMissingProfile, builtinProbeProfileMigration:
 		return true
 	}
 	return false
@@ -2440,10 +2453,11 @@ func demotableBuiltinProbeVerdict(verdict builtinProbeVerdict) bool {
 // string this round already parsed, so a second look reaches the same
 // conclusion. The other demotable verdicts describe deterministic states but
 // rest on an observation that is not — an installer overwriting the bin entry in
-// place (the very repair we tell users to run) or a DSH upgrade moving the
-// profile under a probe. Requiring a second sighting a window later makes those
-// windows impossible to mistake for a verdict, and costs a genuinely broken
-// provider one extra round.
+// place (the very repair we tell users to run), a DSH upgrade moving the
+// profile under a probe, or a museapp receptionist mid-upgrade answering one
+// /v1/health with another protocol version. Requiring a second sighting a
+// window later makes those windows impossible to mistake for a verdict, and
+// costs a genuinely broken provider one extra round.
 func builtinProbeNeedsConfirmation(verdict builtinProbeVerdict) bool {
 	return verdict != builtinProbeBelowMinimum
 }
@@ -2544,6 +2558,12 @@ func newRuntimeVerdict(verdict builtinProbeVerdict, reason, execPath string, ins
 // not installed" apart from "CLI installed but dropped at registration", which
 // was previously only visible in the daemon log (MUL-5439).
 func (d *Daemon) probeBuiltinRuntime(ctx context.Context, name string, entry AgentEntry) (string, string, builtinProbeVerdict) {
+	// museapp has no local binary: version detection runs against the remote
+	// receptionist instead. This must come before any path resolution — an
+	// empty entry.Path is expected here, not a missing CLI.
+	if name == "museapp" {
+		return d.probeMuseAppReceptionist(ctx)
+	}
 	var (
 		lastErr  error
 		attempts int
@@ -2612,7 +2632,7 @@ probeLoop:
 				"name", name, "version", heal.rejected.Detected, "error", heal.rejected.Error())
 			return heal.rejected.Detected, heal.rejected.Error(), builtinProbeBelowMinimum
 		}
-		version, err := detectAgentVersion(ctx, agent.Command{Path: resolved.Path})
+		version, err := detectAgentVersion(ctx, agent.Command{Path: resolved.Path}.ForVersionProbe(name))
 		if err != nil {
 			lastErr = err
 			if time.Since(startedAt) >= runtimeVersionProbeRetryWindow {
@@ -2749,6 +2769,37 @@ probeLoop:
 		reason = transientReason
 	}
 	return "", reason, builtinProbeUnavailable
+}
+
+// probeMuseAppReceptionist is the museapp equivalent of CLI version detection.
+// There is no local binary to --version, so reachability and the wire
+// protocol version come from the receptionist's /v1/health endpoint.
+// A protocol-skewed receptionist is builtinProbeProtocolSkew (demotable):
+// the version mismatch is deterministic, so an already-registered runtime
+// must stop taking tasks instead of failing them mid-run. Skew goes
+// through confirmation (builtinProbeNeedsConfirmation) since the verdict
+// rests on a live HTTP response, not a locally parsed string.
+// An unreachable receptionist is builtinProbeUnavailable (transient):
+// the runtime stays unregistered without demoting anything,
+// and a later probe round recovers it — the same rule a CLI whose
+// --version fails gets. A missing MULTICA_MUSEAPP_ENDPOINT simply never reaches
+// here (probeAgentCLIs only advertises museapp when it is set); the guard stays
+// as defense for callers that bypass discovery.
+func (d *Daemon) probeMuseAppReceptionist(ctx context.Context) (string, string, builtinProbeVerdict) {
+	endpoint := strings.TrimSpace(os.Getenv("MULTICA_MUSEAPP_ENDPOINT"))
+	if endpoint == "" {
+		return "", "MULTICA_MUSEAPP_ENDPOINT is not set", builtinProbeUnavailable
+	}
+	version, err := agent.ProbeMuseAppReceptionist(ctx, endpoint, strings.TrimSpace(os.Getenv("MULTICA_MUSEAPP_TOKEN")))
+	if err != nil {
+		d.logger.Warn("skip registering runtime: museapp receptionist probe failed", "error", err)
+		if errors.Is(err, agent.ErrMuseAppProtocolSkew) {
+			return "", err.Error(), builtinProbeProtocolSkew
+		}
+		return "", err.Error(), builtinProbeUnavailable
+	}
+	d.setAgentVersion("museapp", version)
+	return version, "", builtinProbeOK
 }
 
 // detectBuiltinRuntimes probes configured CLIs with bounded concurrency and
@@ -3155,7 +3206,7 @@ func (d *Daemon) appendProfileRuntimes(ctx context.Context, workspaceID string, 
 		// wrapper's, and only the former means anything to the min-version
 		// gate (GH #7046).
 		version, verErr := detectAgentVersion(ctx, agent.NewCommand(resolved,
-			agent.FilterLaunchPrefix(runtimeType, profile.FixedArgs, d.logger)))
+			agent.FilterLaunchPrefix(runtimeType, profile.FixedArgs, d.logger)).ForVersionProbe(runtimeType))
 		if verErr != nil {
 			d.logger.Debug("custom runtime profile: version probe failed (registering with empty version)",
 				"workspace_id", workspaceID, "profile_id", profile.ID, "path", resolved, "error", verErr)
@@ -4611,6 +4662,14 @@ func (d *Daemon) handlePendingWorkHint(runtimeID, kind string) {
 		// Not one of ours (stale relay fanout, or the runtime was just pruned).
 		return
 	}
+	// Environment commands have their own claim, and are answered by a member
+	// waiting in the sidebar, so they skip the heartbeat and its rate limit.
+	if kind == protocol.PendingWorkKindEnvironmentCommand {
+		if ctx := d.recoveryContext(); ctx.Err() == nil {
+			d.environments.claimCommands(ctx, runtimeID)
+		}
+		return
+	}
 
 	d.pendingWorkMu.Lock()
 	if d.pendingWorkInflight == nil {
@@ -4735,7 +4794,7 @@ func (d *Daemon) handleModelList(ctx context.Context, rt Runtime, requestID stri
 	}
 	models := catalog.Models
 	if catalog.Fallback {
-		d.logger.Warn("model discovery fell back to a static catalog; reporting it as non-authoritative",
+		d.logger.Warn("model discovery incomplete; reporting the catalog as non-authoritative",
 			"runtime_id", rt.ID, "provider", rt.Provider, "path", execPath, "count", len(models))
 	}
 	if rt.Provider == "codearts" && len(models) == 0 {
@@ -5785,13 +5844,11 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		taskLog.Error("resolve stable task env root", "error", resolveRootErr)
 	}
 	if resolvedEnvRoot != "" {
-		d.markActiveEnvRoot(resolvedEnvRoot)
-		defer d.unmarkActiveEnvRoot(resolvedEnvRoot)
+		defer d.markActiveEnvRoot(resolvedEnvRoot)()
 	}
 	if task.PriorWorkDir != "" {
 		if priorRoot := filepath.Dir(task.PriorWorkDir); priorRoot != "" && priorRoot != resolvedEnvRoot {
-			d.markActiveEnvRoot(priorRoot)
-			defer d.unmarkActiveEnvRoot(priorRoot)
+			defer d.markActiveEnvRoot(priorRoot)()
 		}
 	}
 
@@ -5959,6 +6016,9 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 			if err := execenv.WriteGCMeta(result.EnvRoot, meta, taskLog); err != nil {
 				taskLog.Warn("write gc meta failed (non-fatal)", "error", err)
 			}
+			if meta.Kind == execenv.GCKindIssue && !meta.LocalDirectory {
+				d.environments.reportDeclared(ctx, task.ID, result.EnvRoot)
+			}
 		}
 	}
 }
@@ -6007,7 +6067,7 @@ func taskCancelAcknowledgement(result TaskResult, runErr error, provider string)
 		ack.FailureReason = "local_directory_error"
 	}
 	confirmed := result.FailureReason != taskfailure.ReasonProcessCleanupUnconfirmed.String()
-	if provider == "pi" || provider == "omp" {
+	if provider == "pi" || provider == "omp" || provider == "museapp" {
 		ack.ProcessCleanupConfirmed = &confirmed
 	}
 	if !confirmed {
@@ -6549,6 +6609,7 @@ var runtimeDisplayNameOverrides = map[string]string{
 	"qwenpaw":    "QwenPaw",
 	"mcode":      "MiniMax Code",
 	"muse":       "Muse Code",
+	"museapp":    "Muse app",
 	"zcode":      "ZCode",
 	"zeroclaw":   "ZeroClaw",
 }
@@ -7316,7 +7377,8 @@ func formatBytes(n int64) string {
 		return "unknown size"
 	case n < 1024:
 		return fmt.Sprintf("%d B", n)
-	case n < 1024*1024:
+	case n < 1024*1024-512:
+		// Sizes from 1023.5 KB up round to "1024 KB", so they print in MB.
 		return fmt.Sprintf("%.0f KB", float64(n)/1024)
 	default:
 		return fmt.Sprintf("%.2f MB", float64(n)/(1024*1024))
@@ -8048,18 +8110,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("resolve stable task env root: %w", err)
 	}
-	d.markActiveEnvRoot(resolvedRoot)
-	defer d.unmarkActiveEnvRoot(resolvedRoot)
+	defer d.markActiveEnvRoot(resolvedRoot)()
 	if task.PriorWorkDir != "" {
 		priorRoot := filepath.Dir(task.PriorWorkDir)
 		if priorRoot != resolvedRoot {
-			d.markActiveEnvRoot(priorRoot)
-			defer d.unmarkActiveEnvRoot(priorRoot)
+			defer d.markActiveEnvRoot(priorRoot)()
 		}
 	}
 
 	// Claim the env root HERE, in the daemon parent, and hold it for the whole
-	// task run — the same lifetime as unmarkActiveEnvRoot above.
+	// task run, for the same lifetime as the active guard above.
 	//
 	// It cannot be claimed inside preparation: production preparation runs in a
 	// short-lived helper process (prepareExecutionEnvironment ->
@@ -8461,8 +8521,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Belt-and-suspenders: also mark whatever root we ended up with, in case
 	// future changes diverge from ResolveRootDir.
 	if env.RootDir != resolvedRoot && env.RootDir != "" {
-		d.markActiveEnvRoot(env.RootDir)
-		defer d.unmarkActiveEnvRoot(env.RootDir)
+		defer d.markActiveEnvRoot(env.RootDir)()
 	}
 	// Finalize the worktree on EVERY exit path, success or failure: commit
 	// whatever the agent left uncommitted, then unregister the worktree from
@@ -8640,6 +8699,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if provider == "pi" || provider == "omp" {
 		taskCapabilities = append(taskCapabilities, protocol.DaemonCapabilityPiProcessCleanupV1)
 	}
+	if provider == "museapp" {
+		taskCapabilities = append(taskCapabilities, protocol.DaemonCapabilityMuseAppProcessCleanupV1)
+	}
 	var cursorHookCommand []string
 	supplementSupported := agent.SupportsTaskSupplement(provider, resolvedVersion) && task.IssueID != ""
 	if supplementSupported && provider == "cursor" {
@@ -8697,6 +8759,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Build the runtime brief and inject it into the provider-specific
 	// instruction file when supported.
 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
+	runtimeBriefWritten := err == nil
 	if err != nil {
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
@@ -8871,6 +8934,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		if err := agent.StopHermesTaskGateway(backendConfig, env.HermesHome); err != nil {
 			return TaskResult{}, err
 		}
+		stopGateway, err := agent.StartHermesTaskGateway(ctx, backendConfig, env.HermesHome)
+		if err != nil {
+			return TaskResult{}, err
+		}
+		defer stopGateway()
 		defer func() {
 			if err := agent.StopHermesTaskGateway(backendConfig, env.HermesHome); err != nil {
 				d.logger.Warn("failed to stop task Hermes gateway", "home", env.HermesHome, "error", err)
@@ -8893,6 +8961,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			return TaskResult{}, fmt.Errorf("prepare fresh OpenCode session after clock check: %w", briefErr)
 		} else {
 			runtimeBrief = freshBrief
+			runtimeBriefWritten = true
 		}
 		prompt = BuildPrompt(task, provider, promptOptions...)
 	}
@@ -9003,6 +9072,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// can never pay for it twice (MUL-5722).
 		ResumeExpected:         task.PriorSessionID != "",
 		ResumeContinuityNotice: backendResumeContinuityNotice(task),
+		TaskToken:              agentToken,
+		MulticaServerURL:       d.cfg.ServerBaseURL,
+		MulticaWorkspaceID:     task.WorkspaceID,
 		ExtraArgs:              extraArgs,
 		CustomArgs:             customArgs,
 		McpConfig:              mcpConfig,
@@ -9070,11 +9142,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	d.registerActiveRepoCheckoutTask(agentToken, activeRepoCheckoutTask{
 		WorkspaceID: task.WorkspaceID,
 		TaskID:      task.ID,
+		IssueID:     task.IssueID,
 		AgentID:     task.AgentID,
 		AgentName:   task.Agent.Name,
 		WorkDir:     env.WorkDir,
 	})
 	defer d.clearActiveRepoCheckoutTask(agentToken)
+	defer d.environments.trackTask(env.RootDir, localenv.Task{
+		TaskID: task.ID, IssueID: task.IssueID, WorkspaceID: task.WorkspaceID,
+	})()
 
 	taskLog.Debug("invoking backend",
 		"provider", provider,
@@ -9088,6 +9164,26 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"timeout", execOpts.Timeout,
 		"idle_watchdog", execOpts.IdleWatchdogTimeout,
 	)
+
+	// MUL-9013: record what this run is being handed, before it starts, so a
+	// run that dies early still has a receipt. Rebuilt for the cold retry.
+	receiptInput := contextReceiptInput{
+		Provider:             provider,
+		RuntimeVersion:       resolvedVersion,
+		CustomRuntime:        usesCustomProfileCommand,
+		Model:                model,
+		WorkDir:              env.WorkDir,
+		Prompt:               prompt,
+		RuntimeBrief:         runtimeBrief,
+		InlineBrief:          execOpts.SystemPrompt != "",
+		BriefWritten:         runtimeBriefWritten,
+		ResumedSession:       execOpts.ResumeSessionID != "",
+		MCPConfig:            mcpConfig,
+		TaskCtx:              taskCtx,
+		Skills:               env.SkillReceipts(provider, taskCtx.AgentSkills),
+		ExistingInstructions: execenv.ExistingRuntimeConfigContent(env.WorkDir, provider),
+	}
+	d.reportContextReceipt(ctx, task.ID, buildContextReceipt(receiptInput), taskLog)
 
 	// Shared across the resume-retry below so the retry's transcript rows
 	// keep ascending seq values for the same task.
@@ -9150,15 +9246,33 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		task.PriorSessionResumeUnavailable = true
 		execOpts.ResumeContinuityNotice = ""
 		taskCtx.PriorSessionResumed = false
-		if freshBrief, briefErr := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx); briefErr != nil {
+		runtimeBriefWritten = false
+		freshBrief, briefErr := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
+		if briefErr != nil {
 			taskLog.Warn("execenv: re-inject cold runtime config for fresh retry failed (non-fatal)", "error", briefErr)
 		} else {
 			runtimeBrief = freshBrief
+			runtimeBriefWritten = true
 			if providerNeedsInlineSystemPrompt(provider) {
 				execOpts.SystemPrompt = runtimeBrief
 			}
 		}
 		freshPrompt := BuildPrompt(task, provider, promptOptions...)
+
+		receiptInput.Prompt = freshPrompt
+		receiptInput.RuntimeBrief = freshBrief
+		receiptInput.InlineBrief = execOpts.SystemPrompt != ""
+		if receiptInput.InlineBrief {
+			// A failed file rewrite leaves the prior inline payload in use.
+			receiptInput.RuntimeBrief = execOpts.SystemPrompt
+		}
+		receiptInput.BriefWritten = runtimeBriefWritten
+		receiptInput.ResumedSession = false
+		receiptInput.FreshRetry = true
+		receiptInput.TaskCtx = taskCtx
+		receiptInput.Skills = env.SkillReceipts(provider, taskCtx.AgentSkills)
+		receiptInput.ExistingInstructions = execenv.ExistingRuntimeConfigContent(env.WorkDir, provider)
+		d.reportContextReceipt(ctx, task.ID, buildContextReceipt(receiptInput), taskLog)
 
 		retryResult, retryTools, retryErr := d.executeAndDrain(ctx, backend, freshPrompt, withPriorTaskUsage(execOpts, firstUsage), taskLog, task.ID, env.CodexHome, &msgSeq, task.FileTouchDaemonToken)
 		if retryErr != nil {
@@ -9551,7 +9665,7 @@ func shouldRetryWithFreshSession(result agent.Result, priorSessionID string, too
 	if !agent.ResumeRejectionUndetectable(provider) {
 		return false
 	}
-	// antigravity, codearts, copilot, cursor, deveco and opencode scrape SessionID out
+	// antigravity, codearts, copilot, cursor, deveco, droid and opencode scrape SessionID out
 	// of stream output and have no rejection string captured anywhere, so an
 	// empty SessionID is the only thing they can offer. It proves no session
 	// was established this run, which is exactly what the gate relied on for
@@ -10639,42 +10753,58 @@ func convertProjectResourcesForEnv(resources []ProjectResourceData) []execenv.Pr
 	return result
 }
 
-// markActiveEnvRoot records that a task is currently using the given env root,
-// so the GC loop won't reclaim its artifacts mid-execution. Calls are
-// reference-counted so a reuse path marked twice (predicted + prior) only
-// becomes inactive after both unmark calls.
-func (d *Daemon) markActiveEnvRoot(envRoot string) {
-	if envRoot == "" {
-		return
+// envRootGuardKey gives a reused root and the path GC scans through the
+// configured workspaces root the same identity, even before a new task root
+// has been created. The key is used only for locking, never as a deletion path.
+func envRootGuardKey(envRoot string) (string, error) {
+	key, err := util.ResolveSymlinksBestEffort(envRoot)
+	if runtime.GOOS == "windows" {
+		// A junction can spell the target with different casing.
+		key = strings.ToLower(key)
 	}
-	d.activeEnvRootsMu.Lock()
-	defer d.activeEnvRootsMu.Unlock()
-	d.ensureActiveEnvRootStateLocked()
-	for d.deletingEnvRoots[envRoot] {
-		d.activeEnvRootsCond.Wait()
-	}
-	d.activeEnvRoots[envRoot]++
+	return key, err
 }
 
-func (d *Daemon) unmarkActiveEnvRoot(envRoot string) {
-	if envRoot == "" {
-		return
+// markActiveEnvRoot protects a root until the returned function is called.
+// The release uses the original key even if a link is moved in the meantime.
+func (d *Daemon) markActiveEnvRoot(envRoot string) (release func()) {
+	key, err := envRootGuardKey(envRoot)
+	if err != nil {
+		// Keep the original guard for this path. GC skips paths whose
+		// identity it cannot resolve.
+		key = filepath.Clean(envRoot)
+	}
+	if key == "" {
+		return func() {}
 	}
 	d.activeEnvRootsMu.Lock()
 	defer d.activeEnvRootsMu.Unlock()
 	d.ensureActiveEnvRootStateLocked()
-	if d.activeEnvRoots[envRoot] <= 1 {
-		delete(d.activeEnvRoots, envRoot)
-		return
+	for d.deletingEnvRoots[key] {
+		d.activeEnvRootsCond.Wait()
 	}
-	d.activeEnvRoots[envRoot]--
+	d.activeEnvRoots[key]++
+
+	return func() {
+		d.activeEnvRootsMu.Lock()
+		defer d.activeEnvRootsMu.Unlock()
+		if d.activeEnvRoots[key] <= 1 {
+			delete(d.activeEnvRoots, key)
+			return
+		}
+		d.activeEnvRoots[key]--
+	}
 }
 
 func (d *Daemon) isActiveEnvRoot(envRoot string) bool {
+	key, err := envRootGuardKey(envRoot)
+	if err != nil {
+		return true
+	}
 	d.activeEnvRootsMu.Lock()
 	defer d.activeEnvRootsMu.Unlock()
 	d.ensureActiveEnvRootStateLocked()
-	return d.activeEnvRoots[envRoot] > 0
+	return d.activeEnvRoots[key] > 0
 }
 
 func (d *Daemon) ensureActiveEnvRootStateLocked() {
@@ -10695,19 +10825,20 @@ func (d *Daemon) ensureActiveEnvRootStateLocked() {
 // the active task and skips, or task startup waits for the mutation to finish
 // and recreates/uses the post-GC environment.
 func (d *Daemon) reserveEnvRootForGC(envRoot string) (release func(), ok bool) {
-	if envRoot == "" {
+	key, err := envRootGuardKey(envRoot)
+	if err != nil || key == "" {
 		return nil, false
 	}
 	d.activeEnvRootsMu.Lock()
 	defer d.activeEnvRootsMu.Unlock()
 	d.ensureActiveEnvRootStateLocked()
-	if d.activeEnvRoots[envRoot] > 0 || d.deletingEnvRoots[envRoot] {
+	if d.activeEnvRoots[key] > 0 || d.deletingEnvRoots[key] {
 		return nil, false
 	}
-	d.deletingEnvRoots[envRoot] = true
+	d.deletingEnvRoots[key] = true
 	return func() {
 		d.activeEnvRootsMu.Lock()
-		delete(d.deletingEnvRoots, envRoot)
+		delete(d.deletingEnvRoots, key)
 		d.activeEnvRootsCond.Broadcast()
 		d.activeEnvRootsMu.Unlock()
 	}, true
@@ -11221,6 +11352,8 @@ func defaultArgsForProvider(cfg Config, provider string) []string {
 		args = cfg.CodebuddyArgs
 	case "qwen":
 		args = cfg.QwenArgs
+	case "droid":
+		args = cfg.DroidArgs
 	case "qwenpaw":
 		args = cfg.QwenpawArgs
 	default:

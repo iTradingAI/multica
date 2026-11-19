@@ -800,6 +800,9 @@ func TestProviderNeedsInlineSystemPrompt(t *testing.T) {
 		{provider: "qwen", want: false},
 		{provider: "codex", want: false},
 		{provider: "claude", want: false},
+		// Droid uses the task AGENTS.md; TestDroidRealAgentsMDCanary verifies
+		// native discovery independently of the optional adapter SystemPrompt.
+		{provider: "droid", want: false},
 	}
 
 	for _, tc := range cases {
@@ -3921,7 +3924,7 @@ func TestShouldRetryWithFreshSession_CompatPathIsBackendScoped(t *testing.T) {
 	// the compat path exists to catch.
 	result := agent.Result{Status: "failed", Error: "exit status 1"}
 
-	undetectable := []string{"antigravity", "codearts", "copilot", "cursor", "deveco", "opencode"}
+	undetectable := []string{"antigravity", "codearts", "copilot", "cursor", "deveco", "droid", "opencode"}
 	for _, provider := range undetectable {
 		t.Run(provider+" retries", func(t *testing.T) {
 			t.Parallel()

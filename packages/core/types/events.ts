@@ -39,6 +39,7 @@ export type WSEventType =
   | "inbox:unread"
   | "inbox:archived"
   | "inbox:unarchived"
+  | "inbox:deleted"
   | "inbox:batch-read"
   | "inbox:batch-archived"
   | "workspace:updated"
@@ -60,6 +61,7 @@ export type WSEventType =
   | "issue_reaction:removed"
   | "chat:message"
   | "chat:done"
+  | "chat:reply_notification"
   | "chat:quick_actions"
   | "chat:cancel_finalized"
   | "chat:session_created"
@@ -80,6 +82,8 @@ export type WSEventType =
   | "label:deleted"
   | "issue_labels:changed"
   | "issue_unread:changed"
+  | "app_request:changed"
+  | "app_call:created"
   | "issue_metadata:changed"
   | "issue_properties:changed"
   | "property:created"
@@ -120,7 +124,8 @@ export type WSEventType =
   | "workspace_files.read"
   | "workspace_files.read_chunk"
   | "workspace_files.cancel"
-  | "workspace_files.error";
+  | "workspace_files.error"
+  | "environment:changed";
 
 export interface WSMessage<T = unknown> {
   type: WSEventType;
@@ -147,6 +152,9 @@ export interface IssueUpdatedPayload {
   assignee_changed?: boolean;
   status_changed?: boolean;
   project_changed?: boolean;
+  title_changed?: boolean;
+  parent_changed?: boolean;
+  prev_parent_issue_id?: string | null;
   // Both ends of a duplicate-mark change (MUL-7349). The mark is not on Issue,
   // so these tell the realtime layer whose duplicate relations to refresh.
   duplicate_of_issue_id?: string | null;
@@ -496,9 +504,20 @@ export interface ChatMessageEventPayload {
   created_at: string;
 }
 
+/** Owner-only system alert, also received while connected to another workspace. */
+export interface ChatReplyNotificationPayload {
+  workspace_id: string;
+  chat_session_id: string;
+  message_id: string;
+  title: string;
+  body: string;
+}
+
 export interface ChatDonePayload {
   chat_session_id: string;
   task_id: string;
+  /** Optional OS-alert context for completed direct-chat replies. */
+  notification?: { workspace_id: string; title: string };
   /**
    * Server populates these from the freshly-persisted assistant ChatMessage
    * row so the WS handler can write it into the messages cache inline. Older
@@ -687,6 +706,7 @@ export interface WSEventPayloadMap {
   "inbox:unread": InboxUnreadPayload;
   "inbox:archived": InboxArchivedPayload;
   "inbox:unarchived": InboxUnarchivedPayload;
+  "inbox:deleted": { item_id: string; recipient_id: string; count: number };
   "inbox:batch-read": InboxBatchReadPayload;
   "inbox:batch-archived": InboxBatchArchivedPayload;
   "workspace:updated": WorkspaceUpdatedPayload;
@@ -699,6 +719,7 @@ export interface WSEventPayloadMap {
   "activity:created": ActivityCreatedPayload;
   "chat:message": ChatMessageEventPayload;
   "chat:done": ChatDonePayload;
+  "chat:reply_notification": ChatReplyNotificationPayload;
   "chat:quick_actions": ChatQuickActionsPayload;
   "chat:cancel_finalized": ChatCancelFinalizedPayload;
   "chat:session_created": ChatSessionCreatedPayload;
@@ -750,6 +771,7 @@ export interface WSEventPayloadMap {
   "workspace_files.read_chunk": unknown;
   "workspace_files.cancel": unknown;
   "workspace_files.error": unknown;
+  "environment:changed": { issue_id: string };
 }
 
 /**

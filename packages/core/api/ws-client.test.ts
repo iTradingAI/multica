@@ -141,6 +141,59 @@ describe("WSClient", () => {
     expect(url.searchParams.has("client_os")).toBe(false);
   });
 
+  it("keeps status, ready subscriptions and reconnect notifications aligned", () => {
+    vi.useFakeTimers();
+    const ws = new WSClient("ws://example.test/ws");
+    const statuses: string[] = [];
+    ws.onStatusChange(() => statuses.push(ws.getStatus()));
+    const ready = vi.fn(() => {
+      expect(ws.getStatus()).toBe("connected");
+      expect(ws.send({ type: "workspace_files.resources", payload: {} })).toBe(true);
+    });
+    const reconnect = vi.fn();
+    ws.onReady(ready);
+    ws.onReconnect(reconnect);
+    try {
+      ws.setAuth("first-token", "first-workspace");
+      ws.connect();
+      const first = FakeWebSocket.lastInstance!;
+      first.readyState = FakeWebSocket.OPEN;
+      first.onopen!();
+      expect(ready).not.toHaveBeenCalled();
+      first.onmessage!({ data: JSON.stringify({ type: "auth_ack" }) });
+      expect(ready).toHaveBeenCalledTimes(1);
+      expect(reconnect).not.toHaveBeenCalled();
+      const retiredMessage = first.onmessage!;
+      first.onclose!();
+      expect(statuses).toEqual(["connected", "reconnecting"]);
+      expect(ws.send({ type: "workspace_files.resources", payload: {} })).toBe(false);
+      vi.runOnlyPendingTimers();
+      const second = FakeWebSocket.lastInstance!;
+      retiredMessage({ data: JSON.stringify({ type: "auth_ack" }) });
+      expect(ready).toHaveBeenCalledTimes(1);
+      second.readyState = FakeWebSocket.OPEN;
+      second.onopen!();
+      second.onmessage!({ data: JSON.stringify({ type: "auth_ack" }) });
+      second.onmessage!({ data: JSON.stringify({ type: "auth_ack" }) });
+      expect(statuses).toEqual(["connected", "reconnecting", "connected"]);
+      expect(ready).toHaveBeenCalledTimes(2);
+      expect(reconnect).toHaveBeenCalledTimes(1);
+      ws.disconnect();
+      ws.setAuth("next-token", "next-workspace");
+      ws.connect();
+      const next = FakeWebSocket.lastInstance!;
+      next.readyState = FakeWebSocket.OPEN;
+      next.onopen!();
+      next.onmessage!({ data: JSON.stringify({ type: "auth_ack" }) });
+      expect(ready).toHaveBeenCalledTimes(2);
+      expect(reconnect).toHaveBeenCalledTimes(1);
+      expect(statuses).toHaveLength(3);
+    } finally {
+      ws.disconnect();
+      vi.useRealTimers();
+    }
+  });
+
   it("only includes the identity fields that are set", () => {
     const ws = new WSClient("ws://example.test/ws", {
       identity: { platform: "cli" },
@@ -319,6 +372,27 @@ describe("WSClient", () => {
         data: JSON.stringify({ type: "auth_ack" }),
       });
     }
+
+    it("reports connecting, connected, then reconnecting until the next auth ack", () => {
+      const ws = new WSClient("ws://example.test/ws");
+      const listener = vi.fn();
+      ws.onStatusChange(listener);
+      ws.setAuth("tok", "acme");
+      ws.connect();
+      expect(ws.getStatus()).toBe("connecting");
+
+      simulateAuthAck();
+      expect(ws.getStatus()).toBe("connected");
+
+      simulateDisconnect();
+      expect(ws.getStatus()).toBe("reconnecting");
+      vi.runOnlyPendingTimers();
+      expect(ws.getStatus()).toBe("reconnecting");
+
+      simulateAuthAck();
+      expect(ws.getStatus()).toBe("connected");
+      expect(listener).toHaveBeenCalledTimes(3);
+    });
 
     it("uses ~1000ms base delay for the first reconnect attempt", () => {
       // Pin Math.random so jitter is deterministic: random()=0.5 → jitter=0.

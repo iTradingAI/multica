@@ -1,6 +1,7 @@
 import { lazy, useEffect, useLayoutEffect } from "react";
 import { createMemoryRouter, Outlet, useLocation, useMatches } from "react-router-dom";
 import type { RouteObject } from "react-router-dom";
+
 import { WorkspaceRouteLayout } from "./components/workspace-route-layout";
 import { DesktopRouteErrorPage } from "./components/route-error-page";
 import { loadPage } from "./platform/lazy-page";
@@ -72,9 +73,6 @@ const AgentCreatedPage = lazy(() =>
 );
 const ManualCreateAgentPage = lazy(() =>
   loadPage(import("@multica/views/agents/manual-create-agent-page").then((m) => ({ default: m.ManualCreateAgentPage }))),
-);
-const AiCreateAgentPage = lazy(() =>
-  loadPage(import("@multica/views/agents/ai-create-agent-page").then((m) => ({ default: m.AiCreateAgentPage }))),
 );
 const SquadsPage = lazy(() =>
   loadPage(import("@multica/views/squads/components").then((m) => ({ default: m.SquadsPage }))),
@@ -187,6 +185,12 @@ export const appRoutes: RouteObject[] = [
             handle: { title: "Issue" },
           },
           {
+            // The issue, opened on the newest version of one deliverable.
+            path: "issues/:id/deliverables/:name",
+            element: <IssueDetailPage />,
+            handle: { title: "Issue" },
+          },
+          {
             path: "projects",
             element: <ProjectsPage />,
             handle: { title: "Projects" },
@@ -250,11 +254,6 @@ export const appRoutes: RouteObject[] = [
           {
             path: "agents/new/manual",
             element: <ManualCreateAgentPage />,
-            handle: { title: "Create Agent" },
-          },
-          {
-            path: "agents/new/ai",
-            element: <AiCreateAgentPage />,
             handle: { title: "Create Agent" },
           },
           {
