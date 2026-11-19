@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/filetouch"
 )
 
 func TestClaudeHandleAssistantText(t *testing.T) {
@@ -69,7 +71,11 @@ func TestClaudeExecuteThinking(t *testing.T) {
 			want: []Message{
 				{Type: MessageText, Content: "Checking the fixture."},
 				{Type: MessageThinking, Content: "Compare the fixture with the expected value."},
-				{Type: MessageToolUse, CallID: "tool_read", Tool: "Read", Input: map[string]any{"file_path": "fixture.txt"}},
+				{
+					Type: MessageToolUse, CallID: "tool_read", Tool: "Read",
+					Input:         map[string]any{"file_path": "fixture.txt"},
+					PathIntegrity: filetouch.Integrity{ProofVersion: filetouch.ProofVersion, Provider: "claude"},
+				},
 				{Type: MessageText, Content: "The fixture matches."},
 			},
 		},

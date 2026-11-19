@@ -2,7 +2,7 @@ name: Container release (fork)
 
 on:
   push:
-    tags: ['v*.*.*', '!v*-*', '!v*+*']
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
 
 permissions:
   contents: read
