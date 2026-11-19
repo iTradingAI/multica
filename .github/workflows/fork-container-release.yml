@@ -303,6 +303,8 @@ jobs:
         if: steps.sealed.outputs.id != 'missing'
         with:
           artifact-ids: ${{ steps.sealed.outputs.id }}
+          path: .
+          merge-multiple: true
           github-token: ${{ github.token }}
           run-id: ${{ github.run_id }}
       - uses: actions/download-artifact@v4
