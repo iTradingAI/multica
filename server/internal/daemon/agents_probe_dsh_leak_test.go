@@ -72,7 +72,7 @@ func TestProbeDshMulticaProfile_HangingProbeLeavesNoProcessesAfterEachRound(t *t
 	// one-hour soak. The pid files are cleared between rounds so a leaked tree
 	// is attributed to the round that leaked it.
 	for round := 1; round <= 3; round++ {
-		if got := probeDshMulticaProfile(context.Background(), path); got != dshProbeUnavailable {
+		if got := probeDshMulticaProfile(context.Background(), path).verdict; got != dshProbeUnavailable {
 			t.Fatalf("round %d: probeDshMulticaProfile() = %v, want %v", round, got, dshProbeUnavailable)
 		}
 		pids := recordedLeakPIDs(t, pidDir)

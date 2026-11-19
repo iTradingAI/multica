@@ -2,6 +2,7 @@ import { autoUpdater, type UpdateDownloadedEvent } from "electron-updater";
 import { app, type BrowserWindow, type MessageBoxOptions, ipcMain } from "electron";
 import type {
   ManualUpdateCheckResult,
+  UpdaterDownloadState,
   UpdaterPreferences,
 } from "../shared/updater-types";
 import {
@@ -12,12 +13,13 @@ import {
 } from "./updater-preferences";
 import type { DaemonInstallPrep } from "./update-install-gate";
 import { openExternalSafely } from "./external-url";
+import { classifyUpdaterError } from "./updater-errors";
 
 // Silent background updates download on non-macOS platforms. Squirrel.Mac
 // requires signed apps, while this fork's macOS builds are unsigned, so macOS
 // checks only and sends members to the matching installer instead.
 autoUpdater.autoDownload = process.platform !== "darwin";
-autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.autoInstallOnAppQuit = process.platform !== "darwin";
 
 const MAC_RELEASES_URL = "https://github.com/iTradingAI/multica/releases/download";
 
@@ -44,6 +46,7 @@ export function macInstallerDownloadUrl(
 // `latest-arm64.yml` instead of the x64 metadata.
 if (process.platform === "win32" && process.arch === "arm64") {
   autoUpdater.channel = "latest-arm64";
+  autoUpdater.allowDowngrade = false;
 }
 
 interface ChannelConfigurableUpdater {
@@ -114,6 +117,7 @@ export function createElectronBusyInstallPrompt(
 type RendererChannel =
   | "updater:update-available"
   | "updater:download-progress"
+  | "updater:download-state"
   | "updater:update-downloaded";
 
 function isDestroyedObjectError(err: unknown): boolean {
@@ -137,35 +141,6 @@ function sendToLiveRenderer(
   }
 }
 
-// Single-flight guard around checkForUpdates(). With autoDownload=true the
-// startup, periodic, and manual triggers can all kick off downloads, and
-// overlapping calls have caused duplicate download warnings in the past
-// (see electronjs.org/docs/latest/api/auto-updater). Coalesce concurrent
-// callers onto the same in-flight promise.
-let inFlightCheck: Promise<unknown> | null = null;
-function checkForUpdatesOnce(): Promise<unknown> {
-  if (inFlightCheck) return inFlightCheck;
-  const p = autoUpdater
-    .checkForUpdates()
-    .then((result) => {
-      // checkForUpdates resolves as soon as metadata is fetched; the actual
-      // download (when autoDownload=true) is exposed on result.downloadPromise.
-      // Without a handler a download failure becomes an unhandled rejection
-      // in the main process — Node may terminate it on future versions.
-      void (result as { downloadPromise?: Promise<unknown> } | null)?.downloadPromise?.catch(
-        (err) => {
-          console.error("Failed to download update:", err);
-        },
-      );
-      return result;
-    })
-    .finally(() => {
-      if (inFlightCheck === p) inFlightCheck = null;
-    });
-  inFlightCheck = p;
-  return p;
-}
-
 export function setupAutoUpdater(
   getMainWindows: () => readonly BrowserWindow[],
   options: SetupAutoUpdaterOptions = {},
@@ -174,15 +149,66 @@ export function setupAutoUpdater(
   const broadcast = (channel: RendererChannel, payload: unknown) => {
     for (const win of getMainWindows()) sendToLiveRenderer(win, channel, payload);
   };
+  let downloadState: UpdaterDownloadState = { status: "idle" };
+  const setDownloadState = (state: UpdaterDownloadState) => {
+    downloadState = state;
+    broadcast("updater:download-state", state);
+  };
+  const reportDownloadFailure = (err: unknown) => {
+    if (downloadState.status === "downloading") {
+      setDownloadState({ status: "error", reason: classifyUpdaterError(err) });
+    }
+  };
+  // Startup, periodic, and manual checks share one in-flight metadata request.
+  let inFlightCheck: ReturnType<typeof autoUpdater.checkForUpdates> | null = null;
+  function checkForUpdatesOnce(): ReturnType<typeof autoUpdater.checkForUpdates> {
+    if (inFlightCheck) return inFlightCheck;
+    if (manualMacInstall) setDownloadState({ status: "manual-checking" });
+    const pending = autoUpdater.checkForUpdates().then((result) => {
+      if (manualMacInstall) {
+        const version = result?.updateInfo?.version;
+        if (result?.isUpdateAvailable && version && macInstallerDownloadUrl(version)) {
+          setDownloadState({ status: "manual-available", version });
+          broadcast("updater:update-available", {
+            version, releaseNotes: result.updateInfo.releaseNotes, manualInstall: true,
+          });
+        } else if (result?.isUpdateAvailable) {
+          setDownloadState({ status: "error", reason: "unavailable" });
+        } else {
+          setDownloadState({ status: "manual-current" });
+        }
+      }
+      // Metadata resolves before the automatic download. Handle rejection even
+      // when a provider does not emit an error event for that failure.
+      void result?.downloadPromise?.catch((err) => {
+        console.error("Failed to download update:", err);
+        reportDownloadFailure(err);
+      });
+      return result;
+    }).catch((error) => {
+      if (manualMacInstall) setDownloadState({ status: "error", reason: classifyUpdaterError(error) });
+      throw error;
+    }).finally(() => {
+      if (inFlightCheck === pending) inFlightCheck = null;
+    });
+    inFlightCheck = pending;
+    return pending;
+  }
   const platform = options.platform ?? process.platform;
   // Only Windows locks a running executable against replacement; macOS and
   // Linux keep their existing update path untouched.
   const daemonGate = platform === "win32" ? (options.daemonGate ?? null) : null;
   // macOS installs by downloading the matching unsigned installer manually.
   const manualMacInstall = platform === "darwin";
-  let availableMacUpdateVersion: string | null = null;
-  const macInstallerUrl = (): string | null =>
-    availableMacUpdateVersion ? macInstallerDownloadUrl(availableMacUpdateVersion) : null;
+  const openMacInstaller = (expectedVersion?: unknown) => {
+    if (downloadState.status !== "manual-available" ||
+        (expectedVersion !== undefined && expectedVersion !== downloadState.version)) {
+      throw new Error("No compatible macOS update is available");
+    }
+    const url = macInstallerDownloadUrl(downloadState.version);
+    if (!url) throw new Error("No compatible macOS update is available");
+    return openExternalSafely(url);
+  };
   const preferencesFilePath = updaterPreferencesPath(app.getPath("userData"));
   let automaticUpdatesEnabled =
     DEFAULT_UPDATER_PREFERENCES.automaticUpdates;
@@ -302,14 +328,14 @@ export function setupAutoUpdater(
   }
 
   autoUpdater.on("update-available", (info) => {
-    // Non-macOS renderers track availability until their background download
-    // completes; macOS renders the manual installer action immediately.
-    const manualInstall = manualMacInstall && macInstallerDownloadUrl(info.version) !== null;
-    if (manualInstall) availableMacUpdateVersion = info.version;
+    if (manualMacInstall) return;
+    setDownloadState({ status: "downloading", version: info.version });
+    // Forwarded for renderer-side state tracking only; the notification UI
+    // does not render an "available" affordance with autoDownload=true.
     broadcast("updater:update-available", {
       version: info.version,
       releaseNotes: info.releaseNotes,
-      manualInstall,
+      manualInstall: false,
     });
   });
 
@@ -320,7 +346,9 @@ export function setupAutoUpdater(
   });
 
   autoUpdater.on("update-downloaded", (info: UpdateDownloadedEvent) => {
+    if (manualMacInstall) return;
     updateReadyToInstall = true;
+    setDownloadState({ status: "downloaded", version: info.version });
     broadcast("updater:update-downloaded", {
       version: info.version,
       releaseNotes: info.releaseNotes,
@@ -329,25 +357,20 @@ export function setupAutoUpdater(
 
   autoUpdater.on("error", (err) => {
     console.error("Auto-updater error:", err);
+    reportDownloadFailure(err);
   });
 
-  // Retained for IPC back-compat with older renderer bundles. Non-macOS
-  // builds download automatically; macOS users receive an installer link.
-  ipcMain.handle("updater:download", () => {
-    if (manualMacInstall) {
-      const url = macInstallerUrl();
-      if (!url) throw new Error("No compatible macOS update is available");
-      return openExternalSafely(url);
-    }
+  ipcMain.handle("updater:get-download-state", (): UpdaterDownloadState => downloadState);
+
+  // Retained for IPC back-compat with older renderer bundles. With
+  // autoDownload=true the renderer no longer triggers this path.
+  ipcMain.handle("updater:download", (_event, version?: unknown) => {
+    if (manualMacInstall) return openMacInstaller(version);
     return autoUpdater.downloadUpdate();
   });
 
-  ipcMain.handle("updater:install", async () => {
-    if (manualMacInstall) {
-      const url = macInstallerUrl();
-      if (!url) throw new Error("No compatible macOS update is available");
-      return openExternalSafely(url);
-    }
+  ipcMain.handle("updater:install", async (_event, version?: unknown) => {
+    if (manualMacInstall) return openMacInstaller(version);
     if (!daemonGate) {
       autoUpdater.quitAndInstall(false, true);
       return;
@@ -406,22 +429,24 @@ export function setupAutoUpdater(
       const available = result?.isUpdateAvailable ?? false;
       const latestVersion = result?.updateInfo.version ?? currentVersion;
       const manualInstall =
-        manualMacInstall && available && macInstallerDownloadUrl(latestVersion) !== null;
+        manualMacInstall && downloadState.status === "manual-available" && downloadState.version === latestVersion;
       if (manualMacInstall && available && !manualInstall) {
-        return { ok: false, error: "No compatible macOS update is available" };
+        return { ok: false, error: "No compatible macOS update is available", reason: "unavailable" };
       }
-      if (manualInstall) availableMacUpdateVersion = latestVersion;
       return {
         ok: true,
         currentVersion,
         latestVersion,
         available,
         manualInstall,
+        downloadState,
       };
     } catch (err) {
+      console.error("Manual update check failed:", err);
       return {
         ok: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: "Unable to check for updates. Please try again later.",
+        reason: classifyUpdaterError(err),
       };
     }
   });

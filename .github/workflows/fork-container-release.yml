@@ -1,0 +1,331 @@
+name: Container release (fork)
+
+on:
+  push:
+    tags: ['v*.*.*', '!v*-*', '!v*+*']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.repository == 'iTradingAI/multica'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: multica
+          POSTGRES_USER: multica
+          POSTGRES_PASSWORD: multica
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U multica -d multica"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://multica:multica@localhost:5432/multica?sslmode=disable
+      # Wires up the RedisLocalSkill*_test.go suite. Distinct from REDIS_URL
+      # (which would flip the server binary itself onto the Redis-backed
+      # realtime relay + request stores); the tests talk to this Redis
+      # directly so they run alongside the Postgres-backed suite.
+      REDIS_TEST_URL: redis://localhost:6379/1
+      GOFLAGS: -count=1
+    outputs:
+      tag_name: ${{ steps.release_meta.outputs.tag_name }}
+      is_stable: ${{ steps.release_meta.outputs.is_stable }}
+      # GHCR image paths must be lowercase; owners with uppercase letters
+      # in their username (e.g. the iTradingAI downstream fork) produce
+      # invalid refs like ghcr.io/iTradingAI/multica-backend that buildx
+      # rejects. Every image job consumes this lowercase form instead of
+      # github.repository_owner.
+      image_owner: ${{ steps.image_owner.outputs.image_owner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute lowercase image owner
+        id: image_owner
+        shell: bash
+        run: echo "image_owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate tag name
+        id: release_meta
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          echo "Triggered by tag: $tag"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tags must look like vX.Y.Z or vX.Y.Z-suffix; got '$tag'."
+            exit 1
+          fi
+          if [[ "$tag" == *-dirty* ]]; then
+            echo "::error::Refusing to release from dirty tag '$tag'."
+            exit 1
+          fi
+          echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
+          if [[ "$tag" == *-* ]]; then
+            echo "is_stable=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_stable=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          # Keep the security floor even when the setup-go manifest lags;
+          # continue accepting newer patches within Go 1.27.
+          go-version: "~1.27.4"
+          check-latest: true
+          cache-dependency-path: server/go.sum
+
+      - name: Record Go toolchain
+        run: go version
+
+      - name: Verify Go test wrapper
+        run: bash scripts/test-go.test.sh
+
+      - name: Run migrations
+        run: cd server && go run ./cmd/migrate up
+
+      - name: Run tests
+        run: bash scripts/test-go.sh --race
+
+      - name: Scan Go vulnerabilities
+        # Fail closed unless an administrator scopes the documented emergency
+        # override to this exact tag. See .github/RELEASING.md.
+        if: ${{ vars.ALLOW_VULN_BYPASS_FOR_TAG != github.ref_name }}
+        working-directory: server
+        run: go tool govulncheck ./...
+
+      - name: Record emergency vulnerability-scan bypass
+        if: ${{ vars.ALLOW_VULN_BYPASS_FOR_TAG == github.ref_name }}
+        run: echo "::warning::govulncheck was explicitly skipped for ${GITHUB_REF_NAME}; see .github/RELEASING.md"
+
+  docker-backend-build:
+    needs: verify
+    if: needs.verify.outputs.is_stable == 'true'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runs-on: ubuntu-latest
+          - platform: linux/arm64
+            runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - name: Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute backend image labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ needs.verify.outputs.image_owner }}/multica-backend
+          labels: |
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=Multica Backend
+            org.opencontainers.image.description=Multica self-hosted backend
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          pull: true
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=release-backend-${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,mode=max,scope=release-backend-${{ env.PLATFORM_PAIR }}
+          build-args: |
+            VERSION=${{ needs.verify.outputs.tag_name }}
+            COMMIT=${{ github.sha }}
+          outputs: type=image,name=ghcr.io/${{ needs.verify.outputs.image_owner }}/multica-backend,push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-backend-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+  docker-web-build:
+    needs: verify
+    if: needs.verify.outputs.is_stable == 'true'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runs-on: ubuntu-latest
+          - platform: linux/arm64
+            runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - name: Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute web image labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ needs.verify.outputs.image_owner }}/multica-web
+          labels: |
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=Multica Web
+            org.opencontainers.image.description=Multica self-hosted web frontend
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.web
+          pull: true
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=release-web-${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,mode=max,scope=release-web-${{ env.PLATFORM_PAIR }}
+          build-args: |
+            REMOTE_API_URL=http://backend:8080
+            NEXT_PUBLIC_APP_VERSION=${{ needs.verify.outputs.tag_name }}
+          outputs: type=image,name=ghcr.io/${{ needs.verify.outputs.image_owner }}/multica-web,push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-web-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+  promote:
+    needs: [verify, docker-backend-build, docker-web-build]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+    concurrency:
+      group: fork-container-release-promotion
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install registry inspection tool
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - name: Find sealed release inputs from this run
+        id: sealed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          id=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" |
+            jq -er '[.[].artifacts[] | select(.name == "container-pair")] |
+              if length == 0 then "missing" elif length == 1 and (.[0].expired | not) then .[0].id else error("unavailable sealed manifest") end')
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        if: steps.sealed.outputs.id != 'missing'
+        with:
+          name: container-pair
+      - uses: actions/download-artifact@v4
+        if: steps.sealed.outputs.id == 'missing'
+        with:
+          pattern: digests-backend-*
+          path: digests/backend
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        if: steps.sealed.outputs.id == 'missing'
+        with:
+          pattern: digests-web-*
+          path: digests/web
+          merge-multiple: true
+      - name: Assemble and verify both platform indexes
+        if: steps.sealed.outputs.id == 'missing'
+        run: python3 scripts/fork-release/container-pair.py retain
+      - uses: actions/upload-artifact@v4
+        if: steps.sealed.outputs.id == 'missing'
+        with:
+          name: container-pair
+          path: container-pair.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Promote sealed pair
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/fork-release/container-pair.py promote

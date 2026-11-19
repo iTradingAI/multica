@@ -1,5 +1,6 @@
 import type { WSMessage, WSEventType } from "../types/events";
 import { type Logger, noopLogger } from "../logger";
+import { getRealtimeObserver, runWithSyncCauses } from "./realtime-observer";
 
 type EventHandler = (payload: unknown, actorId?: string, actorType?: string) => void;
 
@@ -168,14 +169,11 @@ export class WSClient {
         return;
       }
       this.logger.debug("received", msg.type);
-      const eventHandlers = this.handlers.get(msg.type);
-      if (eventHandlers) {
-        for (const handler of eventHandlers) {
-          handler(msg.payload, msg.actor_id, msg.actor_type);
-        }
-      }
-      for (const handler of this.anyHandlers) {
-        handler(msg);
+      const observer = getRealtimeObserver();
+      if (observer) {
+        runWithSyncCauses([observer.onEvent(msg, false)], () => this.dispatch(msg));
+      } else {
+        this.dispatch(msg);
       }
     };
 
@@ -192,6 +190,18 @@ export class WSClient {
       // Suppress — onclose handles reconnect; errors during StrictMode
       // double-fire are expected in dev and harmless.
     };
+  }
+
+  private dispatch(msg: WSMessage) {
+    const eventHandlers = this.handlers.get(msg.type);
+    if (eventHandlers) {
+      for (const handler of eventHandlers) {
+        handler(msg.payload, msg.actor_id, msg.actor_type);
+      }
+    }
+    for (const handler of this.anyHandlers) {
+      handler(msg);
+    }
   }
 
   /**
@@ -229,13 +239,18 @@ export class WSClient {
     this.hasConnectedBefore = true;
     this.setStatus("connected");
     if (recoveredConnection) {
-      for (const cb of this.onReconnectCallbacks) {
-        try {
-          cb();
-        } catch {
-          // ignore reconnect callback errors
+      const runCallbacks = () => {
+        for (const cb of this.onReconnectCallbacks) {
+          try {
+            cb();
+          } catch {
+            // ignore reconnect callback errors
+          }
         }
-      }
+      };
+      const observer = getRealtimeObserver();
+      if (observer) runWithSyncCauses([observer.onReconnect()], runCallbacks);
+      else runCallbacks();
     }
     for (const cb of [...this.onReadyCallbacks]) {
       if (this.ws !== socket || !this.authenticated) break;
@@ -246,6 +261,11 @@ export class WSClient {
         // One subscriber must not prevent another from recovering.
       }
     }
+  }
+
+  /** Close the socket the way a network drop would; the usual reconnect follows. */
+  drop() {
+    this.ws?.close();
   }
 
   disconnect() {

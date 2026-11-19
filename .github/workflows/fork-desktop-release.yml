@@ -21,6 +21,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/fork-desktop-release.yml
+      - scripts/fork-release/publish-desktop.py
       - apps/desktop/scripts/package.mjs
       - apps/desktop/scripts/bundle-cli.mjs
       - apps/desktop/electron-builder.yml
@@ -116,6 +117,10 @@ jobs:
           if [ "$ARCH" = x64 ]; then metadata=dist/latest-x64-mac.yml; fi
           test -s "$metadata"
 
+      - name: Record source revision
+        shell: bash
+        run: git rev-parse HEAD > apps/desktop/dist/build-revision
+
       - name: Retain installers and update metadata
         uses: actions/upload-artifact@v4
         with:
@@ -123,7 +128,9 @@ jobs:
           path: |
             apps/desktop/dist/multica-desktop-*
             apps/desktop/dist/latest*.yml
+            apps/desktop/dist/build-revision
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   publish:
@@ -133,31 +140,21 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    concurrency:
+      group: fork-desktop-release-promotion
+      cancel-in-progress: false
     steps:
-      - name: Collect all platform installers
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
         with:
           pattern: desktop-*
           path: dist
-          merge-multiple: true
-
-      - name: Upload installers to the GitHub Release
+      - name: Verify and publish complete desktop release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          shopt -s nullglob
-          # Include blockmaps and both architecture-specific macOS feeds.
-          files=(dist/multica-desktop-* dist/latest*.yml)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "::error::No installer artifacts found in dist/"
-            exit 1
-          fi
-          # release.yml can create the same release concurrently.
-          gh release view "$TAG" --json name >/dev/null 2>&1 \
-            || gh release create "$TAG" --title "$TAG" --generate-notes \
-            || gh release view "$TAG" --json name >/dev/null
-          gh release upload "$TAG" "${files[@]}" --clobber
-          echo "Uploaded:"; printf '  %s\n' "${files[@]}"
+          python3 -m venv "$RUNNER_TEMP/release-env"
+          "$RUNNER_TEMP/release-env/bin/pip" install PyYAML==6.0.3
+          "$RUNNER_TEMP/release-env/bin/python" scripts/fork-release/publish-desktop.py dist

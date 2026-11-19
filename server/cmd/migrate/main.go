@@ -140,6 +140,57 @@ var pgBigmOperatorClass = extensionOperatorClass{
 // they are still pending: a fresh self-hosted install, which is exactly where an
 // interrupted build would otherwise leave a permanently unusable index.
 var concurrentIndexCleanups = map[string]string{
+	"696_chat_wakeup_due_idx":                       "idx_chat_wakeup_due",
+	"697_chat_wakeup_session_idx":                   "idx_chat_wakeup_session",
+	"698_chat_wakeup_requester_idx":                 "idx_chat_wakeup_requester",
+	"700_entitlement_limit_overage_scope_idx":       "uq_entitlement_limit_overage_scope",
+	"702_project_folder_name_idx":                   "uq_project_folder_workspace_name",
+	"704_entitlement_feature_attempt_scope_idx":     "uq_entitlement_feature_attempt_scope",
+	"706_doc_folder_pkey_index":                     "doc_folder_pkey_idx",
+	"708_doc_pkey_index":                            "doc_pkey_idx",
+	"710_doc_version_pkey_index":                    "doc_version_pkey_idx",
+	"712_doc_folder_workspace_idx":                  "doc_folder_workspace_idx",
+	"713_doc_workspace_idx":                         "doc_workspace_idx",
+	"714_doc_version_workspace_idx":                 "doc_version_workspace_idx",
+	"716_inbox_item_active_shown_idx":               "idx_inbox_active_shown",
+	"691_weixin_account_state_unique_index":         "weixin_account_state_pkey",
+	"689_weixin_login_session_unique_index":         "weixin_login_session_pkey",
+	"686_weixin_login_expiry_idx":                   "weixin_login_expiry_idx",
+	"682_chat_task_supplement_message":              "uq_chat_task_supplement_message",
+	"683_chat_task_supplement_task":                 "idx_chat_task_supplement_task",
+	"684_chat_task_supplement_workspace":            "idx_chat_task_supplement_workspace",
+	"654_chat_submission_receipt_key":               "uq_chat_submission_receipt_key",
+	"655_chat_submission_receipt_workspace":         "idx_chat_submission_receipt_workspace",
+	"651_task_context_receipt_issue_idx":            "idx_task_context_receipt_issue",
+	"650_task_context_receipt_workspace_idx":        "idx_task_context_receipt_workspace",
+	"648_project_subscriber_user_idx":               "idx_project_subscriber_workspace_user",
+	"645_issue_member_creator_index":                "idx_issue_workspace_member_creator",
+	"644_issue_requester_index":                     "idx_issue_workspace_requester",
+	"642_issue_environment_config_issue_idx":        "idx_issue_environment_config_issue",
+	"641_issue_environment_command_logs_idx":        "idx_issue_environment_command_logs",
+	"640_issue_environment_command_issue_idx":       "idx_issue_environment_command_issue",
+	"639_issue_environment_command_pending_idx":     "idx_issue_environment_command_pending",
+	"635_issue_environment_issue_idx":               "idx_issue_environment_issue",
+	"634_issue_environment_task_key_idx":            "uq_issue_environment_task_key",
+	"632_project_member_user_idx":                   "idx_project_member_workspace_user",
+	"628_app_action_request_chat_idx":               "idx_app_action_request_chat",
+	"627_app_tool_call_issue_idx":                   "idx_app_tool_call_issue",
+	"626_app_action_request_task_idx":               "idx_app_action_request_task",
+	"625_app_tool_call_workspace_idx":               "idx_app_tool_call_workspace",
+	"624_app_action_request_pending_idx":            "idx_app_action_request_pending",
+	"623_app_action_request_issue_idx":              "idx_app_action_request_issue",
+	"622_app_action_rule_scope_idx":                 "idx_app_action_rule_scope",
+	"621_agent_app_workspace_toolkit_idx":           "idx_agent_app_workspace_toolkit",
+	"620_agent_app_agent_toolkit_idx":               "idx_agent_app_agent_toolkit",
+	"619_workspace_composio_connection_status_idx":  "idx_workspace_composio_connection_status",
+	"618_workspace_composio_connection_account_idx": "idx_workspace_composio_connection_account",
+	"613_skill_version_index":                       "idx_skill_version_skill_version",
+	"606_agent_task_queue_runtime_active_index":     "idx_agent_task_queue_runtime_active",
+	"604_wecom_install_session_begin_rate_idx":      "idx_wecom_install_session_begin_rate",
+	"603_wecom_install_session_agent_pending_idx":   "idx_wecom_install_session_agent_pending",
+	"602_wecom_install_session_request_idx":         "idx_wecom_install_session_request",
+	"601_wecom_install_session_due_idx":             "idx_wecom_install_session_due",
+	"594_agent_task_process_cleanup_index":          "idx_agent_task_queue_process_cleanup",
 	"597_file_touch_execution_identity":             "file_touch_execution_identity",
 	"598_file_touch_pending_identity":               "file_touch_pending_identity",
 	"599_file_touch_pending_scan":                   "file_touch_pending_scan",
@@ -1054,6 +1105,14 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 			return fmt.Errorf("read migration %q: %w", file, err)
 		}
 
+		recovered := false
+		if opts.Direction == "up" {
+			recovered, err = checkReleaseDDL(ctx, conn, version)
+			if err != nil {
+				return fmt.Errorf("reconcile migration %q: %w", version, err)
+			}
+		}
+
 		// Run any pre-migration hook before the SQL file. Hooks
 		// receive the *pgxpool.Pool (not the loop's pinned conn), so
 		// they can acquire other session-level locks without
@@ -1076,19 +1135,33 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 			}
 		}
 
-		if applySQL {
-			if _, err := conn.Exec(ctx, string(sql)); err != nil {
-				return fmt.Errorf("apply migration %q: %w", file, err)
-			}
+		if recovered {
+			applySQL, conditionReason = false, "existing object matches migration"
 		}
-
-		if opts.Direction == "up" {
-			_, err = conn.Exec(ctx, insertSQL, version)
+		recordSQL := insertSQL
+		if opts.Direction == "down" {
+			recordSQL = deleteSQL
+		}
+		apply := func(exec interface {
+			Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+		}) error {
+			if applySQL {
+				if _, err := exec.Exec(ctx, string(sql)); err != nil {
+					return fmt.Errorf("apply migration %q: %w", file, err)
+				}
+			}
+			if _, err := exec.Exec(ctx, recordSQL, version); err != nil {
+				return fmt.Errorf("record migration %q: %w", version, err)
+			}
+			return nil
+		}
+		if opts.Direction == "up" && atomicReleaseMigrations[version] {
+			err = pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error { return apply(tx) })
 		} else {
-			_, err = conn.Exec(ctx, deleteSQL, version)
+			err = apply(conn)
 		}
 		if err != nil {
-			return fmt.Errorf("record migration %q: %w", version, err)
+			return err
 		}
 
 		if applySQL {
