@@ -31,8 +31,14 @@ const refsDirName = ".refs"
 // directories instead of refreshing each other's worktree through the wrong
 // bare cache's lock (MAX-184 R2).
 func ReferencePath(workspacesRoot, workspaceID, repoURL string) string {
-	return filepath.Join(workspacesRoot, refsDirName, workspaceID,
-		strings.TrimSuffix(bareDirName(repoURL), ".git"))
+	root := filepath.Join(workspacesRoot, refsDirName, workspaceID)
+	// Reuse a real reference directory created before URL identities were
+	// shortened, so callers holding a previous path still see refreshes.
+	legacy := filepath.Join(root, strings.TrimSuffix(legacyBareDirName(repoURL), ".git"))
+	if info, err := os.Lstat(legacy); err == nil && info.IsDir() {
+		return legacy
+	}
+	return filepath.Join(root, strings.TrimSuffix(bareDirName(repoURL), ".git"))
 }
 
 // ReferenceParams describes a reference checkout request. Unlike

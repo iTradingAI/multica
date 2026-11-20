@@ -40,6 +40,7 @@ function run(command, args, { shell = false, env = process.env } = {}) {
 
 const node = process.execPath;
 run(node, [join(here, "bundle-cli.mjs")]);
+run(node, [join(here, "bundle-voice-engine.mjs")]);
 run(node, [join(here, "brand-dev-electron.mjs")]);
 
 run(node, [join(here, "electron-vite.mjs"), "dev", ...process.argv.slice(2)]);

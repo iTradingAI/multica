@@ -11,6 +11,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../i18n";
 import { buildSurfaceFrameDocument, readThemeTokens } from "./surface-document";
 import { createSurfaceBridge, type SurfaceBridge } from "./surface-bridge";
+import { useThemeVersion } from "../editor/hooks/use-theme-version";
 
 const DEFAULT_HEIGHT = 220;
 
@@ -123,7 +124,7 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
     // Terminal events and the bridge are both armed before srcdoc is assigned,
     // so even a first-line plugin failure or navigation cannot outrun the host.
     window.addEventListener("message", onMessage);
-    bridge.connect(frame, readThemeTokens(anchorRef.current));
+    bridge.connect(frame, () => readThemeTokens(anchorRef.current));
     frame.srcdoc = surfaceDocument;
     return () => {
       window.removeEventListener("message", onMessage);
@@ -163,6 +164,13 @@ export function PluginSurfaceFrame({ wsId, installation, surface, issueId, class
   useEffect(() => {
     if (navigated) bridgeRef.current?.close();
   }, [navigated]);
+
+  // A connected surface follows theme and mode switches live; before it
+  // connects, connect() sends the theme current at that moment.
+  const themeVersion = useThemeVersion();
+  useEffect(() => {
+    if (themeVersion > 0) bridgeRef.current?.pushTheme(readThemeTokens(anchorRef.current));
+  }, [themeVersion]);
 
   if (navigated) {
     return (

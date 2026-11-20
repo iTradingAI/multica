@@ -66,10 +66,18 @@ func writeReferenceFile(t *testing.T, dir, name, content string) {
 
 func TestReferencePathIsDaemonDerived(t *testing.T) {
 	t.Parallel()
-	got := ReferencePath("/srv/workspaces", "ws-uuid", "https://github.com/org/repo.git")
-	want := filepath.Join("/srv/workspaces", refsDirName, "ws-uuid", "github.com+org+repo")
-	if got != want {
+	root := t.TempDir()
+	const repo = "https://github.com/org/repo.git"
+	want := filepath.Join(root, refsDirName, "ws-uuid", "repo-553084df7a35")
+	if got := ReferencePath(root, "ws-uuid", repo); got != want {
 		t.Fatalf("ReferencePath = %q, want %q", got, want)
+	}
+	legacy := filepath.Join(root, refsDirName, "ws-uuid", "github.com+org+repo")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReferencePath(root, "ws-uuid", repo); got != legacy {
+		t.Fatalf("existing reference moved from %q to %q", legacy, got)
 	}
 }
 

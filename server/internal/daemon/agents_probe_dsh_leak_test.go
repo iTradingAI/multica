@@ -65,19 +65,20 @@ func TestProbeDshMulticaProfile_HangingProbeLeavesNoProcessesAfterEachRound(t *t
 
 	origTimeout := dshProbeTimeout
 	t.Cleanup(func() { dshProbeTimeout = origTimeout })
-	dshProbeTimeout = 500 * time.Millisecond
+	dshProbeTimeout = 2 * time.Second
 
 	// Every round must end with every tree member gone: this is "child
 	// process count does not grow", checked per round instead of after a
 	// one-hour soak. The pid files are cleared between rounds so a leaked tree
 	// is attributed to the round that leaked it.
 	for round := 1; round <= 3; round++ {
-		if got := probeDshMulticaProfile(context.Background(), path); got != dshProbeUnavailable {
+		probe := probeDshMulticaProfile(context.Background(), path)
+		if got := probe.verdict; got != dshProbeUnavailable {
 			t.Fatalf("round %d: probeDshMulticaProfile() = %v, want %v", round, got, dshProbeUnavailable)
 		}
 		pids := recordedLeakPIDs(t, pidDir)
 		if len(pids) == 0 {
-			t.Fatalf("round %d: stub recorded no PIDs; fixture is broken", round)
+			t.Fatalf("round %d: stub recorded no PIDs; probe diagnostic: %s", round, probe.detail)
 		}
 		if !waitForLeakPIDsGone(pids, 5*time.Second) {
 			t.Fatalf("round %d: leaked processes survived the probe: %v", round, pids)

@@ -12,7 +12,7 @@ const ctx = vi.hoisted(() => ({
   handlers: new Map<string, Handler[]>(),
   ipcHandlers: new Map<string, IpcHandler>(),
   ipcHandle: vi.fn(),
-  checkForUpdates: vi.fn(async () => ({
+  checkForUpdates: vi.fn(async (): Promise<{ updateInfo: { version: string }; isUpdateAvailable: boolean } | null> => ({
     updateInfo: { version: "0.3.18" },
     isUpdateAvailable: false,
   })),
@@ -26,10 +26,15 @@ const ctx = vi.hoisted(() => ({
 }));
 
 vi.mock("electron-updater", () => {
+  let channel: string | undefined;
   const autoUpdater = {
     autoDownload: false,
     autoInstallOnAppQuit: false,
-    channel: undefined as string | undefined,
+    get channel() { return channel; },
+    set channel(value: string | undefined) {
+      channel = value;
+      this.allowDowngrade = true;
+    },
     allowDowngrade: false,
     on: vi.fn((event: string, handler: Handler) => {
       const handlers = ctx.handlers.get(event) ?? [];
@@ -71,6 +76,19 @@ import {
   type UpdaterDaemonGate,
 } from "./updater";
 import { updaterPreferencesPath } from "./updater-preferences";
+
+it("disables downgrades after selecting the Windows arm64 channel", async () => {
+  vi.stubGlobal("process", { ...process, platform: "win32", arch: "arm64" });
+  vi.resetModules();
+  try {
+    await import("./updater");
+    expect(autoUpdater.channel).toBe("latest-arm64");
+    expect(autoUpdater.allowDowngrade).toBe(false);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  }
+});
 
 describe("macOS x64 update channel", () => {
   it("does not touch established architecture paths", () => {
@@ -293,6 +311,9 @@ describe("setupAutoUpdater", () => {
         version: "0.4.27",
       });
 
+      await expect(invokeIpc("updater:install")).rejects.toThrow("No compatible macOS update");
+      ctx.checkForUpdates.mockResolvedValueOnce({ updateInfo: { version: "0.4.27" }, isUpdateAvailable: true });
+      await invokeIpc("updater:check");
       expect(send).toHaveBeenCalledWith("updater:update-available", {
         version: "0.4.27",
         releaseNotes: undefined,
@@ -327,6 +348,7 @@ describe("setupAutoUpdater", () => {
       await expect(invokeIpc("updater:check")).resolves.toEqual({
         ok: false,
         error: "No compatible macOS update is available",
+        reason: "unavailable",
       });
       await expect(invokeIpc("updater:install")).rejects.toThrow(
         "No compatible macOS update is available",
@@ -376,6 +398,98 @@ describe("setupAutoUpdater", () => {
     } finally {
       Object.defineProperty(process, "platform", originalPlatform);
     }
+  });
+
+  it.each(["x64", "arm64"])("rejects stale macOS installer actions on %s", async (arch) => {
+    vi.stubGlobal("process", { ...process, arch });
+    try {
+      setupAutoUpdater(() => [], { platform: "darwin" });
+      for (const result of [
+        null, { isUpdateAvailable: false, updateInfo: { version: "0.4.28" } },
+        { isUpdateAvailable: true, updateInfo: { version: "../wrong" } },
+      ]) {
+        ctx.checkForUpdates.mockResolvedValueOnce({ isUpdateAvailable: true, updateInfo: { version: "0.4.27" } });
+        await invokeIpc("updater:check");
+        await expect(invokeIpc("updater:download", "0.4.26")).rejects.toThrow("No compatible");
+        await invokeIpc("updater:download", "0.4.27");
+        expect(ctx.openExternal).toHaveBeenLastCalledWith(expect.stringContaining(`mac-${arch}.dmg`));
+        ctx.openExternal.mockClear();
+        ctx.checkForUpdates.mockResolvedValueOnce(result);
+        await invokeIpc("updater:check");
+        for (const channel of ["updater:download", "updater:install"]) {
+          await expect(invokeIpc(channel, "0.4.27")).rejects.toThrow("No compatible");
+          await expect(invokeIpc(channel)).rejects.toThrow("No compatible");
+        }
+        expect(ctx.openExternal).not.toHaveBeenCalled();
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("returns a safe reason instead of the raw check failure", async () => {
+    const { win, send } = makeWindow();
+    setupAutoUpdater(() => [win], { platform: "linux" });
+    const error = Object.assign(new Error("private headers and stack"), { code: "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND" });
+    ctx.checkForUpdates.mockRejectedValueOnce(error);
+    await expect(invokeIpc("updater:check")).resolves.toEqual({
+      ok: false,
+      reason: "unavailable",
+      error: "Unable to check for updates. Please try again later.",
+    });
+    emitUpdater("error", error);
+    expect(send).not.toHaveBeenCalled();
+    await invokeIpc("updater:get-preferences");
+  });
+
+  it("broadcasts a download failure once and exposes a recoverable state", async () => {
+    const { win, send } = makeWindow();
+    setupAutoUpdater(() => [win], { platform: "linux" });
+    let rejectDownload!: (error: Error) => void;
+    const downloadPromise = new Promise<unknown>((_resolve, reject) => { rejectDownload = reject; });
+    ctx.checkForUpdates.mockImplementationOnce(async () => {
+      emitUpdater("update-available", { version: "0.3.18" });
+      return { updateInfo: { version: "0.3.18" }, isUpdateAvailable: true, downloadPromise };
+    });
+    await invokeIpc("updater:check");
+    const error = Object.assign(new Error("secret download response"), { code: "ECONNRESET" });
+    emitUpdater("error", error);
+    rejectDownload(error);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(send.mock.calls.filter(([channel, state]) => channel === "updater:download-state" && state.status === "error")).toEqual([
+      ["updater:download-state", { status: "error", reason: "network" }],
+    ]);
+    await expect(invokeIpc("updater:get-download-state")).resolves.toEqual({ status: "error", reason: "network" });
+    emitUpdater("update-available", { version: "0.3.18" });
+    emitUpdater("update-downloaded", { version: "0.3.18" });
+    await expect(invokeIpc("updater:get-download-state")).resolves.toEqual({ status: "downloaded", version: "0.3.18" });
+  });
+
+  it("handles a rejected download promise even without an updater error event", async () => {
+    const { win, send } = makeWindow();
+    setupAutoUpdater(() => [win], { platform: "linux" });
+    ctx.checkForUpdates.mockImplementationOnce(async () => {
+      emitUpdater("update-available", { version: "0.3.18" });
+      return {
+        updateInfo: { version: "0.3.18" }, isUpdateAvailable: true,
+        downloadPromise: Promise.reject(new Error("download failed")),
+      };
+    });
+    await invokeIpc("updater:check");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(send).toHaveBeenCalledWith("updater:download-state", { status: "error", reason: "unknown" });
+  });
+
+  it("coalesces concurrent manual checks", async () => {
+    setupAutoUpdater(() => []);
+    let resolve!: (value: { updateInfo: { version: string }; isUpdateAvailable: boolean }) => void;
+    ctx.checkForUpdates.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    const first = invokeIpc("updater:check");
+    const second = invokeIpc("updater:check");
+    expect(ctx.checkForUpdates).toHaveBeenCalledTimes(1);
+    resolve({ updateInfo: { version: "0.3.18" }, isUpdateAvailable: false });
+    await Promise.all([first, second]);
+    await invokeIpc("updater:get-preferences");
   });
 
   it("skips update progress when the BrowserWindow has already been destroyed", () => {

@@ -29,7 +29,11 @@ type WorkspaceFilesStore struct{ DB db.DBTX }
 const filesAuthorizedProjectSQL = `WITH authorized_project AS (
  SELECT p.id, p.workspace_id FROM project p
  JOIN member m ON m.workspace_id=p.workspace_id AND m.user_id=$1::uuid
- WHERE p.workspace_id=$2::uuid AND (
+ WHERE p.workspace_id=$2::uuid
+ AND (p.visibility <> 'private' OR EXISTS (
+   SELECT 1 FROM project_member pm WHERE pm.project_id=p.id AND pm.user_id=m.user_id
+ ))
+ AND (
   ($3::text='project' AND p.id=$4::uuid) OR
   ($3::text='issue' AND EXISTS (
    SELECT 1 FROM issue i WHERE i.id=$4::uuid

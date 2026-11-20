@@ -11,6 +11,7 @@ import { isWorkspaceDeletePending } from "@multica/core/workspace/pending-delete
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceSeen } from "@multica/views/workspace/use-workspace-seen";
 import { WorkspacePresencePrefetch } from "@multica/views/layout";
+import { VoiceWorkspaceWords } from "@multica/views/voice";
 import { SourceBackfillModal } from "@multica/views/onboarding";
 import { PageLoading } from "./page-loading";
 import { useTabStore } from "@/stores/tab-store";
@@ -178,14 +179,12 @@ export function WorkspaceRouteLayout() {
   return (
     <WorkspaceSlugProvider slug={workspaceSlug}>
       <WorkspacePresencePrefetch />
+      <VoiceWorkspaceWords />
       <div data-route-pathname={pathname} style={{ display: "contents" }}>
         <Suspense key={pathname} fallback={<PageLoading />}>
           <Outlet />
         </Suspense>
       </div>
-      {/* Upstream MUL-8047 replaced the post-onboarding welcome modal with
-       * opening the runtime guide issue directly; the fork component was
-       * retired with the merge. */}
       {/* Source-attribution backfill: same Dialog the web shell mounts
        *  inside DashboardLayout. Desktop's WorkspaceRouteLayout doesn't
        *  wrap DashboardLayout, so the modal has to be wired in directly

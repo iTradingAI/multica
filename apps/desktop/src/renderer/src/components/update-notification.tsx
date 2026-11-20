@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { UpdaterDownloadState } from "../../../shared/updater-types";
 import { RefreshCw, X } from "@multica/ui/icons";
 
 // Non-macOS downloads run silently in the background. macOS instead exposes
@@ -17,20 +18,27 @@ export function UpdateNotification() {
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
-    const cleanup = window.updater.onUpdateDownloaded((info) => {
-      setState({ status: "ready", version: info.version, manualInstall: false });
-      setDismissed(false);
-      setActionError(null);
+    let receivedEvent = false;
+    let mounted = true;
+    const applyDownload = (download: UpdaterDownloadState) => {
+      if (download.status === "manual-available" || download.status === "downloaded") {
+        setState({ status: "ready", version: download.version, manualInstall: download.status === "manual-available" });
+        setDismissed(false);
+        setActionError(null);
+      } else {
+        setState({ status: "idle" });
+      }
+    };
+    const cleanupState = window.updater.onDownloadState((download) => {
+      receivedEvent = true;
+      applyDownload(download);
     });
-    const cleanupAvailable = window.updater.onUpdateAvailable((info) => {
-      if (!info.manualInstall) return;
-      setState({ status: "ready", version: info.version, manualInstall: true });
-      setDismissed(false);
-      setActionError(null);
-    });
+    void window.updater.getDownloadState().then((download) => {
+      if (mounted && !receivedEvent) applyDownload(download);
+    }).catch(() => {});
     return () => {
-      cleanup();
-      cleanupAvailable();
+      mounted = false;
+      cleanupState();
     };
   }, []);
 
@@ -74,7 +82,7 @@ export function UpdateNotification() {
             <button
               type="button"
               onClick={() => {
-                void window.updater.installUpdate().catch(() => {
+                void window.updater.installUpdate(state.manualInstall ? state.version : undefined).catch(() => {
                   setActionError(
                     state.manualInstall
                       ? "Unable to open the update download."
