@@ -12,6 +12,8 @@ from unittest.mock import patch
 
 import yaml
 
+import linux_appimage_abi as abi
+
 
 def load(filename):
     spec = importlib.util.spec_from_file_location(
@@ -58,9 +60,36 @@ class DesktopReleaseTest(unittest.TestCase):
             if platform.startswith("mac"):
                 metadata["minimumSystemVersion"] = "22.0.0"
             (directory / channel).write_text(yaml.safe_dump(metadata))
+            if platform == "linux":
+                record = dict(
+                    schema=1, **abi.describe(directory, "test-revision"),
+                    glibc=abi.GLIBC, image_os=abi.IMAGE_OS, image_version="20261120.1",
+                    elf={name: [] for name in abi.REQUIRED_ELF | {"<AppImage runtime>", "multica-desktop"}},
+                    runtime_smoke="pass",
+                )
+                (directory / abi.RECORD).write_text(json.dumps(record))
 
     def test_each_channel_matches_the_retained_bytes(self):
         self.assertEqual(len(desktop.inventory(self.root, "v1.2.3", "test-revision")), 17)
+
+    def test_linux_gate_blocks_missing_skipped_or_mutated_artifacts(self):
+        linux = self.root / "desktop-linux-x64"
+        record = linux / abi.RECORD
+        original = record.read_bytes()
+        record.unlink()
+        with self.assertRaises(FileNotFoundError):
+            desktop.inventory(self.root, "v1.2.3", "test-revision")
+        record.write_text(json.dumps(dict(json.loads(original), runtime_smoke="skipped")))
+        with self.assertRaisesRegex(ValueError, "incomplete Linux"):
+            desktop.inventory(self.root, "v1.2.3", "test-revision")
+        record.write_bytes(original)
+        channel = linux / abi.CHANNEL
+        channel.write_bytes(channel.read_bytes() + bytes([10]))
+        with self.assertRaisesRegex(ValueError, "artifact bytes"):
+            desktop.inventory(self.root, "v1.2.3", "test-revision")
+        next(linux.glob("*.AppImage")).write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "do not match the channel"):
+            desktop.inventory(self.root, "v1.2.3", "test-revision")
 
     def test_missing_asset_stops_before_draft_mutation(self):
         next(self.root.rglob("*.dmg")).unlink()

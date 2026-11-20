@@ -21,7 +21,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/fork-desktop-release.yml
-      - scripts/fork-release/publish-desktop.py
+      - scripts/fork-release/**
       - apps/desktop/scripts/package.mjs
       - apps/desktop/scripts/bundle-cli.mjs
       - apps/desktop/electron-builder.yml
@@ -37,7 +37,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: linux
             arch: x64
           # NOT windows-latest: the windows-2025 image no longer exposes a
@@ -62,9 +62,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install rpmbuild (Linux)
+      - name: Install Linux packaging and AppImage verification tools
         if: matrix.target == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y rpm
+        run: sudo apt-get update && sudo apt-get install -y rpm binutils xvfb xauth xdotool libfuse2t64
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -80,14 +80,22 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
+          cache: ${{ matrix.target != 'linux' && 'pnpm' || '' }}
 
       - name: Set up MSVC environment (Windows)
         if: matrix.target == 'win'
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Install dependencies
+        if: matrix.target != 'linux'
         run: pnpm install --frozen-lockfile
+
+      - name: Install Linux dependencies from a clean store
+        if: matrix.target == 'linux'
+        shell: bash
+        run: |
+          test ! -e node_modules && test ! -e apps/desktop/node_modules
+          pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/pnpm-linux-x64-noble" --config.side-effects-cache=false
 
       - name: Package Desktop installers
         working-directory: apps/desktop
@@ -121,7 +129,35 @@ jobs:
         shell: bash
         run: git rev-parse HEAD > apps/desktop/dist/build-revision
 
+      - name: Verify the exact Linux AppImage and its update metadata
+        if: matrix.target == 'linux'
+        id: linux-abi
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/linux-abi-env"
+          python="$RUNNER_TEMP/linux-abi-env/bin/python"
+          "$python" -m pip install PyYAML==6.0.3
+          "$python" scripts/fork-release/linux_appimage_abi.py scan apps/desktop/dist "$GITHUB_SHA"
+          "$python" scripts/fork-release/linux_appimage_abi.py verify apps/desktop/dist "$GITHUB_SHA"
+
+      - name: Retain verified Linux installers and update metadata
+        if: matrix.target == 'linux' && steps.linux-abi.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-x64
+          path: |
+            apps/desktop/dist/multica-desktop-*.AppImage
+            apps/desktop/dist/multica-desktop-*.deb
+            apps/desktop/dist/multica-desktop-*.rpm
+            apps/desktop/dist/latest-linux.yml
+            apps/desktop/dist/build-revision
+            apps/desktop/dist/linux-appimage-abi.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
       - name: Retain installers and update metadata
+        if: matrix.target != 'linux'
         uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.target }}-${{ matrix.arch }}

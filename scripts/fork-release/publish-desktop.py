@@ -12,6 +12,8 @@ import urllib.request
 
 import yaml
 
+from linux_appimage_abi import RECORD, verify_record
+
 
 CHANNELS = {
     "desktop-win-x64": ("latest.yml", "windows-x64", ["exe"]),
@@ -41,7 +43,11 @@ def inventory(root, tag, sha):
         folder = root / target
         if (folder / "build-revision").read_text().strip() != sha:
             raise ValueError(f"{target} revision mismatch")
-        assets = {p.name: p for p in folder.iterdir() if p.name != "build-revision"}
+        sidecars = {"build-revision"}
+        if target == "desktop-linux-x64":
+            verify_record(folder, sha, tag[1:])
+            sidecars.add(RECORD)
+        assets = {p.name: p for p in folder.iterdir() if p.name not in sidecars}
         meta = yaml.safe_load(assets[channel].read_bytes())
         prefix = f"multica-desktop-{tag[1:]}-{platform}"
         if meta["version"] != tag[1:] or (
