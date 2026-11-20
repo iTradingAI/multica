@@ -102,9 +102,6 @@
     ".github/ci-paths.json"
   ],
   "scripts": [
-    "scripts/fork-release/**",
-    ".github/workflows/fork-container-release.yml",
-    ".github/workflows/fork-desktop-release.yml",
     ".goreleaser.yml",
     ".github/workflows/release.yml",
     ".github/workflows/promote-release.yml",
