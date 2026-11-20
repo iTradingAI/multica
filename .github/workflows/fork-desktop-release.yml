@@ -21,7 +21,10 @@ on:
     branches: [main]
     paths:
       - .github/workflows/fork-desktop-release.yml
-      - scripts/fork-release/**
+      - scripts/fork-release/publish-desktop.py
+      - scripts/fork-release/linux_appimage_abi.py
+      - scripts/fork-release/extract-release-asar.cjs
+      - scripts/fork-release/smoke-linux-appimage.sh
       - apps/desktop/scripts/package.mjs
       - apps/desktop/scripts/bundle-cli.mjs
       - apps/desktop/electron-builder.yml
@@ -94,7 +97,9 @@ jobs:
         if: matrix.target == 'linux'
         shell: bash
         run: |
-          test ! -e node_modules && test ! -e apps/desktop/node_modules
+          test ! -e node_modules
+          test ! -e apps/desktop/node_modules
+          test ! -e "$RUNNER_TEMP/pnpm-linux-x64-noble"
           pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/pnpm-linux-x64-noble" --config.side-effects-cache=false
 
       - name: Package Desktop installers

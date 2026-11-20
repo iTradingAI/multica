@@ -30,9 +30,11 @@ REQUIRED_ELF = {
 }
 
 
-def command(*args, cwd=None):
+def command(*args, cwd=None, trace_elf=False):
     env = {key: value for key, value in os.environ.items() if not key.startswith("LD_")}
     env["LC_ALL"] = "C"
+    if trace_elf:
+        env["LD_TRACE_LOADED_OBJECTS"] = "1"
     result = subprocess.run(args, cwd=cwd, env=env, text=True, capture_output=True, timeout=180)
     if result.returncode or result.stderr:
         raise ValueError(f"{args[0]} failed for {args[-1]}: {result.stderr.strip() or result.stdout.strip()}")
@@ -44,7 +46,7 @@ def versions(text, section):
     return set(re.findall(r"\bName: (\S+)", match[1])) if match else set()
 
 
-def elf_versions(path, available):
+def elf_versions(path, available, *, appimage=False):
     info = command("readelf", "-W", "-h", "-l", "-d", "-V", str(path))
     if not re.search(r"Class:\s+ELF64\b", info) or not re.search(
         r"Machine:\s+Advanced Micro Devices X86-64\b", info
@@ -64,7 +66,13 @@ def elf_versions(path, available):
     if interp and interp[1] != LOADER:
         raise ValueError(f"{path}: unexpected program interpreter {interp[1]}")
     if interp or "(NEEDED)" in info:
-        resolved = command(LOADER, "--list", str(path), cwd=path.parent)
+        if appimage and interp:
+            # The type 2 magic occupies EI_ABIVERSION. The kernel can load
+            # this header, while asking ld.so to open it directly rejects it.
+            # Trace dependencies through the runtime's declared interpreter.
+            resolved = command(str(path), cwd=path.parent, trace_elf=True)
+        else:
+            resolved = command(LOADER, "--list", str(path), cwd=path.parent)
         if not resolved.strip() or re.search(r"\bnot found\b", resolved, re.I):
             raise ValueError(f"{path}: unresolved dynamic dependencies: {resolved.strip()}")
     return sorted(checked)
@@ -159,7 +167,7 @@ def scan(folder, revision):
     available |= versions(command("readelf", "-W", "-V", LIBSTDCXX), "definition")
     if "GLIBC_2.39" not in available or not {"GLIBCXX_3.4", "CXXABI_1.3"} <= available:
         raise ValueError("cannot read the Ubuntu baseline library versions")
-    objects = {"<AppImage runtime>": elf_versions(image, available)}
+    objects = {"<AppImage runtime>": elf_versions(image, available, appimage=True)}
     with tempfile.TemporaryDirectory(prefix="appimage-abi-") as scratch:
         command(str(image), "--appimage-extract", cwd=scratch)
         objects.update(inspect_tree(Path(scratch) / "squashfs-root", available))
@@ -175,7 +183,8 @@ def scan(folder, revision):
                   image_version=image_version, runtime_smoke="pass")
     with (folder / RECORD).open("x") as stream:
         json.dump(record, stream, indent=2, sort_keys=True)
-    print(f"Verified {len(objects)} ELF files: {before['appimage']}")
+    print(f"Verified {len(objects)} ELF files")
+    print(json.dumps(before, sort_keys=True))
 
 
 if __name__ == "__main__":

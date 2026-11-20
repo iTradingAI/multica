@@ -1,5 +1,7 @@
 set -euo pipefail
 
+test "$(uname -m)" = x86_64
+test "$(getconf GNU_LIBC_VERSION)" = 'glibc 2.39'
 image=$(realpath "$1")
 scratch=$(mktemp -d)
 pid=
@@ -15,12 +17,21 @@ cleanup() {
 }
 trap cleanup EXIT
 cd "$scratch"
+export HOME="$scratch/home"
+mkdir "$HOME"
 export XDG_CONFIG_HOME="$scratch/config" XDG_DATA_HOME="$scratch/data" XDG_CACHE_HOME="$scratch/cache"
+mkdir -p "$XDG_CONFIG_HOME/Multica"
+printf '%s
+' '{"automaticUpdates":false}' > "$XDG_CONFIG_HOME/Multica/updater-preferences.json"
 export ELECTRON_ENABLE_LOGGING=1
 unset ELECTRON_RUN_AS_NODE
 # The hosted VM may not expose FUSE. This still runs the AppImage entry point.
 if [[ ! -r /dev/fuse || ! -w /dev/fuse ]]; then
   export APPIMAGE_EXTRACT_AND_RUN=1
+  echo 'Using AppImage extract-and-run (no usable /dev/fuse)'
+else
+  unset APPIMAGE_EXTRACT_AND_RUN
+  echo 'Using normal AppImage FUSE launch'
 fi
 setsid "$image" > desktop.log 2>&1 &
 pid=$!
@@ -43,8 +54,10 @@ console.log('Packaged speech addon loaded');
 const { spawn } = require(join(res, 'app.asar/node_modules/node-pty'));
 const pty = spawn('/bin/sh', ['-c', 'printf "MULTICA_PTY_OK\n"'], { cols: 80, rows: 24 });
 let output = '';
+const timer = setTimeout(() => { throw new Error('Packaged PTY did not exit'); }, 20_000);
 pty.onData((data) => { output += data; });
 pty.onExit(({ exitCode }) => {
+  clearTimeout(timer);
   assert.equal(exitCode, 0);
   assert.match(output, /MULTICA_PTY_OK\r?\n/);
   console.log('Packaged PTY spawned a shell and returned output');

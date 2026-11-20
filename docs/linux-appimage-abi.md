@@ -13,7 +13,7 @@ Use a fresh x86-64 desktop VM as a normal user. Install the documented
 AppImage runtime dependency and the smoke-test tools from Ubuntu's repositories.
 
     sudo apt-get update
-    sudo apt-get install -y libfuse2t64 xvfb xauth xdotool python3-yaml
+    sudo apt-get install -y libfuse2t64 xvfb xauth xdotool python3-yaml binutils
     getconf GNU_LIBC_VERSION
     uname -m
 
@@ -33,7 +33,8 @@ merge commit. Compare its tree with the PR candidate's tree.
 
 The smoke test waits for a visible Multica window, opens a shell via the
 packaged node-pty module and loads the packaged sherpa-onnx voice addon.
-Save the output with the VM OS and glibc version, revision and AppImage hash.
+The script uses a temporary profile with automatic updates disabled. Save
+the output with the VM OS and glibc version, revision and AppImage hash.
 With FUSE available the script launches the AppImage normally. The hosted
 runner can exercise the AppImage's extract-and-run mode when FUSE is
 unavailable. Record which path ran in a VM test. The voice check covers
@@ -45,8 +46,25 @@ model and a microphone or audio fixture.
 The fork's official v0.9.2 x64 AppImage SHA-256
 0679ca3d44f296edc775b3ed70dff91cc845abc90ec1f11fc7f0bcb71787cb88
 was independently found to need GLIBC_2.42 in pty.node. On Ubuntu 24.04
-its updater cannot start. Record the failing launch and the hash in a VM
-before replacing the AppImage.
+its updater cannot start. Verify the downloaded official AppImage before
+launching it in the disposable VM, and preserve the module diagnostic even
+if the loader exits with status 0.
+
+    printf '%s  %s
+' 0679ca3d44f296edc775b3ed70dff91cc845abc90ec1f11fc7f0bcb71787cb88 "$OLD_APPIMAGE" | sha256sum -c -
+    OLD_APPIMAGE=$(realpath "$OLD_APPIMAGE")
+    OLD_SCRATCH=$(mktemp -d)
+    (
+      cd "$OLD_SCRATCH"
+      "$OLD_APPIMAGE" --appimage-extract > /dev/null
+      PTY=squashfs-root/resources/app.asar.unpacked/node_modules/node-pty/build/Release/pty.node
+      LC_ALL=C readelf -W -V "$PTY" | grep -F GLIBC_2.42
+      LC_ALL=C /lib64/ld-linux-x86-64.so.2 --list "$PTY" > loader.log 2>&1 || true
+      grep -F GLIBC_2.42 loader.log
+    )
+
+Record the failing old launch before replacing the AppImage. Use an isolated
+network for the recovery and auto-update rehearsals.
 
 1. Close Multica and its daemon. Back up the existing AppImage, desktop
    launcher, actual Electron profile (normally under the XDG config folder)
@@ -59,6 +77,7 @@ before replacing the AppImage.
    This preserves an existing launcher that points to that path.
 
        install -m 0755 "$APPIMAGE" "$INSTALLED_APPIMAGE.new"
+       cmp -- "$APPIMAGE" "$INSTALLED_APPIMAGE.new"
        sha256sum "$INSTALLED_APPIMAGE.new"
        mv -T -- "$INSTALLED_APPIMAGE.new" "$INSTALLED_APPIMAGE"
 

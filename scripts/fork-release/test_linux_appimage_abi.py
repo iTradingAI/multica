@@ -63,6 +63,24 @@ class ElfTest(unittest.TestCase):
             ):
                 self.assertEqual(abi.inspect_tree(root, set()), {"helper": [], "app.asar!/inside.so": []})
 
+    @unittest.skipUnless(Path(abi.LOADER).exists() and shutil.which("gcc") and shutil.which("readelf"),
+                         "uses the Linux loader and GNU tools")
+    def test_traces_the_original_appimage_runtime_with_type2_magic(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            image = root / "test.AppImage"
+            (root / "runtime.c").write_text("int main(void) { return 19; }")
+            subprocess.run(["gcc", "-o", image, "runtime.c"], cwd=root, check=True)
+            with image.open("r+b") as stream:
+                stream.seek(8)
+                stream.write(b"AI")
+            original = image.read_bytes()
+            # A successful dependency trace also proves main() was never called.
+            self.assertIn("GLIBC_2.2.5", abi.elf_versions(
+                image, {"GLIBC_2.2.5", "GLIBC_2.34"}, appimage=True,
+            ))
+            self.assertEqual(image.read_bytes(), original)
+
     @unittest.skipUnless(shutil.which("gcc") and shutil.which("readelf"), "uses GNU binutils")
     def test_real_elf_with_a_242_version_need(self):
         with tempfile.TemporaryDirectory() as scratch:
