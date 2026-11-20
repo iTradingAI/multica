@@ -25,22 +25,6 @@ printf '%s
 ' '{"automaticUpdates":false}' > "$XDG_CONFIG_HOME/Multica/updater-preferences.json"
 export ELECTRON_ENABLE_LOGGING=1
 unset ELECTRON_RUN_AS_NODE
-# The hosted VM may not expose FUSE. This still runs the AppImage entry point.
-if [[ ! -r /dev/fuse || ! -w /dev/fuse ]]; then
-  export APPIMAGE_EXTRACT_AND_RUN=1
-  echo 'Using AppImage extract-and-run (no usable /dev/fuse)'
-else
-  unset APPIMAGE_EXTRACT_AND_RUN
-  echo 'Using normal AppImage FUSE launch'
-fi
-setsid "$image" > desktop.log 2>&1 &
-pid=$!
-timeout 60s xdotool search --sync --onlyvisible --class '^Multica$'
-kill -0 "$pid"
-if grep -Eq 'GLIBC(X{2})?_[^ ]+.*not found|CXXABI_[^ ]+.*not found|UnhandledPromiseRejection|App threw an error' desktop.log; then
-  exit 1
-fi
-echo 'Packaged desktop window visible'
 "$image" --appimage-extract > /dev/null
 root="$scratch/squashfs-root"
 timeout 30s env ELECTRON_RUN_AS_NODE=1 "$root/multica-desktop" - "$root" <<'JS'
@@ -63,3 +47,28 @@ pty.onExit(({ exitCode }) => {
   console.log('Packaged PTY spawned a shell and returned output');
 });
 JS
+
+# The hosted VM may not expose FUSE. This still runs the AppImage entry point.
+if [[ ! -r /dev/fuse || ! -w /dev/fuse ]]; then
+  export APPIMAGE_EXTRACT_AND_RUN=1
+  echo 'Using AppImage extract-and-run (no usable /dev/fuse)'
+else
+  unset APPIMAGE_EXTRACT_AND_RUN
+  echo 'Using normal AppImage FUSE launch'
+fi
+setsid "$image" > desktop.log 2>&1 &
+pid=$!
+timeout 60s bash -c '
+  while kill -0 "$1"; do
+    if xdotool search --onlyvisible --class "^Multica$"; then
+      exit 0
+    fi
+    sleep 1
+  done
+  exit 1
+' bash "$pid"
+kill -0 "$pid"
+if grep -Eq 'GLIBC(X{2})?_[^ ]+.*not found|CXXABI_[^ ]+.*not found|UnhandledPromiseRejection|App threw an error' desktop.log; then
+  exit 1
+fi
+echo 'Packaged desktop window visible'

@@ -40,8 +40,8 @@ merge commit. Compare its tree with the PR candidate's tree.
     xvfb-run -a bash scripts/fork-release/smoke-linux-appimage.sh "$APPIMAGE"
     python3 scripts/fork-release/linux_appimage_abi.py verify "$ARTIFACT" "$REVISION"
 
-The smoke test waits for a visible Multica window, opens a shell via the
-packaged node-pty module and loads the packaged sherpa-onnx voice addon.
+The smoke test opens a shell via the packaged node-pty module, loads the
+packaged sherpa-onnx voice addon and waits for a visible Multica window.
 The script uses a temporary profile with automatic updates disabled. Save
 the output with the VM OS and glibc version, revision and AppImage hash.
 With FUSE available the script launches the AppImage normally. The hosted
@@ -49,6 +49,12 @@ runner can exercise the AppImage's extract-and-run mode when FUSE is
 unavailable. Record which path ran in a VM test. The voice check covers
 loading the native engine. A product-level speech check also needs a voice
 model and a microphone or audio fixture.
+
+If the normal FUSE launch aborts at Chromium's SUID sandbox check, keep the
+launch log and record the machine's Ubuntu/AppArmor configuration. That result
+blocks the release even when the ELF, PTY and voice checks pass. For any
+separately approved AppArmor setup, record the exact app-specific profile and
+repeat the normal launch with the same AppImage hash.
 
 ## Recover an old install that cannot start
 

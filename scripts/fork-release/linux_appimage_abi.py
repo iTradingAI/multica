@@ -177,6 +177,7 @@ def scan(folder, revision):
     if not (REQUIRED_ELF | {"multica-desktop"}) <= objects.keys():
         raise ValueError("missing expected Linux ELF files in the AppImage")
     print(f"Resolved ABI and dependencies for {len(objects)} ELF files", flush=True)
+    print(json.dumps(before, sort_keys=True), flush=True)
     subprocess.run(
         ["xvfb-run", "-a", "bash", str(Path(__file__).with_name("smoke-linux-appimage.sh")), str(image)],
         check=True, timeout=180,
@@ -187,8 +188,7 @@ def scan(folder, revision):
                   image_version=image_version, runtime_smoke="pass")
     with (folder / RECORD).open("x") as stream:
         json.dump(record, stream, indent=2, sort_keys=True)
-    print(f"Verified {len(objects)} ELF files")
-    print(json.dumps(before, sort_keys=True))
+    print("Linux AppImage ABI and runtime verification passed")
 
 
 if __name__ == "__main__":
