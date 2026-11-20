@@ -7,13 +7,22 @@ native module smoke tests. The record binds the checked bytes to the source
 revision and the updater manifest. Keep the AppImage, ABI record,
 latest-linux.yml and build-revision from the same Actions artifact.
 
+Linux x64 uses the packager's pinned AppImage toolset 1.0.2 for its GTK3
+tray libraries. The default toolset bundles GTK2 libraries that require
+libdbusmenu-gtk.so.4, which Ubuntu 24.04 does not provide. The fork update
+feed and installer filenames are the same. To reproduce the packaging
+command on this baseline after installing the frozen dependencies, run
+from apps/desktop.
+
+    node scripts/package.mjs --linux --x64 --publish never -c.toolsets.appimage=1.0.2
+
 ## Clean Ubuntu 24.04 VM
 
 Use a fresh x86-64 desktop VM as a normal user. Install the documented
 AppImage runtime dependency and the smoke-test tools from Ubuntu's repositories.
 
     sudo apt-get update
-    sudo apt-get install -y libfuse2t64 xvfb xauth xdotool python3-yaml binutils
+    sudo apt-get install -y libfuse2t64 libdbusmenu-gtk3-4 libdbus-glib-1-2 xvfb xauth xdotool python3-yaml binutils
     getconf GNU_LIBC_VERSION
     uname -m
 
@@ -76,9 +85,9 @@ network for the recovery and auto-update rehearsals.
    same directory, then atomically move it to the existing AppImage path.
    This preserves an existing launcher that points to that path.
 
-       install -m 0755 "$APPIMAGE" "$INSTALLED_APPIMAGE.new"
-       cmp -- "$APPIMAGE" "$INSTALLED_APPIMAGE.new"
-       sha256sum "$INSTALLED_APPIMAGE.new"
+       install -m 0755 "$APPIMAGE" "$INSTALLED_APPIMAGE.new" &&
+       cmp -- "$APPIMAGE" "$INSTALLED_APPIMAGE.new" &&
+       sha256sum "$INSTALLED_APPIMAGE.new" &&
        mv -T -- "$INSTALLED_APPIMAGE.new" "$INSTALLED_APPIMAGE"
 
 3. Start from the original launcher. Record the installed version and hash,

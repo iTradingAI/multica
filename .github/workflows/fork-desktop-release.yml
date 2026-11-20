@@ -67,7 +67,9 @@ jobs:
 
       - name: Install Linux packaging and AppImage verification tools
         if: matrix.target == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y rpm binutils xvfb xauth xdotool libfuse2t64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm binutils xvfb xauth xdotool libfuse2t64 libdbusmenu-gtk3-4 libdbus-glib-1-2
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -111,7 +113,11 @@ jobs:
         # electron-builder's default publish policy attempts a GitHub
         # Release upload, which fails without GH_TOKEN. The explicit
         # upload steps below handle publishing instead.
-        run: node scripts/package.mjs --${{ matrix.target }} --${{ matrix.arch }} --publish never
+        # The legacy AppImage toolset bundles GTK2 tray libraries whose
+        # libdbusmenu-gtk.so.4 dependency is unavailable on Ubuntu 24.04.
+        run: >-
+          node scripts/package.mjs --${{ matrix.target }} --${{ matrix.arch }} --publish never
+          ${{ matrix.target == 'linux' && '-c.toolsets.appimage=1.0.2' || '' }}
 
       - name: Verify macOS installers and update metadata
         if: matrix.target == 'mac'
