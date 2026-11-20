@@ -46,7 +46,7 @@ def versions(text, section):
     return set(re.findall(r"\bName: (\S+)", match[1])) if match else set()
 
 
-def elf_versions(path, available, *, appimage=False):
+def elf_versions(path, available, *, bundled_libs=None, appimage=False):
     info = command("readelf", "-W", "-h", "-l", "-d", "-V", str(path))
     if not re.search(r"Class:\s+ELF64\b", info) or not re.search(
         r"Machine:\s+Advanced Micro Devices X86-64\b", info
@@ -72,13 +72,15 @@ def elf_versions(path, available, *, appimage=False):
             # Trace dependencies through the runtime's declared interpreter.
             resolved = command(str(path), cwd=path.parent, trace_elf=True)
         else:
-            resolved = command(LOADER, "--list", str(path), cwd=path.parent)
+            # AppRun prepends the AppDir's usr/lib to the runtime search path.
+            search = ("--library-path", str(bundled_libs)) if bundled_libs else ()
+            resolved = command(LOADER, *search, "--list", str(path), cwd=path.parent)
         if not resolved.strip() or re.search(r"\bnot found\b", resolved, re.I):
             raise ValueError(f"{path}: unresolved dynamic dependencies: {resolved.strip()}")
     return sorted(checked)
 
 
-def inspect_tree(root, available, prefix=""):
+def inspect_tree(root, available, bundled_libs, prefix=""):
     objects = {}
     for path in sorted(root.rglob("*")):
         if path.is_symlink() or not path.is_file():
@@ -87,11 +89,11 @@ def inspect_tree(root, available, prefix=""):
         with path.open("rb") as stream:
             is_elf = stream.read(4) == b"\x7fELF"
         if is_elf:
-            objects[relative] = elf_versions(path, available)
+            objects[relative] = elf_versions(path, available, bundled_libs=bundled_libs)
         elif path.suffix == ".asar":
             with tempfile.TemporaryDirectory(prefix="asar-", dir=root.parent) as extracted:
                 command("node", str(ASAR_EXTRACT), str(path), extracted)
-                objects.update(inspect_tree(Path(extracted), available, relative + "!/"))
+                objects.update(inspect_tree(Path(extracted), available, bundled_libs, relative + "!/"))
     return objects
 
 
@@ -170,7 +172,8 @@ def scan(folder, revision):
     objects = {"<AppImage runtime>": elf_versions(image, available, appimage=True)}
     with tempfile.TemporaryDirectory(prefix="appimage-abi-") as scratch:
         command(str(image), "--appimage-extract", cwd=scratch)
-        objects.update(inspect_tree(Path(scratch) / "squashfs-root", available))
+        appdir = Path(scratch) / "squashfs-root"
+        objects.update(inspect_tree(appdir, available, appdir / "usr/lib"))
     if not (REQUIRED_ELF | {"multica-desktop"}) <= objects.keys():
         raise ValueError("missing expected Linux ELF files in the AppImage")
     subprocess.run(

@@ -48,6 +48,13 @@ class ElfTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unresolved"):
                 abi.elf_versions(Path("native.node"), {"GLIBC_2.39"})
 
+    def test_loader_uses_the_app_run_library_path(self):
+        module = Path("app/usr/lib/libappindicator.so.1")
+        bundled_libs = module.parent
+        with patch.object(abi, "command", side_effect=[HEADER, "libindicator.so.7 => app/usr/lib/libindicator.so.7"]) as run:
+            abi.elf_versions(module, {"GLIBC_2.39"}, bundled_libs=bundled_libs)
+        run.assert_called_with(abi.LOADER, "--library-path", str(bundled_libs), "--list", str(module), cwd=module.parent)
+
     def test_walks_elf_by_magic_and_opens_asar(self):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
@@ -61,7 +68,7 @@ class ElfTest(unittest.TestCase):
             with patch.object(abi, "command", side_effect=extract), patch.object(
                 abi, "elf_versions", return_value=[]
             ):
-                self.assertEqual(abi.inspect_tree(root, set()), {"helper": [], "app.asar!/inside.so": []})
+                self.assertEqual(abi.inspect_tree(root, set(), root / "usr/lib"), {"helper": [], "app.asar!/inside.so": []})
 
     @unittest.skipUnless(Path(abi.LOADER).exists() and shutil.which("gcc") and shutil.which("readelf"),
                          "uses the Linux loader and GNU tools")
