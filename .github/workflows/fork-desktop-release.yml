@@ -36,7 +36,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # NOT ubuntu-latest: current latest images ship glibc >= 2.42, so the
+          # bundled node-pty .node binary requires GLIBC_2.42 and the AppImage
+          # crashes on Ubuntu 24.04 (glibc 2.39) at startup. Pin the oldest
+          # supported baseline so released Linux builds run on Ubuntu 24.04.
+          - os: ubuntu-24.04
             target: linux
             arch: x64
           # NOT windows-latest: the windows-2025 image no longer exposes a
