@@ -173,6 +173,7 @@ export function IssueSidebarSettings({
   available: readonly IssueSidebarSection[];
   trigger: ReactElement;
   /** Shown sections with nothing to render on this issue, read when the popover opens. */
+  onShownChange?: (id: IssueSidebarSection) => void;
   getEmptySections?: () => ReadonlySet<IssueSidebarSection>;
   side?: "top" | "bottom";
   align?: "start" | "end";
