@@ -1,9 +1,6 @@
 name: Mobile Verify
 
-# Runs lint + typecheck for apps/mobile only, parallel to the main CI
-# workflow. Always runs so the required mobile check cannot remain pending
-# on an unrelated PR. Sync candidates are also explicitly dispatched.
-#
+# Verify mobile typecheck, lint and unit tests on every PR to main.
 on:
   push:
     branches: [main]
@@ -14,8 +11,7 @@ on:
 permissions:
   contents: read
 
-# Same rule as ci.yml: the push path filter only sees the commits in that
-# push, so a cancelled main run would never be re-checked.
+# A newer PR run supersedes its predecessor. Each main push verifies independently.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -40,7 +36,7 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Type check, lint, and test
         run: pnpm exec turbo typecheck lint test --filter=@multica/mobile

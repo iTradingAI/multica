@@ -16,6 +16,7 @@ import { SourceBackfillModal } from "@multica/views/onboarding";
 import { PageLoading } from "./page-loading";
 import { useTabStore } from "@/stores/tab-store";
 import { useWindowOverlayStore } from "@/stores/window-overlay-store";
+import { DocumentTitleSync } from "./document-title-sync";
 
 /**
  * Which mounted layout instance currently owns the platform workspace
@@ -178,6 +179,7 @@ export function WorkspaceRouteLayout() {
 
   return (
     <WorkspaceSlugProvider slug={workspaceSlug}>
+      <DocumentTitleSync />
       <WorkspacePresencePrefetch />
       <VoiceWorkspaceWords />
       <div data-route-pathname={pathname} style={{ display: "contents" }}>

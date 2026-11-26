@@ -140,6 +140,30 @@ var pgBigmOperatorClass = extensionOperatorClass{
 // they are still pending: a fresh self-hosted install, which is exactly where an
 // interrupted build would otherwise leave a permanently unusable index.
 var concurrentIndexCleanups = map[string]string{
+	"773_agent_task_queue_doc_idx":                  "idx_agent_task_queue_doc",
+	"769_app_tool_call_quota_period_scope_idx":      "uq_app_tool_call_quota_period_scope",
+	"771_app_tool_call_workspace_metered_idx":       "idx_app_tool_call_workspace_metered",
+	"756_task_usage_hourly_squad_uq_idx":            "uq_task_usage_hourly_squad_key_idx",
+	"757_task_usage_hourly_dirty_squad_uq_idx":      "uq_task_usage_hourly_dirty_squad_key_idx",
+	"758_task_usage_hourly_workspace_squad_idx":     "idx_task_usage_hourly_workspace_squad_time",
+	"764_issue_blocker_unique":                      "issue_blocker_unique",
+	"765_issue_blocker_reverse":                     "issue_blocker_reverse",
+	"753_comment_idempotency_receipt_key":           "uq_comment_idempotency_receipt_key",
+	"754_comment_idempotency_receipt_created":       "idx_comment_idempotency_receipt_created",
+	"749_remote_app_connection_workspace_idx":       "uq_remote_app_connection_owner_ws",
+	"740_remote_app_oauth_client_idx":               "uq_remote_app_oauth_client_app_redirect",
+	"741_remote_app_connection_owner_idx":           "uq_remote_app_connection_owner",
+	"718_autopilot_run_idempotency_key_idx":         "uq_autopilot_run_idempotency_key",
+	"721_member_search_access_pkey_index":           "member_search_access_pkey_idx",
+	"724_doc_comment_pkey_index":                    "doc_comment_pkey_idx",
+	"726_doc_comment_doc_idx":                       "doc_comment_doc_idx",
+	"727_doc_comment_workspace_idx":                 "doc_comment_workspace_idx",
+	"728_attachment_workspace_size_idx":             "idx_attachment_workspace_size",
+	"732_dashboard_range_view_scope_idx":            "uq_dashboard_range_view_scope",
+	"734_doc_collab_state_pkey_index":               "doc_collab_state_pkey_idx",
+	"736_doc_revision_pkey_index":                   "doc_revision_pkey_idx",
+	"744_issue_description_collab_state_pkey_index": "issue_description_collab_state_pkey_idx",
+	"746_issue_description_revision_pkey_index":     "issue_description_revision_pkey_idx",
 	"696_chat_wakeup_due_idx":                       "idx_chat_wakeup_due",
 	"697_chat_wakeup_session_idx":                   "idx_chat_wakeup_session",
 	"698_chat_wakeup_requester_idx":                 "idx_chat_wakeup_requester",
@@ -429,6 +453,9 @@ var concurrentIndexCleanups = map[string]string{
 // the retry, while a bare CREATE would stay wedged on "already exists"; both
 // cases need direction-specific cleanup before the rollback can retry safely.
 var concurrentDownIndexCleanups = map[string]string{
+	"760_task_usage_hourly_drop_legacy_key":                 "uq_task_usage_hourly_key",
+	"761_task_usage_hourly_dirty_drop_legacy_key":           "uq_task_usage_hourly_dirty_key",
+	"750_drop_remote_app_connection_owner_idx":              "uq_remote_app_connection_owner",
 	"144_drop_agent_task_queue_chat_pending_v1":             "idx_agent_task_queue_chat_pending",
 	"171_drop_legacy_label_namespace_index":                 "issue_label_workspace_name_lower_idx",
 	"256_drop_agent_task_queue_chat_pending_v2":             "idx_agent_task_queue_chat_pending_v2",
@@ -452,6 +479,7 @@ var concurrentDownIndexCleanups = map[string]string{
 	"463_drop_issue_description_bigm_index":                 "idx_issue_description_bigm",
 	"464_drop_issue_description_trgm_index":                 "idx_issue_description_trgm",
 	"473_drop_agent_task_queue_chat_with_session_index":     "idx_agent_task_queue_chat_with_session_created_at",
+	"729_drop_attachment_workspace_index":                   "idx_attachment_workspace",
 }
 
 var preMigrationHooks = func() map[string]preMigrationHook {

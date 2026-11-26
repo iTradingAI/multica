@@ -32,7 +32,10 @@ func TestFailTaskRuntimeCancellationIsSilent(t *testing.T) {
 	bus.Subscribe(protocol.EventTaskFailed, func(events.Event) { failed++ })
 	bus.Subscribe(protocol.EventTaskCancelled, func(events.Event) { cancelled++ })
 	svc := &TaskService{Queries: db.New(pool), TxStarter: pool, Bus: bus}
-	task, changed, err := svc.FailTaskWithTransition(ctx, util.MustParseUUID(taskID), "execution cancelled", "session", "/workspace", "feat/saved", "agent_error.unknown", false, "", "/durable")
+	task, changed, err := svc.FailTaskWithTransition(ctx, util.MustParseUUID(taskID), protocol.TaskFailRequest{
+		Error: "execution cancelled", SessionID: "session", WorkDir: "/workspace",
+		BranchName: "feat/saved", FailureReason: "agent_error.unknown", DurableWorkDir: "/durable",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +61,9 @@ func TestFailTaskRuntimeCancellationIsSilent(t *testing.T) {
 	if successor, err := svc.Queries.GetAgentTask(ctx, util.MustParseUUID(successorID)); err != nil || successor.Status != "queued" {
 		t.Fatalf("stop disturbed its successor: status=%s err=%v", successor.Status, err)
 	}
-	if _, changed, err := svc.FailTaskWithTransition(ctx, util.MustParseUUID(taskID), "execution cancelled", "", "", "", "agent_error.unknown", false, "", ""); err != nil || changed {
+	if _, changed, err := svc.FailTaskWithTransition(ctx, util.MustParseUUID(taskID), protocol.TaskFailRequest{
+		Error: "execution cancelled", FailureReason: "agent_error.unknown",
+	}); err != nil || changed {
 		t.Fatalf("replay was not idempotent: changed=%v err=%v", changed, err)
 	}
 	if failed != 0 || cancelled != 1 {

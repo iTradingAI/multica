@@ -29,6 +29,8 @@ export const REASONS = new Set([
   "runtime_reconnect_timeout",
   "runtime_recovery",
   "timeout",
+  "cleanup_unconfirmed",
+  "cleanup_blocked",
   "iteration_limit",
   "agent_blocked",
   "api_invalid_request",
@@ -41,6 +43,7 @@ export const REASONS = new Set([
 
   // Agent process side — provider.
   "agent_error.provider_auth_or_access",
+  "agent_error.provider_model_rejected",
   "agent_error.provider_quota_limit",
   "agent_error.provider_capacity_or_rate_limit",
   "agent_error.provider_server_error",
@@ -62,6 +65,7 @@ export const REASONS = new Set([
   "codex_resume_oversized",
   "idle_watchdog",
   "local_directory_error",
+  "local_directory_missing",
   "cancelled",
 
   // Coarse values, still present on historical rows.

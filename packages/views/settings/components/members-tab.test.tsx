@@ -46,6 +46,7 @@ vi.mock("@tanstack/react-query", () => ({
     }
     if (key.includes("share-links")) return { data: data.shareLinks };
     if (key.includes("members")) return { data: data.members, isSuccess: true };
+    if (key.includes("projects")) return { data: [] };
     return { data: data.summary };
   },
   useQueryClient: () => ({
@@ -444,7 +445,7 @@ describe("MembersTab", () => {
       renderWithI18n(<MembersTab />);
 
       await user.click(screen.getByRole("button", { name: "Revoke invitation for linus@acme.dev" }));
-      await user.click(await screen.findByRole("button", { name: "Confirm" }));
+      await user.click(await screen.findByRole("button", { name: "Revoke invitation" }));
 
       await waitFor(() => expect(mockRevokeInvitation).toHaveBeenCalledWith("ws-1", "inv-1"));
       await waitFor(() => expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: LIMIT_KEY }));

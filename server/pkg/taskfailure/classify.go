@@ -61,6 +61,42 @@ func isUsageLimit403(lower string) bool {
 	return httpForbiddenCodeRe.MatchString(lower) && strings.Contains(lower, "usage limit")
 }
 
+// tokenRateLimitRe matches the per-minute quota labels a gateway prints on a
+// rejection: TPM (tokens per minute) and RPM (requests per minute).
+var tokenRateLimitRe = regexp.MustCompile(`(^|[^0-9a-z])(tpm|rpm)([^0-9a-z]|$)`)
+
+// isTokenRateLimit reports a per-minute quota rejection. It shares the "token"
+// and "limit" words that rule 1 matches ("Token usage exceeds the current model
+// TPM (tokens per minute) limit 1000000"), but it is a rate limit to wait out,
+// not a full context window.
+func isTokenRateLimit(lower string) bool {
+	return containsAny(lower, "per minute", "rate limit", "rate_limit_error") ||
+		tokenRateLimitRe.MatchString(lower)
+}
+
+// isTokenQuotaRejection is the quota case of rule 1's token + limit match.
+// Shared by Classify and NormalizeDaemonReason, like isUsageLimit403, so new
+// and old daemons land on the same reason.
+func isTokenQuotaRejection(lower string) bool {
+	// A request larger than the entire TPM allowance cannot succeed after the
+	// quota resets. Preserve its existing resume-unsafe overflow handling.
+	return strings.Contains(lower, "token") && strings.Contains(lower, "limit") &&
+		isTokenRateLimit(lower) && !strings.Contains(lower, "request too large")
+}
+
+// explicitContextOverflow reports wording that names the context window or the
+// prompt size outright. It wins over the quota guard, so a real overflow that
+// also mentions a limit still lands in context_overflow.
+func explicitContextOverflow(lower string) bool {
+	return containsAny(lower,
+		"context length",
+		"context_length_exceeded",
+		"maximum context",
+		"prompt is too long",
+		"context size has been exceeded",
+	) || containsAny(lower, contextWindowExceededWitnesses...)
+}
+
 // Classify maps a free-form error string from the agent runtime / CLI
 // to an agent_error.* sub-reason, or ReasonCancelled for an explicit stop.
 // Always returns a valid
@@ -96,6 +132,9 @@ func Classify(rawError string) Reason {
 		return ReasonAgentUnknown
 	}
 	lower := strings.ToLower(trimmed)
+	if reason := classifyTraePromptStreamFailure(lower); reason != "" {
+		return reason
+	}
 	// Cursor's adapter adds event counts to known transport failures. Those
 	// numbers are not HTTP status codes (event_count=429 is not a rate limit).
 	// Apply the existing precedence to the provider stderr, keeping real auth
@@ -115,6 +154,10 @@ func Classify(rawError string) Reason {
 		lower = strings.Join(lines, "\n")
 	}
 
+	return classifyAgentErrorText(lower)
+}
+
+func classifyAgentErrorText(lower string) Reason {
 	switch {
 	// A concurrent-request rejection can contain both "access token" and HTTP
 	// 403. Its specific semantic witness must beat the broader context and auth
@@ -129,22 +172,21 @@ func Classify(rawError string) Reason {
 	case isUsageLimit403(lower):
 		return ReasonAgentProviderQuotaLimit
 
+	// 1a. Per-minute token or request quota (TPM / RPM). Rule 1's token +
+	//     limit clause matches this wording too, so the quota guard must come
+	//     first. The quota is a rate limit to wait out, not a full context
+	//     window; explicit overflow wording still wins.
+	case isTokenQuotaRejection(lower) && !explicitContextOverflow(lower):
+		return ReasonAgentProviderCapacityOrRateLimit
+
 	// 1. Context / token window overflow. Checked early so "token
 	//    limit" doesn't get swallowed by the broader "limit" / "quota"
 	//    rule below.
-	case containsAny(lower,
-		"context length",
-		"context_length_exceeded",
-		"maximum context",
-		"prompt is too long",
-		"context size has been exceeded",
-	),
-		containsAny(lower, contextWindowExceededWitnesses...),
+	case explicitContextOverflow(lower),
 		// SQL had `%token%limit%` — ILIKE wildcard between tokens. We
-		// approximate with both substrings present, which catches
-		// "token limit", "tokens per minute limit", etc., without the
-		// false positives a naive `Contains("token") || Contains("limit")`
-		// would generate.
+		// approximate with both substrings present, which catches "token
+		// limit" and similar wording. Per-minute quota wording goes to rule
+		// 1a above, so it never reaches this clause.
 		strings.Contains(lower, "token") && strings.Contains(lower, "limit"):
 		return ReasonAgentContextOverflow
 
@@ -183,6 +225,7 @@ func Classify(rawError string) Reason {
 	case httpQuotaCodeRe.MatchString(lower),
 		containsAny(lower,
 			"insufficient_balance",
+			"insufficient balance",
 			"balance is too low",
 			"monthly usage limit",
 			"usage limit",
@@ -435,6 +478,17 @@ func ProviderUnconfigured(errText string) bool {
 // later comment on that issue replay the same overflow.
 //
 // Each is an unambiguous witness on its own, which is what lets
+// legacyClaudeModelRejectedReasons are the reasons an installed daemon
+// predating the ClaudeStartupModelRejected classifier rule reports for the
+// startup-rejection shape: its own Classify maps "file already closed" to
+// process_failure, and a daemon that attached no reason persists the
+// catchall (the server-side empty-reason branch classifies correctly, but
+// normalizing both keeps the mixed-version paths identical).
+var legacyClaudeModelRejectedReasons = map[string]bool{
+	string(ReasonAgentProcessFailure): true,
+	string(ReasonAgentUnknown):        true,
+}
+
 // NormalizeDaemonReason reuse them to upgrade an older daemon's catchall
 // server-side. Matched against pre-lowercased text.
 // Mirror these substrings into the MUL-1949 offline backfill SQL.
@@ -689,6 +743,13 @@ var legacyUsageLimit403Reasons = map[string]bool{
 	"agent_error":                           true,
 }
 
+// legacyTokenRateLimitReasons are the buckets an older daemon lands a
+// per-minute token quota rejection in: context_overflow, from the token + limit
+// clause of its rule 1 before isTokenQuotaRejection existed.
+var legacyTokenRateLimitReasons = map[string]bool{
+	string(ReasonAgentContextOverflow): true,
+}
+
 // NormalizeDaemonReason upgrades a failure_reason reported by an older daemon
 // onto the taxonomy this server understands, using the raw error text as the
 // witness. It returns the reason unchanged when nothing applies.
@@ -704,25 +765,28 @@ var legacyUsageLimit403Reasons = map[string]bool{
 // This is a boundary compatibility shim, not internal fallback logic: each rule
 // can be deleted once no daemon old enough to produce its wire shape is still
 // reporting.
-// legacyClaudeModelRejectedReasons are the reasons an installed daemon
-// predating the ClaudeStartupModelRejected classifier rule reports for the
-// startup-rejection shape: its own Classify maps "file already closed" to
-// process_failure, and a daemon that attached no reason persists the
-// catchall (the server-side empty-reason branch classifies correctly, but
-// normalizing both keeps the mixed-version paths identical).
-var legacyClaudeModelRejectedReasons = map[string]bool{
-	string(ReasonAgentProcessFailure): true,
-	string(ReasonAgentUnknown):        true,
-}
-
 func NormalizeDaemonReason(reason, rawError string) Reason {
 	rawError = WithoutCodebuddyProtocolSummary(rawError)
+	// Older daemons treated the billing rejection as a rate limit because
+	// they only recognized the numeric status and the structured balance code.
+	if reason == ReasonAgentProviderCapacityOrRateLimit.String() &&
+		strings.Contains(strings.ToLower(rawError), "insufficient balance") &&
+		Classify(rawError) == ReasonAgentProviderQuotaLimit {
+		return ReasonAgentProviderQuotaLimit
+	}
 	if legacyConcurrentRequestLimitReasons[reason] &&
 		strings.Contains(strings.ToLower(rawError), concurrentRequestLimitWitness) {
 		return ReasonAgentProviderCapacityOrRateLimit
 	}
 	if legacyUsageLimit403Reasons[reason] && isUsageLimit403(strings.ToLower(rawError)) {
 		return ReasonAgentProviderQuotaLimit
+	}
+	// An older daemon whose rule 1 predates the quota guard reports a TPM or RPM
+	// rejection as context_overflow. Relabel it unless the text also names the
+	// context window outright.
+	if rawLower := strings.ToLower(rawError); legacyTokenRateLimitReasons[reason] &&
+		isTokenQuotaRejection(rawLower) && !explicitContextOverflow(rawLower) {
+		return ReasonAgentProviderCapacityOrRateLimit
 	}
 	if legacySkillBundleReasons[reason] &&
 		strings.HasPrefix(strings.TrimSpace(rawError), legacySkillBundlePrefix) {
@@ -749,6 +813,12 @@ func NormalizeDaemonReason(reason, rawError string) Reason {
 	// flaky provider. Upgrading here makes the retry work the moment the server
 	// deploys, without waiting on the daemon fleet.
 	lowerError := strings.ToLower(strings.TrimSpace(rawError))
+	switch Reason(reason) {
+	case "", "agent_error", ReasonAgentUnknown, ReasonAgentProviderServerError:
+		if refined := classifyTraePromptStreamFailure(lowerError); refined != "" {
+			return refined
+		}
+	}
 	// Normalize before retry eligibility is evaluated so installed daemons
 	// receive the same bounded, resume-safe recovery as current ones. Retain
 	// Classify's precedence if a more specific provider failure is present.
@@ -797,6 +867,12 @@ func NormalizeDaemonReason(reason, rawError string) Reason {
 	if isAgentSideReason(reason) && hasAnyPrefix(lowerError, legacyEnvironmentPrepareWitnesses...) {
 		return ReasonEnvironmentPrepareFailed
 	}
+	// MUL-9665: a daemon predating ReasonLocalDirectoryMissing reports a
+	// deleted or moved project folder as the generic local_directory_error,
+	// which tells the user nothing about what to fix.
+	if reason == legacyLocalDirectoryReason && strings.HasPrefix(lowerError, legacyLocalDirectoryMissingPrefix) {
+		return ReasonLocalDirectoryMissing
+	}
 	// Claude Code startup model rejection, once more as a mixed-version gap:
 	// an installed daemon predating the rule reports agent_error.process_failure
 	// ("file already closed" claims the text), which is terminal — no retry, and
@@ -805,7 +881,7 @@ func NormalizeDaemonReason(reason, rawError string) Reason {
 	// because the failure is transient in the field (the custom-endpoint env is
 	// normally present; a spawn racing a settings rewrite or an updater swap is
 	// the observed trigger).
-	if legacyClaudeModelRejectedReasons[reason] && ClaudeStartupModelRejected(rawError) {
+	if legacyClaudeModelRejectedReasons[reason] && Classify(rawError) == ReasonAgentProviderModelRejected {
 		return ReasonAgentProviderModelRejected
 	}
 	// Upgrade legacy cancellation and stderr-backed catchalls at the write
@@ -819,6 +895,15 @@ func NormalizeDaemonReason(reason, rawError string) Reason {
 	}
 	return Reason(reason)
 }
+
+// legacyLocalDirectoryReason is the daemon's catchall for local_directory
+// failures. It sits outside the canonical taxonomy, so it has no constant.
+const legacyLocalDirectoryReason = "local_directory_error"
+
+// legacyLocalDirectoryMissingPrefix opens the error an older daemon's
+// validateLocalPath returns when the linked directory is gone. Compared
+// lowercased, like every witness here.
+const legacyLocalDirectoryMissingPrefix = "local_directory: path does not exist:"
 
 // containsAll reports whether s contains every one of the supplied substrings.
 // Used where a single phrase would be ambiguous and only the combination

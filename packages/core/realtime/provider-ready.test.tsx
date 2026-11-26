@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { useEffect } from "react";
 import { act, cleanup, render } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { create } from "zustand";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthState } from "../auth/store";
@@ -8,6 +9,7 @@ import { WSProvider, useWS } from "./provider";
 
 vi.mock("./use-realtime-sync", () => ({ useRealtimeSync: () => {} }));
 vi.mock("../search-index/hooks", () => ({ useLocalSearchIndexSync: () => {} }));
+vi.mock("../permissions/use-current-member", () => ({ useIsGuest: () => false }));
 vi.mock("../platform/workspace-storage", () => ({
   getCurrentSlug: () => "test-workspace", getCurrentWsId: () => "test-workspace-id",
   subscribeToCurrentSlug: () => () => {},
@@ -42,10 +44,15 @@ describe("WS provider authenticated readiness", () => {
       useEffect(() => onReady(ready), [onReady]);
       return null;
     }
-    const view = render(<WSProvider wsUrl="ws://example.test/ws" authStore={authStore}
-      storage={{ getItem: () => "synthetic-token", setItem: () => {}, removeItem: () => {} }} cookieAuth={cookieAuth}>
-      <Consumer />
-    </WSProvider>);
+    const queryClient = new QueryClient();
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <WSProvider wsUrl="ws://example.test/ws" authStore={authStore}
+          storage={{ getItem: () => "synthetic-token", setItem: () => {}, removeItem: () => {} }} cookieAuth={cookieAuth}>
+          <Consumer />
+        </WSProvider>
+      </QueryClientProvider>,
+    );
     const frame = { type: "workspace_files.resources", payload: {} } as const;
     expect(current!.send(frame)).toBe(false);
     const socket = Socket.current;

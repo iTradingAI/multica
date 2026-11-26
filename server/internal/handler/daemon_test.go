@@ -1036,7 +1036,7 @@ func TestHandleDaemonWSHeartbeat_RuntimeGoneReturnsAckNotError(t *testing.T) {
 				missingRuntime: daemonws.NewRuntimeLease(testWorkspaceID, "online", time.Now().Add(-2*runtimeHeartbeatDBFlushInterval), true),
 			},
 		},
-		missingRuntime, false)
+		missingRuntime, protocol.DaemonHeartbeatRequestPayload{})
 	if err != nil {
 		t.Fatalf("HandleDaemonWSHeartbeat: unexpected error %v", err)
 	}
@@ -1080,7 +1080,7 @@ func TestHandleDaemonWSHeartbeat_AllowsAnyAuthorizedWorkspace(t *testing.T) {
 				runtimeID: daemonws.NewRuntimeLease(workspaceID, "online", time.Now(), true),
 			},
 		},
-		runtimeID, false)
+		runtimeID, protocol.DaemonHeartbeatRequestPayload{})
 	if err != nil {
 		t.Fatalf("HandleDaemonWSHeartbeat: unexpected error %v", err)
 	}
