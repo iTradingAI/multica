@@ -29,10 +29,19 @@ export function FilesTab({ wsId, context, hasProject, projectId }: Props) {
   const status = useSyncExternalStore(subscribeStatus, getStatus, getStatus);
   const ready = status === "connected";
   const scope = useId();
-  const { t } = useT("common");
   const queryClient = useQueryClient();
-  const [resourceId, setResourceId] = useState("");
-  const [file, setFile] = useState<{ resourceId: string; path: string; bindingChanged?: boolean }>();
+  const labelProjectId = context.kind === "project" ? context.project_id : projectId;
+  const bindingKey = JSON.stringify([labelProjectId, hasProject]);
+  const [file, setFile] = useState<{
+    resourceId: string;
+    path: string;
+    bindingKey: string;
+    bindingChanged?: boolean;
+  }>();
+  // Retire this selection permanently, even if the issue moves back later.
+  // Keep the editor itself mounted so the original draft stays available.
+  const projectChanged = Boolean(file && file.bindingKey !== bindingKey);
+  if (file && projectChanged && !file.bindingChanged) setFile({ ...file, bindingChanged: true });
   useEffect(() => {
     const refresh = () => void queryClient.invalidateQueries({
       queryKey: ["workspaces", wsId, "workbench", scope],
@@ -60,24 +69,44 @@ export function FilesTab({ wsId, context, hasProject, projectId }: Props) {
     return () => cleanups.forEach((cleanup) => cleanup());
   }, [subscribe, queryClient, wsId, scope]);
 
+  return (
+    <div className="space-y-3">
+      <FilesBrowser key={bindingKey} wsId={wsId} context={context} hasProject={hasProject}
+        projectId={labelProjectId} ws={ws} ready={ready} scope={scope}
+        openFile={(resourceId, path) => setFile({ resourceId, path, bindingKey })} />
+      {file && <WorkspaceFileEditor ws={ws} context={context} resourceId={file.resourceId}
+        path={file.path} ready={ready} bindingChanged={file.bindingChanged || projectChanged}
+        close={() => setFile(undefined)} />}
+    </div>
+  );
+}
+
+function FilesBrowser({ wsId, context, hasProject, projectId, ws, ready, scope, openFile }: Props & {
+  ws: WorkspaceFilesTransport;
+  ready: boolean;
+  scope: string;
+  openFile: (resourceId: string, path: string) => void;
+}) {
+  const instance = useId();
+  const { t } = useT("common");
+  const [resourceId, setResourceId] = useState("");
   const resources = useQuery({
-    queryKey: ["workspaces", wsId, "workbench", scope, "files-resources", context],
+    queryKey: ["workspaces", wsId, "workbench", scope, "files-resources", context, instance],
     queryFn: ({ signal }) => requestWorkspaceFiles(ws, { operation: "resources", context }, signal),
     enabled: ready && hasProject && Boolean(wsId),
     retry: false,
     gcTime: 0,
   });
-  const labelProjectId = context.kind === "project" ? context.project_id : projectId;
   const labels = useQuery({
-    ...projectResourcesOptions(wsId, labelProjectId ?? ""),
-    enabled: Boolean(labelProjectId && resources.data?.resources?.length),
+    ...projectResourcesOptions(wsId, projectId ?? ""),
+    enabled: Boolean(projectId && resources.data?.resources?.length),
   });
   const directories = resources.data?.resources ?? [];
   const active = directories.some((resource) => resource.resource_id === resourceId)
     ? resourceId : directories[0]?.resource_id;
 
   return (
-    <div className="space-y-3">
+    <>
       <IssueFileTouches wsId={wsId} ws={ws} context={context} />
       {!hasProject ? (
         <p role="status">{t(($) => $.workbench.no_project)}</p>
@@ -104,12 +133,10 @@ export function FilesTab({ wsId, context, hasProject, projectId }: Props) {
             </select>
           </label>
           <Directory key={active} wsId={wsId} scope={scope} ws={ws} context={context}
-            resourceId={active} path="." openFile={(path) => setFile({ resourceId: active, path })} />
+            resourceId={active} path="." openFile={(path) => openFile(active, path)} />
         </>
       )}
-      {file && <WorkspaceFileEditor ws={ws} context={context} {...file} ready={ready}
-        close={() => setFile(undefined)} />}
-    </div>
+    </>
   );
 }
 

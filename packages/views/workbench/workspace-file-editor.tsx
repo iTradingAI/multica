@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   requestWorkspaceFiles,
   WorkspaceFilesError,
@@ -44,8 +44,10 @@ export function WorkspaceFileEditor({ ws, context, resourceId, path, ready, bind
   const canSend = ready && !bindingChanged;
   const additionalVersion = latest && base && latest.version.bindingGeneration !== base.version.bindingGeneration;
 
-  useEffect(() => () => request.current?.abort(), []);
-  useEffect(() => {
+  useLayoutEffect(() => () => request.current?.abort(), []);
+  // Retire the old request during the binding change commit, before a
+  // queued response can settle against the draft that stays mounted.
+  useLayoutEffect(() => {
     if (!canSend && request.current) {
       request.current.abort();
       request.current = null;
@@ -158,7 +160,7 @@ export function WorkspaceFileEditor({ ws, context, resourceId, path, ready, bind
           <DialogDescription className="break-all">{path}</DialogDescription>
         </DialogHeader>
         {base ? (
-          <textarea aria-label={t(($) => $.workbench.files.draft)} spellCheck={false} value={draft}
+          <textarea aria-label={t(($) => $.workbench.files.draft)} spellCheck={false} value={draft} readOnly={bindingChanged}
             onChange={(event) => setDraft(event.target.value)}
             className="min-h-56 max-h-[45vh] w-full resize-y rounded-md border bg-background p-3 font-mono text-sm"
           />

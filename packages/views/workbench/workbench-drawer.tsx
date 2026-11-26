@@ -25,9 +25,7 @@ interface WorkbenchTab { id: string; label: string;
 export function WorkspaceFilesSection(props: Props) {
   // Changing workspace or entry destroys the entire session, including the
   // open state, selected tab, in-flight queries, iframe and MessagePort.
-  return (
-    <WorkbenchSession key={JSON.stringify([props.wsId, props.context, props.projectId])} {...props} />
-  );
+  return <WorkbenchSession key={JSON.stringify([props.wsId, props.context])} {...props} />;
 }
 function WorkbenchSession(props: Props) {
   const { t } = useT("common");
@@ -83,13 +81,14 @@ function WorkbenchBody({ wsId, context, hasProject = true, projectId }: Props) {
       <TabsList aria-label={t(($) => $.workbench.files.management)} className="flex w-max max-w-none justify-start">{tabs.map((tab) => (
           <TabsTrigger key={tab.id} value={tab.id} className="shrink-0 whitespace-nowrap">{tab.label}</TabsTrigger>))}</TabsList>
     </div>
-    <TabsContent key={active} value={active} className="min-h-0 overflow-y-auto text-muted-foreground">
+    <TabsContent key={active === "files" ? active : JSON.stringify([active, projectId, hasProject])}
+      value={active} className="min-h-0 overflow-y-auto text-muted-foreground">
       {panel ? (
           <SidebarPanel wsId={wsId} context={context} panel={panel} />
         ) : active === "files" ? (
           <FilesTab wsId={wsId} context={context} hasProject={hasProject} projectId={projectId} />
         ) : (
-          <WorkbenchResourceState wsId={wsId} scope={scope} context={context} hasProject={hasProject} />
+          <WorkbenchResourceState wsId={wsId} scope={scope} context={context} hasProject={hasProject} projectId={projectId} />
         )}
     </TabsContent>
   </Tabs>

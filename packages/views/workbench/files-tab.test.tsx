@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithI18n } from "../test/i18n";
 import { FilesTab } from "./files-tab";
+import { WorkspaceFilesSection } from "./workbench-drawer";
 
 const state = vi.hoisted(() => ({
   handlers: new Map<string, Set<(payload: unknown) => void>>(),
@@ -30,12 +31,16 @@ const subscribeStatus = (callback: () => void) => {
   state.ready = callback;
   return () => { state.ready = () => {}; };
 };
+const onReady = () => () => {};
 vi.mock("@multica/core/realtime", () => ({
-  useWS: () => ({ send: state.send, subscribe, subscribeStatus, getStatus: () => state.connected ? "connected" : "reconnecting" }),
+  useWS: () => ({ send: state.send, subscribe, subscribeStatus, onReady, getStatus: () => state.connected ? "connected" : "reconnecting" }),
 }));
 vi.mock("@multica/core/projects", () => ({ projectResourcesOptions: () => ({ queryKey: ["labels"], queryFn: async () => [] }) }));
 vi.mock("@multica/core/config", () => ({ useFeatureEnabled: () => false }));
 vi.mock("../platform/local-directory", () => ({ isDesktopShell: () => false }));
+vi.mock("@multica/core/api", () => ({ api: {
+  listIssueFileTouches: async () => ({ files: [] }),
+} }));
 
 beforeEach(() => {
   state.handlers.clear();
@@ -131,6 +136,80 @@ const requests = (type: string) =>
   state.send.mock.calls
     .map(([frame]) => frame)
     .filter((frame) => frame.type === type);
+
+describe("File drafts on an issue that changes project", () => {
+  it.each([false, true])("keeps a copyable draft and retires the old binding (save pending: %s)", async (savePending) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const renderEntry = (projectId: string | undefined) => (
+      <QueryClientProvider client={client}>
+        <WorkspaceFilesSection wsId="workspace" context={{ kind: "issue", issue_id: "issue-1" }}
+          hasProject={Boolean(projectId)} projectId={projectId} />
+      </QueryClientProvider>
+    );
+    const { rerender } = renderWithI18n(renderEntry("project-1"));
+    const copy = vi.fn().mockResolvedValue(undefined);
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: copy } });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "File management" }));
+      const openEditor = async () => {
+        fireEvent.doubleClick(await screen.findByRole("button", { name: "note.txt" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+        return screen.findByRole("textbox", { name: "File draft" });
+      };
+      const draft = await openEditor();
+      fireEvent.change(draft, { target: { value: "old project draft" } });
+      state.holdSave = true;
+      if (savePending) fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      const sent = requests("workspace_files.save")[0]?.payload;
+
+      rerender(renderEntry("project-2"));
+      expect(screen.getByRole("textbox", { name: "File draft" })).toHaveValue("old project draft");
+      expect(screen.getByText(/The directory binding changed/)).toBeInTheDocument();
+      if (sent) {
+        expect(screen.getByText(/Save unconfirmed/)).toBeInTheDocument();
+        expect(requests("workspace_files.cancel").map((frame) => frame.payload.client_req_id))
+          .toContain(sent.client_req_id);
+        act(() => emit("workspace_files.edit_result", {
+          client_req_id: sent.client_req_id, resource_id: "resource", binding_generation: 1,
+          version: "B".repeat(43), data: sent.data,
+        }));
+        expect(screen.getByText(/Save unconfirmed/)).toBeInTheDocument();
+        expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
+      }
+      expect(draft).toHaveValue("old project draft");
+      fireEvent.click(screen.getByRole("button", { name: "Copy draft" }));
+      expect(copy).toHaveBeenCalledWith("old project draft");
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+      rerender(renderEntry(undefined));
+      expect(draft).toHaveValue("old project draft");
+      rerender(renderEntry("project-1"));
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      expect(requests("workspace_files.save")).toHaveLength(Number(savePending));
+
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Discard draft" }));
+      rerender(renderEntry("project-2"));
+      state.editText = "fresh project text";
+      const fresh = await openEditor();
+      expect(fresh).toHaveValue("fresh project text");
+      if (sent) act(() => emit("workspace_files.edit_result", {
+        client_req_id: sent.client_req_id, resource_id: "resource", binding_generation: 1,
+        version: "B".repeat(43), data: sent.data,
+      }));
+      expect(fresh).toHaveValue("fresh project text");
+      fireEvent.change(fresh, { target: { value: "new project draft" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      expect(requests("workspace_files.save").at(-1).payload.version).toBe("A".repeat(43));
+      expect(requests("workspace_files.save")).toHaveLength(Number(savePending) + 1);
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+      client.clear();
+    }
+  });
+});
 
 describe("Files tree lifecycle (renderer A only)", () => {
   it("expands three directory levels lazily and reads the full nested path", async () => {
