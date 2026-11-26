@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { I18nProvider } from "@multica/core/i18n/react";
 
 const state = vi.hoisted(() => ({
   auth: {
@@ -28,7 +29,7 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@multica/core/platform", () => ({
-  CoreProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+  CoreProvider: (props: React.ComponentProps<typeof I18nProvider>) => <I18nProvider {...props} />,
   setCurrentWorkspace: vi.fn(),
 }));
 
@@ -74,7 +75,9 @@ vi.mock("@multica/ui/components/common/multica-icon", () => ({
   MulticaIcon: () => <div data-testid="app-loading" />,
 }));
 vi.mock("@multica/ui/components/ui/sonner", () => ({ Toaster: () => null }));
-vi.mock("@multica/views/locales", () => ({ RESOURCES: { en: {} } }));
+vi.mock("@multica/views/locales", () => ({
+  RESOURCES: { en: { common: { loading: "Loading..." } } },
+}));
 
 vi.mock("./pages/login", () => ({
   DesktopLoginPage: () => <div data-testid="login-page" />,
@@ -246,7 +249,7 @@ describe("App main-window auth recovery", () => {
       workspaceSlug: "acme",
     };
     render(<App />);
-    const pending = screen.getByRole("status", { name: "Loading page" });
+    const pending = screen.getByRole("status", { name: "Loading..." });
     expect(pending.parentElement?.firstElementChild).toBe(screen.getByTestId("drag-strip"));
     await act(async () => { release(); await state.issueGate; });
     expect(await screen.findByTestId("issue-window")).toBeInTheDocument();

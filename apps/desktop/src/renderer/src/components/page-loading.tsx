@@ -7,7 +7,7 @@ export function PageLoading() {
     <div
       data-route-pending=""
       role="status"
-      aria-label={t("loading")}
+      aria-label={t(($) => $.loading)}
       className="flex flex-1 items-center justify-center"
     >
       <MulticaIcon className="size-6 animate-pulse" />
