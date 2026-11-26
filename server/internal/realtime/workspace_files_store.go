@@ -24,12 +24,14 @@ type WorkspaceFilesAuthorizer interface {
 }
 type WorkspaceFilesStore struct{ DB db.DBTX }
 
-// Both entry contexts join to the project in the authenticated workspace and
-// require current membership. Issue contexts cannot supply a second project.
+// Use the current role just as realtime membership does: guests and unknown
+// roles cannot use the file relay, even while an old connection is still open.
+// Issue contexts cannot supply a second project.
 const filesAuthorizedProjectSQL = `WITH authorized_project AS (
  SELECT p.id, p.workspace_id FROM project p
  JOIN member m ON m.workspace_id=p.workspace_id AND m.user_id=$1::uuid
  WHERE p.workspace_id=$2::uuid
+ AND m.role IN ('owner', 'admin', 'member')
  AND (p.visibility <> 'private' OR EXISTS (
    SELECT 1 FROM project_member pm WHERE pm.project_id=p.id AND pm.user_id=m.user_id
  ))

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -58,7 +59,7 @@ func filesNativeDB(t *testing.T) *filesDBFixture {
 	})
 	// The authorization query is tested against real PostgreSQL in an isolated
 	// schema. Only columns it touches are needed; fixture rows use the shared API.
-	ddl := `CREATE TABLE member(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid NOT NULL,user_id uuid NOT NULL);
+	ddl := `CREATE TABLE member(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid NOT NULL,user_id uuid NOT NULL,role text NOT NULL DEFAULT 'member');
  CREATE TABLE project(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),workspace_id uuid NOT NULL,visibility text NOT NULL DEFAULT 'workspace');
  CREATE TABLE project_member(project_id uuid NOT NULL, user_id uuid NOT NULL);
  CREATE TABLE issue(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),workspace_id uuid NOT NULL,project_id uuid);
@@ -167,6 +168,96 @@ func TestWorkspaceFilesDatabaseAuthorizationMatrix(t *testing.T) {
 		t.Fatal("nonmember reached daemon")
 	}
 }
+
+type filesEditTestRelay struct{ *filesTestRelay }
+
+func (r filesEditTestRelay) SelectWorkspaceFilesEditTarget(daemon, workspace, id string) (*protocol.WorkspaceFilesTarget, string) {
+	return r.SelectWorkspaceFilesTarget(daemon, workspace, id)
+}
+
+func TestWorkspaceFilesDatabaseRelayRoleDowngrade(t *testing.T) {
+	d := filesNativeDB(t)
+	h := NewHub()
+	relay := filesEditTestRelay{newFilesTestRelay()}
+	h.ConfigureWorkspaceFiles(true, true, d.store, relay)
+	c := filesTestClient(h, d.user, d.workspace)
+	c.filesSessionExpiresAt = time.Now().Add(time.Hour)
+	t.Cleanup(func() { h.workspaceFilesClientGone(c); h.ShutdownWorkspaceFiles() })
+
+	// A shared private project remains visible to the guest after the demotion.
+	d.f.Exec(t, "UPDATE project SET visibility='private' WHERE id=$1", d.project)
+	d.f.Exec(t, "INSERT INTO project_member(project_id,user_id) VALUES($1,$2)", d.project, d.user)
+	otherResource := d.addResource(t, d.otherProject, d.workspace, "local_directory", "/fixture/other")
+	bindings := WorkspaceFilesEditBindings{}
+	for _, binding := range []struct{ project, resource string }{{d.project, d.resource}, {d.otherProject, otherResource}} {
+		bindings[filesEditKey{d.workspace, binding.project, binding.resource, 1}] = protocol.WorkspaceFilesEditPolicy{
+			Directory: ".", VolumeGUID: uuid.NewString(), DirectoryID: "0000000000000001",
+		}
+	}
+	h.ConfigureWorkspaceFilesEdit(bindings)
+
+	const version = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	request := func(event string, entry protocol.WorkspaceFilesContext, resource string) string {
+		t.Helper()
+		id := uuid.NewString()
+		fields := map[string]any{"client_req_id": id, "context": entry, "resource_id": resource, "path": "file.txt", "binding_generation": 1}
+		if event == protocol.EventWorkspaceFilesSave {
+			fields["version"], fields["data"] = version, []byte("fixture draft")
+		}
+		raw, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.handleWorkspaceFilesClientFrame(event, raw)
+		return id
+	}
+	for _, event := range []string{protocol.EventWorkspaceFilesRead, protocol.EventWorkspaceFilesSave} {
+		id := request(event, d.projectContext(), d.resource)
+		if relay.sent(event) != 1 {
+			t.Fatalf("member %s did not reach relay", event)
+		}
+		r := filesRecordFor(t, h, c, id)
+		want := protocol.EventWorkspaceFilesReadChunk
+		if event == protocol.EventWorkspaceFilesSave {
+			want = protocol.EventWorkspaceFilesEditResult
+			raw, _ := json.Marshal(protocol.WorkspaceFilesEditResultPayload{
+				WorkspaceFilesGeneration: r.target.Generation, DaemonReqID: r.target.RequestID,
+				RuntimeID: r.target.RuntimeID, ResourceID: r.snapshot.ResourceID,
+				BindingGeneration: r.snapshot.BindingGeneration, Version: version, Data: []byte{},
+			})
+			h.DeliverWorkspaceFilesFromDaemon(r.target.Connection, want, raw)
+		} else {
+			filesChunk(h, r, 0, true)
+		}
+		if got := filesMessage(t, c); got.Type != want {
+			t.Fatalf("member %s response = %s; want %s", event, got.Type, want)
+		}
+	}
+	assertDenied := func(reason string, entry protocol.WorkspaceFilesContext, resource string) {
+		t.Helper()
+		for _, event := range []string{protocol.EventWorkspaceFilesRead, protocol.EventWorkspaceFilesSave} {
+			t.Run(reason+"/"+entry.Kind+"/"+event, func(t *testing.T) {
+				before := len(relay.targets)
+				sent := relay.sent(event)
+				request(event, entry, resource)
+				if len(relay.targets) != before || relay.sent(event) != sent {
+					t.Fatal("denied request selected or reached a daemon")
+				}
+				filesWantCode(t, c, "forbidden")
+			})
+		}
+	}
+	issue := protocol.WorkspaceFilesContext{Kind: "issue", IssueID: d.issue}
+	assertDenied("cross-project", d.projectContext(), otherResource)
+	assertDenied("cross-project", issue, otherResource)
+
+	// Keep the original registered client and membership row. The file check
+	// must deny the request even if socket disconnection has not run yet.
+	d.f.Exec(t, "UPDATE member SET role='guest' WHERE id=$1", d.member)
+	assertDenied("guest", d.projectContext(), d.resource)
+	assertDenied("guest", issue, d.resource)
+}
+
 func TestWorkspaceFilesDatabaseStreamingRevalidation(t *testing.T) {
 	for _, mutation := range []string{"member removed", "issue moved", "root changed", "daemon changed", "type changed", "resource deleted", "mode changed", "metadata only"} {
 		t.Run(mutation, func(t *testing.T) {
