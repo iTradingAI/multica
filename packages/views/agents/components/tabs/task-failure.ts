@@ -14,6 +14,8 @@ export const FAILURE_REASON_I18N_KEYS = {
   runtime_reconnect_timeout: "runtime_reconnect_timeout",
   runtime_recovery: "runtime_recovery",
   timeout: "timeout",
+  cleanup_unconfirmed: "cleanup_unconfirmed",
+  cleanup_blocked: "cleanup_blocked",
   iteration_limit: "iteration_limit",
   agent_blocked: "agent_blocked",
   api_invalid_request: "api_invalid_request",
@@ -26,6 +28,7 @@ export const FAILURE_REASON_I18N_KEYS = {
   // Agent process side — provider.
   "agent_error.provider_auth_or_access":
     "agent_error_provider_auth_or_access",
+  "agent_error.provider_model_rejected": "agent_error_provider_model_rejected",
   "agent_error.provider_quota_limit": "agent_error_provider_quota_limit",
   "agent_error.provider_capacity_or_rate_limit":
     "agent_error_provider_capacity_or_rate_limit",
@@ -53,6 +56,7 @@ export const FAILURE_REASON_I18N_KEYS = {
   codex_resume_oversized: "codex_resume_oversized",
   idle_watchdog: "idle_watchdog",
   local_directory_error: "local_directory_error",
+  local_directory_missing: "local_directory_missing",
   cancelled: "cancelled",
 
   // Pre-MUL-1949 coarse values, still present on historical rows.

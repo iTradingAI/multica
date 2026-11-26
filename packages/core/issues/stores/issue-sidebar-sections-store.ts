@@ -12,13 +12,12 @@ export const ISSUE_SIDEBAR_SECTIONS = [
   "plugins",
   "parent",
   "sub_issues",
-  "duplicates",
+  "relations",
   "pull_requests",
   "environments",
   "deliverables",
   "apps",
   "execution_log",
-  "details",
   "metadata",
 ] as const;
 

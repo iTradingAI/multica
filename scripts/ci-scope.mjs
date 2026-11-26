@@ -71,6 +71,9 @@ export async function checkGate(needs, jobScopes, verifyCancelled = neverRanCanc
     }
     const expected = selected === "true" ? "success" : "skipped";
     const result = needs[job]?.result;
+    if (job === "e2e" && result !== expected) {
+      throw new Error(`${job}: expected ${expected}, got ${result ?? "missing"}`);
+    }
     if (expected === "success" && result === "abandoned") {
       tolerateNotRun(job, "abandoned");
       continue;
