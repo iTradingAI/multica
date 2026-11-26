@@ -310,7 +310,7 @@ describe("Files tree lifecycle (renderer A only)", () => {
     await waitFor(() => expect(requests("workspace_files.read")).toHaveLength(1));
     const id = requests("workspace_files.read")[0].payload.client_req_id;
     act(() => { state.connected = false; state.ready(); });
-    await screen.findAllByText("Connecting to the directory channel…");
+    await screen.findAllByText("Connecting to the directory channel...");
     act(() => emit("workspace_files.read_chunk", {
       client_req_id: id, resource_id: "resource", seq: 0,
       data: btoa("retired preview content"), eof: true,
