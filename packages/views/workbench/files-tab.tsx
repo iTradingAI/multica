@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { projectResourcesOptions } from "@multica/core/projects";
 import { useWS } from "@multica/core/realtime";
 import {
   requestWorkspaceFiles,
@@ -12,212 +13,114 @@ import {
 import { Button } from "@multica/ui/components/ui/button";
 import { ChevronRight, File, Folder } from "@multica/ui/icons";
 import { useT } from "../i18n";
-import { FileSelectionPreview } from "./file-selection-preview";
+import { WorkspaceFileEditor } from "./workspace-file-editor";
 import { IssueFileTouches } from "./issue-file-touches";
 
 interface Props {
   wsId: string;
   context: WorkbenchContext;
   hasProject: boolean;
+  projectId?: string;
 }
 
-export function FilesTab(props: Props) {
-  const { send, subscribe, onReady } = useWS();
+export function FilesTab({ wsId, context, hasProject, projectId }: Props) {
+  const { send, subscribe, subscribeStatus, getStatus } = useWS();
   const ws = useMemo(() => ({ send, subscribe }), [send, subscribe]);
-  const [epoch, setEpoch] = useState(0);
-  useEffect(() => {
-    const invalidate = () => setEpoch((value) => value + 1);
-    const cleanups = [
-      onReady(invalidate),
-      ...(
-        [
-          "member:removed",
-          "member:updated",
-          "project:updated",
-          "project:deleted",
-          "project_resource:created",
-          "project_resource:updated",
-          "project_resource:deleted",
-          "issue:updated",
-        ] as const
-      ).map((event) => subscribe(event, invalidate)),
-    ];
-    return () => cleanups.forEach((cleanup) => cleanup());
-  }, [subscribe, onReady]);
-  return <FilesSession key={epoch} {...props} ws={ws} />;
-}
-
-function FilesSession({
-  wsId,
-  context,
-  hasProject,
-  ws,
-}: Props & { ws: WorkspaceFilesTransport }) {
+  const status = useSyncExternalStore(subscribeStatus, getStatus, getStatus);
+  const ready = status === "connected";
   const scope = useId();
   const { t } = useT("common");
+  const queryClient = useQueryClient();
+  const [resourceId, setResourceId] = useState("");
+  const [file, setFile] = useState<{ resourceId: string; path: string; bindingChanged?: boolean }>();
+  useEffect(() => {
+    const refresh = () => void queryClient.invalidateQueries({
+      queryKey: ["workspaces", wsId, "workbench", scope],
+    });
+    const invalidateFile = (payload: unknown) => {
+      let id: unknown;
+      if (payload && typeof payload === "object") {
+        if ("resource_id" in payload) id = payload.resource_id;
+        if ("resource" in payload && payload.resource && typeof payload.resource === "object" && "id" in payload.resource)
+          id = payload.resource.id;
+      }
+      setFile((current) => current && (!id || id === current.resourceId)
+        ? { ...current, bindingChanged: true } : current);
+      refresh();
+    };
+    const cleanups = [
+      subscribe("project_resource:created", refresh),
+      subscribe("project_resource:updated", invalidateFile),
+      subscribe("project_resource:deleted", invalidateFile),
+      subscribe("member:removed", refresh),
+      subscribe("member:updated", refresh),
+      subscribe("project:updated", refresh),
+      subscribe("project:deleted", refresh),
+    ];
+    return () => cleanups.forEach((cleanup) => cleanup());
+  }, [subscribe, queryClient, wsId, scope]);
+
   const resources = useQuery({
-    queryKey: [
-      "workspaces",
-      wsId,
-      "workbench",
-      scope,
-      "files-resources",
-      context,
-    ],
-    queryFn: ({ signal }) =>
-      requestWorkspaceFiles(ws, { operation: "resources", context }, signal),
-    enabled: hasProject && Boolean(wsId),
+    queryKey: ["workspaces", wsId, "workbench", scope, "files-resources", context],
+    queryFn: ({ signal }) => requestWorkspaceFiles(ws, { operation: "resources", context }, signal),
+    enabled: ready && hasProject && Boolean(wsId),
     retry: false,
     gcTime: 0,
   });
-  const [resourceId, setResourceId] = useState("");
+  const labelProjectId = context.kind === "project" ? context.project_id : projectId;
+  const labels = useQuery({
+    ...projectResourcesOptions(wsId, labelProjectId ?? ""),
+    enabled: Boolean(labelProjectId && resources.data?.resources?.length),
+  });
   const directories = resources.data?.resources ?? [];
-  const active = directories.some(
-    (resource) => resource.resource_id === resourceId,
-  )
-    ? resourceId
-    : directories[0]?.resource_id;
-  const touches = <IssueFileTouches wsId={wsId} ws={ws} context={context} />;
-  if (!hasProject)
-    return (
-      <div>
-        {touches}
-        <p role="status">{t(($) => $.workbench.no_project)}</p>
-      </div>
-    );
-  if (resources.isPending)
-    return (
-      <div>
-        {touches}
-        <p role="status">{t(($) => $.workbench.files.loading)}</p>
-      </div>
-    );
-  if (resources.isError)
-    return (
-      <div>
-        {touches}
-        <FileError
-          error={resources.error}
-          retry={() => {
-            void resources.refetch();
-          }}
-        />
-      </div>
-    );
-  if (!active)
-    return (
-      <div>
-        {touches}
-        <p role="status">{t(($) => $.workbench.no_resources)}</p>
-      </div>
-    );
+  const active = directories.some((resource) => resource.resource_id === resourceId)
+    ? resourceId : directories[0]?.resource_id;
+
   return (
     <div className="space-y-3">
-      {touches}
-      <label className="block text-caption">
-        {t(($) => $.workbench.files.resource)}
-        <select
-          className="mt-1 w-full rounded-md border bg-background p-2"
-          value={active}
-          onChange={(event) => setResourceId(event.target.value)}
-        >
-          {directories.map((resource, i) => (
-            <option key={resource.resource_id} value={resource.resource_id}>
-              {t(($) => $.workbench.directory, { number: i + 1 })}
-            </option>
-          ))}
-        </select>
-      </label>
-      <FileBrowser
-        key={active}
-        wsId={wsId}
-        scope={scope}
-        ws={ws}
-        context={context}
-        resourceId={active}
-      />
+      <IssueFileTouches wsId={wsId} ws={ws} context={context} />
+      {!hasProject ? (
+        <p role="status">{t(($) => $.workbench.no_project)}</p>
+      ) : !ready ? (
+        <p role="status">{t(($) => $.workbench.files.connecting)}</p>
+      ) : resources.isError ? (
+        <FileError error={resources.error} retry={() => void resources.refetch()} />
+      ) : resources.isPending ? (
+        <p role="status">{t(($) => $.workbench.files.loading)}</p>
+      ) : !active ? (
+        <p role="status">{t(($) => $.workbench.no_resources)}</p>
+      ) : (
+        <>
+          <label className="block text-caption">
+            {t(($) => $.workbench.files.resource)}
+            <select className="mt-1 w-full truncate rounded-md border bg-background p-2"
+              value={active} onChange={(event) => setResourceId(event.target.value)}>
+              {directories.map((resource, i) => (
+                <option key={resource.resource_id} value={resource.resource_id}>
+                  {labels.data?.find((entry) => entry.id === resource.resource_id)?.label ||
+                    t(($) => $.workbench.directory, { number: i + 1 })}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Directory key={active} wsId={wsId} scope={scope} ws={ws} context={context}
+            resourceId={active} path="." openFile={(path) => setFile({ resourceId: active, path })} />
+        </>
+      )}
+      {file && <WorkspaceFileEditor ws={ws} context={context} {...file} ready={ready}
+        close={() => setFile(undefined)} />}
     </div>
   );
 }
 
-interface BrowserProps {
+type DirectoryProps = {
   wsId: string;
   scope: string;
   ws: WorkspaceFilesTransport;
   context: WorkbenchContext;
   resourceId: string;
-}
-function FileBrowser(props: BrowserProps) {
-  const { t } = useT("common");
-  const [selection, setSelection] = useState<{
-    path: string;
-    type: "regular" | "directory";
-  }>({ path: ".", type: "directory" });
-  const directory =
-    selection.type === "directory"
-      ? selection.path
-      : selection.path.includes("/")
-        ? selection.path.slice(0, selection.path.lastIndexOf("/"))
-        : ".";
-  const parts = directory === "." ? [] : directory.split("/");
-  return (
-    <div className="space-y-3">
-      <nav
-        aria-label={t(($) => $.workbench.files.breadcrumb)}
-        className="flex flex-wrap items-center gap-1 text-caption"
-      >
-        <Button
-          size="xs"
-          variant="ghost"
-          onClick={() => setSelection({ path: ".", type: "directory" })}
-        >
-          {t(($) => $.workbench.files.root)}
-        </Button>
-        {parts.map((part, i) => (
-          <Button
-            size="xs"
-            variant="ghost"
-            key={i}
-            onClick={() =>
-              setSelection({
-                path: parts.slice(0, i + 1).join("/"),
-                type: "directory",
-              })
-            }
-          >
-            {part}
-          </Button>
-        ))}
-      </nav>
-      <Directory
-        key={directory}
-        {...props}
-        path={directory}
-        select={setSelection}
-      />
-      {selection.type === "regular" && (
-        <section
-          aria-label={selection.path}
-          className="space-y-2 border-t pt-3"
-        >
-          <p className="break-all font-medium text-caption">{selection.path}</p>
-          <FileSelectionPreview
-            key={selection.path}
-            wsId={props.wsId}
-            ws={props.ws}
-            context={props.context}
-            resourceId={props.resourceId}
-            path={selection.path}
-          />
-        </section>
-      )}
-    </div>
-  );
-}
-
-type DirectoryProps = BrowserProps & {
   path: string;
-  select: (entry: { path: string; type: "regular" | "directory" }) => void;
+  openFile: (path: string) => void;
 };
 function Directory(props: DirectoryProps) {
   const [generation, setGeneration] = useState(0);
@@ -226,7 +129,6 @@ function Directory(props: DirectoryProps) {
       key={generation}
       {...props}
       refresh={() => {
-        props.select({ path: props.path, type: "directory" });
         setGeneration((value) => value + 1);
       }}
     />
@@ -234,7 +136,7 @@ function Directory(props: DirectoryProps) {
 }
 function DirectoryPage({
   path,
-  select,
+  openFile,
   refresh,
   ...props
 }: DirectoryProps & { refresh: () => void }) {
@@ -299,36 +201,31 @@ function DirectoryPage({
           return (
             <div key={child}>
               <div className="flex items-center gap-1">
-                {entry.type === "directory" && (
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label={`${t(($) => (open ? $.workbench.files.collapse : $.workbench.files.expand))} ${entry.name}`}
-                    aria-expanded={open}
-                    onClick={() =>
-                      setExpanded((values) =>
-                        open
-                          ? values.filter((value) => value !== child)
-                          : [...values, child],
-                      )
-                    }
-                  >
-                    <ChevronRight className={open ? "rotate-90" : ""} />
-                  </Button>
-                )}
                 <Button
                   size="sm"
                   variant="ghost"
                   className="min-w-0 justify-start"
-                  onClick={() => select({ path: child, type: entry.type })}
+                  aria-expanded={entry.type === "directory" ? open : undefined}
+                  onClick={(event) => {
+                    if (entry.type === "directory") {
+                      setExpanded((values) => open
+                        ? values.filter((value) => value !== child)
+                        : [...values, child]);
+                    } else if (event.detail === 0 || window.matchMedia("(pointer: coarse)").matches) {
+                      openFile(child);
+                    }
+                  }}
+                  onDoubleClick={entry.type === "regular" ? () => openFile(child) : undefined}
                 >
-                  {entry.type === "directory" ? <Folder /> : <File />}
+                  {entry.type === "directory" ? (
+                    <><ChevronRight className={open ? "rotate-90" : ""} /><Folder /></>
+                  ) : <File />}
                   <span className="truncate">{entry.name}</span>
                 </Button>
               </div>
               {entry.type === "directory" && open && (
                 <div className="ml-4 border-l pl-2">
-                  <Directory {...props} path={child} select={select} />
+                  <Directory {...props} path={child} openFile={openFile} />
                 </div>
               )}
             </div>

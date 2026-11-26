@@ -1034,7 +1034,7 @@ func (c *client) handleFrame(raw []byte) {
 		c.handleHeartbeatFrame(msg.Payload)
 	case protocol.EventDaemonRPCRequest:
 		c.handleRPCFrame(msg.Payload)
-	case protocol.EventWorkspaceFilesListResult, protocol.EventWorkspaceFilesReadChunk, protocol.EventWorkspaceFilesError:
+	case protocol.EventWorkspaceFilesListResult, protocol.EventWorkspaceFilesReadChunk, protocol.EventWorkspaceFilesError, protocol.EventWorkspaceFilesEditResult:
 		c.hub.handleWorkspaceFilesFromDaemon(c, msg.Type, msg.Payload)
 	case protocol.EventTerminalOpenResult,
 		protocol.EventTerminalData,

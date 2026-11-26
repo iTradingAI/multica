@@ -29,7 +29,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../workbench", () => ({
-  WorkbenchDrawer: (props: unknown) => { mocks.workbench(props); return <button>Workbench</button>; },
+  WorkspaceFilesSection: (props: unknown) => { mocks.workbench(props); return <button>Workbench</button>; },
 }));
 
 vi.mock("@multica/ui/lib/clipboard", () => ({

@@ -62,6 +62,7 @@ type filesRecord struct {
 	generation                  uint64
 	request                     protocol.WorkspaceFilesRequest
 	event                       string
+	dispatched                  bool
 	snapshot                    WorkspaceFilesSnapshot
 	target                      *protocol.WorkspaceFilesTarget
 	auth                        WorkspaceFilesAuthorizer
@@ -89,8 +90,9 @@ type workspaceFilesState struct {
 	terminal             list.List
 	incumbent, reserve   int
 	// corruption counts fail-closed invariant violations without recording data.
-	corruption uint64
-	viewerAuth WorkspaceFilesViewerAuthorizer
+	corruption   uint64
+	viewerAuth   WorkspaceFilesViewerAuthorizer
+	editBindings WorkspaceFilesEditBindings
 }
 
 func newWorkspaceFilesState() *workspaceFilesState {

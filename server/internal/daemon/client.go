@@ -232,6 +232,9 @@ func daemonCommonCapabilities() []string {
 	if workspaceFilesCapabilityEnabled {
 		caps = append(caps, protocol.DaemonCapabilityWorkspaceFilesV1, protocol.DaemonCapabilityWorkspaceFilesV2)
 	}
+	if workspaceFilesEditCapabilityEnabled {
+		caps = append(caps, protocol.DaemonCapabilityWorkspaceFilesEdit)
+	}
 	return caps
 }
 

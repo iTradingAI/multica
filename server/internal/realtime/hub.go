@@ -203,13 +203,9 @@ const (
 	pongWait   = 60 * time.Second
 	pingPeriod = (pongWait * 9) / 10
 
-	// inboundReadLimit caps a single inbound message. Every frame a client
-	// legitimately sends is tiny — the largest is the token auth frame, well
-	// under 1 KiB — but gorilla buffers a whole message in memory before
-	// handing it over, and a fragmented message keeps the read deadline alive
-	// through interleaved pongs. Without a limit one connection can therefore
-	// grow that buffer without bound and OOM the process. Matches the daemon
-	// hub limit so both WebSocket surfaces answer this question the same way.
+	// Gorilla buffers a complete message before handing it over. File edits
+	// have their own lower frame and decoded-text limits under this WS cap.
+	// Keep the cap active during authentication and fragmented messages.
 	inboundReadLimit = 64 * 1024
 )
 
@@ -228,15 +224,16 @@ func sk(t, id string) scopeKey { return scopeKey{Type: t, ID: id} }
 // Client represents a single WebSocket connection with identity and the set
 // of scopes it is currently subscribed to.
 type Client struct {
-	filesNonce  string // Guarded by hub.filesMu.
-	filesClosed bool   // Guarded by hub.filesMu.
-	hub         *Hub
-	conn        *websocket.Conn
-	send        chan []byte
-	userID      string
-	workspaceID string
-	writeMu     sync.Mutex // serializes application writes and the final removal notice
-	stopped     atomic.Bool
+	filesSessionExpiresAt time.Time
+	filesNonce            string // Guarded by hub.filesMu.
+	filesClosed           bool   // Guarded by hub.filesMu.
+	hub                   *Hub
+	conn                  *websocket.Conn
+	send                  chan []byte
+	userID                string
+	workspaceID           string
+	writeMu               sync.Mutex // serializes application writes and the final removal notice
+	stopped               atomic.Bool
 
 	// sendMu guards sendClosed so a late inbound-response or fanout send
 	// can never write to the closed send channel. closeSend flips
@@ -856,6 +853,7 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 	}
 
 	var userID string
+	var sessionExpiresAt time.Time
 	if cookie, err := r.Cookie(auth.AuthCookieName); err == nil && cookie.Value != "" {
 		uid, errMsg := authenticateToken(cookie.Value, pr, r.Context())
 		if errMsg != "" {
@@ -876,6 +874,7 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 			return
 		}
 		userID = uid
+		sessionExpiresAt = filesSessionExpiry(cookie.Value)
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -918,6 +917,7 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 			return
 		}
 		userID = uid
+		sessionExpiresAt = filesSessionExpiry(tokenStr)
 
 		if !writeWSAuthFrame(
 			conn,
@@ -947,11 +947,12 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 	)
 
 	client := &Client{
-		hub:         hub,
-		conn:        conn,
-		send:        make(chan []byte, 256),
-		userID:      userID,
-		workspaceID: workspaceID,
+		hub:                   hub,
+		conn:                  conn,
+		send:                  make(chan []byte, 256),
+		userID:                userID,
+		workspaceID:           workspaceID,
+		filesSessionExpiresAt: sessionExpiresAt,
 	}
 	hub.register <- client
 
@@ -1030,7 +1031,7 @@ func (c *Client) handleFrame(raw []byte) {
 		} else {
 			c.handleUnsubscribe(p.Scope, p.ID)
 		}
-	case protocol.EventWorkspaceFilesResources, protocol.EventWorkspaceFilesList, protocol.EventWorkspaceFilesRead, protocol.EventWorkspaceFilesCancel, protocol.EventWorkspaceFilesViewerSelect, protocol.EventWorkspaceFilesViewerRead:
+	case protocol.EventWorkspaceFilesResources, protocol.EventWorkspaceFilesList, protocol.EventWorkspaceFilesRead, protocol.EventWorkspaceFilesCancel, protocol.EventWorkspaceFilesViewerSelect, protocol.EventWorkspaceFilesViewerRead, protocol.EventWorkspaceFilesEditOpen, protocol.EventWorkspaceFilesSave:
 		c.handleWorkspaceFilesClientFrame(f.Type, f.Payload)
 	case protocol.EventTerminalOpen,
 		protocol.EventTerminalInput,

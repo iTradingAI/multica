@@ -13,6 +13,8 @@ import (
 
 // WorkspaceFilesRequest contains only browser-controlled, validated fields.
 type WorkspaceFilesRequest struct {
+	Version           string                `json:"version,omitempty"`
+	Data              []byte                `json:"data,omitempty"`
 	BindingGeneration int64                 `json:"binding_generation,omitempty"`
 	ClientReqID       string                `json:"client_req_id"`
 	Context           WorkspaceFilesContext `json:"context"`
@@ -109,6 +111,14 @@ func DecodeWorkspaceFilesRequest(event string, raw json.RawMessage) (WorkspaceFi
 		for _, key := range []string{"context", "resource_id", "path", "binding_generation"} {
 			allowed[key] = true
 		}
+	case EventWorkspaceFilesEditOpen:
+		for _, key := range []string{"context", "resource_id", "path"} {
+			allowed[key] = true
+		}
+	case EventWorkspaceFilesSave:
+		for _, key := range []string{"context", "resource_id", "path", "binding_generation", "version", "data"} {
+			allowed[key] = true
+		}
 	case EventWorkspaceFilesCancel:
 	default:
 		return req, invalid
@@ -172,6 +182,14 @@ func DecodeWorkspaceFilesRequest(event string, raw json.RawMessage) (WorkspaceFi
 	}
 	if rawGeneration, present := fields["binding_generation"]; present && (string(rawGeneration) == "0" || req.BindingGeneration < 1 || req.BindingGeneration > 9007199254740991) {
 		return req, invalid
+	}
+	if event == EventWorkspaceFilesSave {
+		if req.BindingGeneration <= 0 || !WorkspaceFilesVersionValid(req.Version) || fields["data"] == nil {
+			return req, invalid
+		}
+		if code := WorkspaceFilesEditTextCode(req.Data); code != "" {
+			return req, WorkspaceFilesEditInputError(code)
+		}
 	}
 	return req, nil
 }

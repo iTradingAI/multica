@@ -226,6 +226,10 @@ Current workspace membership and project resource ownership are checked before
 requests and again before each response frame. Filesystem roots remain server
 and daemon metadata and are excluded from browser responses.
 
+Windows text editing is separately disabled by default. See the
+[development fixture and registration format](docs/workbench-files.md#windows-text-editing)
+before enabling writes for an approved directory.
+
 Disable `MULTICA_WORKSPACE_FILES_ENABLED` and restart the API to roll back the
 relay. Shutdown cancels pending requests; the relay never modifies user files.
 

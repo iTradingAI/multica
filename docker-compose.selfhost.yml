@@ -148,6 +148,11 @@ services:
       MULTICA_PLUGIN_SURFACE_ORIGIN: ${MULTICA_PLUGIN_SURFACE_ORIGIN:-}
       MULTICA_PLUGIN_API_URL: ${MULTICA_PLUGIN_API_URL:-}
       MULTICA_PLUGIN_DIR: ${MULTICA_PLUGIN_DIR:-}
+
+      # Workspace file relay is available only when both settings are enabled.
+      MULTICA_WORKSPACE_FILES_ENABLED: ${MULTICA_WORKSPACE_FILES_ENABLED:-false}
+      MULTICA_WORKSPACE_FILES_SINGLE_API: ${MULTICA_WORKSPACE_FILES_SINGLE_API:-false}
+      MULTICA_WORKSPACE_FILES_EDIT_BINDINGS: ${MULTICA_WORKSPACE_FILES_EDIT_BINDINGS:-}
       # Optional API URL shown in self-host daemon setup commands. Set this
       # when the daemon reaches the API through a different URL than the one
       # used for public webhook URLs; otherwise MULTICA_PUBLIC_URL is used.

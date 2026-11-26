@@ -128,7 +128,7 @@ import { ExecutionLogSection } from "./execution-log-section";
 import { WakeupsSection } from "./wakeups-section";
 import { QuickActionsSection } from "./quick-actions-section";
 import { PluginPanelSection } from "../../plugins";
-import { WorkbenchDrawer } from "../../workbench";
+import { WorkspaceFilesSection } from "../../workbench";
 import { PullRequestsSection } from "./pull-requests-section";
 import { IssueEnvironmentsSection } from "./issue-environments-section";
 import { useGitHubSettings } from "@multica/core/github";
@@ -3666,6 +3666,7 @@ export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, d
   };
 
   const sidebarContent = landingChromeHeld ? null : (
+    <>
     <IssueSidebarSections
       sections={sidebarSections}
       available={ISSUE_SIDEBAR_SECTIONS.filter(
@@ -3674,6 +3675,9 @@ export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, d
       revealed={revealedWakeupsFor === id ? REVEALED_WAKEUPS : undefined}
       onRevealEnd={() => setRevealedWakeupsFor(null)}
     />
+    <WorkspaceFilesSection wsId={wsId} context={{ kind: "issue", issue_id: issue.id }}
+      hasProject={Boolean(issue.project_id)} projectId={issue.project_id ?? undefined} />
+    </>
   );
 
   // Row renderer for the virtualized timeline.
@@ -3850,7 +3854,6 @@ export function IssueDetail({ issueId, onDelete, onDone, onUnsubscribeArchive, d
                 It self-hides when no agent is active. */}
             <IssueAgentHeaderChip issueId={id} onJumpToRun={jumpToRun} />
             <IssueWakeupHeaderChip issueId={id} onOpen={openWakeups} />
-            <WorkbenchDrawer key={`${wsId}:${issue.id}:${issue.project_id ?? ""}`} wsId={wsId} context={{ kind: "issue", issue_id: issue.id }} hasProject={Boolean(issue.project_id)} />
             {!onDone && !isPeek && (
               <IssueInboxActions
                 issueId={id}

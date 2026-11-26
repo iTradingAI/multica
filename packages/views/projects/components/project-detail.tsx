@@ -63,7 +63,7 @@ import {
   TooltipContent,
 } from "@multica/ui/components/ui/tooltip";
 import { EmojiPicker } from "@multica/ui/components/common/emoji-picker";
-import { WorkbenchDrawer } from "../../workbench";
+import { WorkspaceFilesSection } from "../../workbench";
 import { IssueViewHeader } from "../../issue-views/view-header";
 import {
   AnimatedRightSidebar,
@@ -523,6 +523,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
 
       {/* Resources */}
       <ProjectResourcesSection projectId={projectId} />
+      <WorkspaceFilesSection wsId={wsId} context={{ kind: "project", project_id: project.id }} />
     </div>
   );
 
@@ -630,7 +631,6 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 }
                 trailing={
                   <>
-                  <WorkbenchDrawer wsId={wsId} context={{ kind: "project", project_id: project.id }} />
                   <Tooltip>
                     <TooltipTrigger
                       render={

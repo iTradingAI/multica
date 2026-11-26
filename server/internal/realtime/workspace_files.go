@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -95,6 +96,12 @@ func (h *Hub) filesFinishLocked(r *filesRecord, code string, cancel, remember bo
 	if cancel && r.target != nil {
 		r.relay.SendWorkspaceFilesFrame(r.target, filesCancelFrame(r))
 	}
+	if r.event == protocol.EventWorkspaceFilesSave && r.dispatched {
+		switch code {
+		case "timeout", "unavailable", "daemon_offline", "forbidden":
+			code = protocol.WorkspaceFilesErrorSaveUnconfirmed
+		}
+	}
 	if code != "" {
 		h.filesErrorLocked(r.owner, r.request.ClientReqID, r.snapshot.ResourceID, code)
 	}
@@ -129,9 +136,18 @@ func (c *Client) handleWorkspaceFilesClientFrame(event string, raw json.RawMessa
 func (c *Client) handleWorkspaceFilesRequest(event string, raw json.RawMessage, selection *filesRecord) {
 	h := c.hub
 	req, err := protocol.DecodeWorkspaceFilesRequest(event, raw)
+	edit := protocol.WorkspaceFilesIsEdit(event)
+	if edit && len(raw) > protocol.WorkspaceFilesFrameMaxBytes-128 {
+		err = protocol.WorkspaceFilesEditInputError("too_large")
+	}
 	if err != nil {
 		h.filesMu.Lock()
-		h.filesErrorLocked(c, req.ClientReqID, "", "invalid_request")
+		code := "invalid_request"
+		var inputErr protocol.WorkspaceFilesEditInputError
+		if errors.As(err, &inputErr) {
+			code = inputErr.Error()
+		}
+		h.filesErrorLocked(c, req.ClientReqID, "", code)
 		h.filesMu.Unlock()
 		return
 	}
@@ -152,6 +168,11 @@ func (c *Client) handleWorkspaceFilesRequest(event string, raw json.RawMessage, 
 	h.files.sweep(h.files.now())
 	if sock := h.files.sockets[c]; sock != nil && (sock.active[req.ClientReqID] != nil || sock.terminal[req.ClientReqID] != nil) {
 		h.filesErrorLocked(c, req.ClientReqID, "", "invalid_request")
+		h.filesMu.Unlock()
+		return
+	}
+	if edit && !time.Now().Before(c.filesSessionExpiresAt) {
+		h.filesErrorLocked(c, req.ClientReqID, "", "forbidden")
 		h.filesMu.Unlock()
 		return
 	}
@@ -223,8 +244,26 @@ func (c *Client) handleWorkspaceFilesRequest(event string, raw json.RawMessage, 
 		return
 	}
 	var target *protocol.WorkspaceFilesTarget
+	var editPolicy protocol.WorkspaceFilesEditPolicy
+	if edit {
+		var allowed bool
+		editPolicy, allowed = h.files.editPolicy(snapshot, req.Path)
+		if !allowed || !time.Now().Before(c.filesSessionExpiresAt) {
+			h.filesErrorLocked(c, req.ClientReqID, snapshot.ResourceID, "read_only")
+			return
+		}
+	}
 	if event != protocol.EventWorkspaceFilesResources {
-		target, code = h.files.relay.SelectWorkspaceFilesTarget(snapshot.DaemonID, snapshot.WorkspaceID, h.files.newID())
+		if edit {
+			editRelay, ok := h.files.relay.(workspaceFilesEditRelay)
+			if !ok {
+				h.filesErrorLocked(c, req.ClientReqID, snapshot.ResourceID, "daemon_upgrade_required")
+				return
+			}
+			target, code = editRelay.SelectWorkspaceFilesEditTarget(snapshot.DaemonID, snapshot.WorkspaceID, h.files.newID())
+		} else {
+			target, code = h.files.relay.SelectWorkspaceFilesTarget(snapshot.DaemonID, snapshot.WorkspaceID, h.files.newID())
+		}
 		if code != "" {
 			if reserved != nil {
 				h.filesFinishLocked(reserved, filesRouteCode(code), true, true)
@@ -260,16 +299,28 @@ func (c *Client) handleWorkspaceFilesRequest(event string, raw json.RawMessage, 
 	if event == protocol.EventWorkspaceFilesList {
 		payload = protocol.WorkspaceFilesListPayload{WorkspaceFilesGeneration: target.Generation, DaemonReqID: target.RequestID, RuntimeID: target.RuntimeID, ResourceID: snapshot.ResourceID, RootPath: snapshot.Root, Path: req.Path, Cursor: req.Cursor, PageSize: req.PageSize, DeadlineMS: deadline.UnixMilli()}
 	} else {
-		payload = protocol.WorkspaceFilesReadPayload{WorkspaceFilesGeneration: target.Generation, DaemonReqID: target.RequestID, RuntimeID: target.RuntimeID, ResourceID: snapshot.ResourceID, RootPath: snapshot.Root, Path: req.Path, DeadlineMS: deadline.UnixMilli()}
+		read := protocol.WorkspaceFilesReadPayload{WorkspaceFilesGeneration: target.Generation, DaemonReqID: target.RequestID, RuntimeID: target.RuntimeID, ResourceID: snapshot.ResourceID, RootPath: snapshot.Root, Path: req.Path, DeadlineMS: deadline.UnixMilli()}
+		payload = read
+		if edit {
+			payload = protocol.WorkspaceFilesEditPayload{WorkspaceFilesReadPayload: read, WorkspaceID: snapshot.WorkspaceID, ProjectID: snapshot.ProjectID, BindingGeneration: snapshot.BindingGeneration, Policy: editPolicy, Version: req.Version, Data: req.Data}
+		}
 	}
 	frame := marshalMessage(event, payload)
-	if frame == nil || len(frame) > 48*1024 {
-		h.filesFinishLocked(r, "unavailable", false, true)
+	if frame == nil || len(frame) > protocol.WorkspaceFilesFrameMaxBytes {
+		code := "unavailable"
+		if edit && frame != nil {
+			code = "too_large"
+		}
+		h.filesFinishLocked(r, code, false, true)
 		return
 	}
 	if !r.relay.SendWorkspaceFilesFrame(target, frame) {
 		h.filesFinishLocked(r, "daemon_offline", true, true)
+		return
 	}
+	r.dispatched = true
+	// The ledger keeps routing state, not the submitted draft.
+	r.request.Data = nil
 }
 func filesAuthCode(code string) string {
 	if code == "forbidden" {
@@ -289,7 +340,8 @@ func filesDaemonCode(code string) string {
 	switch code {
 	case "unsupported":
 		return "daemon_upgrade_required"
-	case "invalid_path", "symlink_denied", "not_regular", "not_directory", "too_large", "invalid_utf8", "binary_content", "timeout", "busy", "invalid_cursor":
+	case "invalid_path", "symlink_denied", "not_regular", "not_directory", "too_large", "invalid_utf8", "binary_content", "timeout", "busy", "invalid_cursor",
+		protocol.WorkspaceFilesErrorConflict, protocol.WorkspaceFilesErrorReadOnly, protocol.WorkspaceFilesErrorSaveUnconfirmed:
 		return code
 	default:
 		return "unavailable"
@@ -361,6 +413,8 @@ func (h *Hub) WorkspaceFilesConnectionOffline(source protocol.WorkspaceFilesConn
 }
 
 type filesDaemonFrame struct {
+	Version           string `json:"version"`
+	BindingGeneration int64  `json:"binding_generation"`
 	protocol.WorkspaceFilesGeneration
 	DaemonReqID string                         `json:"daemon_req_id"`
 	RuntimeID   string                         `json:"runtime_id"`
@@ -377,7 +431,7 @@ type filesDaemonFrame struct {
 
 func decodeFilesDaemonFrame(event string, raw json.RawMessage) (filesDaemonFrame, bool) {
 	var p filesDaemonFrame
-	if len(raw) > 48*1024 || protocol.StrictWorkspaceFilesJSON(raw, &p) != nil {
+	if len(raw) > protocol.WorkspaceFilesFrameMaxBytes || protocol.StrictWorkspaceFilesJSON(raw, &p) != nil {
 		return p, false
 	}
 	var fields map[string]json.RawMessage
@@ -397,6 +451,11 @@ func decodeFilesDaemonFrame(event string, raw json.RawMessage) (filesDaemonFrame
 			allowed[key] = true
 		}
 		required = append(required, "seq", "data", "eof")
+	case protocol.EventWorkspaceFilesEditResult:
+		for _, field := range []string{"data", "version", "binding_generation"} {
+			allowed[field] = true
+			required = append(required, field)
+		}
 	case protocol.EventWorkspaceFilesError:
 		allowed["code"] = true
 		required = append(required, "code")
@@ -445,7 +504,7 @@ func (h *Hub) DeliverWorkspaceFilesFromDaemon(source protocol.WorkspaceFilesConn
 		h.filesMu.Unlock()
 		return
 	}
-	if event != protocol.EventWorkspaceFilesError && (p.Seq != r.nextSeq || (event == protocol.EventWorkspaceFilesListResult && r.event != protocol.EventWorkspaceFilesList) || (event == protocol.EventWorkspaceFilesReadChunk && r.event != protocol.EventWorkspaceFilesRead)) {
+	if event != protocol.EventWorkspaceFilesError && (p.Seq != r.nextSeq || (event == protocol.EventWorkspaceFilesListResult && r.event != protocol.EventWorkspaceFilesList) || (event == protocol.EventWorkspaceFilesReadChunk && r.event != protocol.EventWorkspaceFilesRead) || (event == protocol.EventWorkspaceFilesEditResult && !protocol.WorkspaceFilesIsEdit(r.event))) {
 		h.filesMu.Unlock()
 		return
 	}
@@ -501,6 +560,13 @@ func (h *Hub) DeliverWorkspaceFilesFromDaemon(source protocol.WorkspaceFilesConn
 		r.entries += len(p.Entries)
 		final = p.Final
 		payload = protocol.WorkspaceFilesClientListResultPayload{ClientReqID: r.request.ClientReqID, ResourceID: r.snapshot.ResourceID, Seq: p.Seq, Entries: p.Entries, NextCursor: p.NextCursor, Skipped: p.Skipped, Final: p.Final}
+	case protocol.EventWorkspaceFilesEditResult:
+		if p.BindingGeneration != r.snapshot.BindingGeneration || !protocol.WorkspaceFilesVersionValid(p.Version) || protocol.WorkspaceFilesEditTextCode(p.Data) != "" {
+			h.filesFinishLocked(r, "unavailable", true, true)
+			return
+		}
+		final = true
+		payload = protocol.WorkspaceFilesClientEditResultPayload{ClientReqID: r.request.ClientReqID, ResourceID: p.ResourceID, BindingGeneration: p.BindingGeneration, Version: p.Version, Data: p.Data}
 	case protocol.EventWorkspaceFilesReadChunk:
 		if len(p.Data) > 32*1024 || !utf8.Valid(p.Data) || r.readBytes+len(p.Data) > 1048576 || r.nextSeq >= 33 {
 			h.filesFinishLocked(r, "unavailable", true, true)
