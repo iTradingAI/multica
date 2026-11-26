@@ -148,10 +148,10 @@
   "workbench": {
     "files": {
       "management": "File management",
-      "connecting": "Connecting to the directory channel…",
+      "connecting": "Connecting to the directory channel...",
       "edit": "Edit",
       "save": "Save",
-      "saving": "Saving…",
+      "saving": "Saving...",
       "saved": "Saved.",
       "draft": "File draft",
       "copy_draft": "Copy draft",

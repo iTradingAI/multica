@@ -148,10 +148,10 @@
   "workbench": {
     "files": {
       "management": "文件管理",
-      "connecting": "正在连接目录通道…",
+      "connecting": "正在连接目录通道...",
       "edit": "编辑",
       "save": "保存",
-      "saving": "正在保存…",
+      "saving": "正在保存...",
       "saved": "已保存。",
       "draft": "文件草稿",
       "copy_draft": "复制草稿",
