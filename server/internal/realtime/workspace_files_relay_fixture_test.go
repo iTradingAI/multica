@@ -37,6 +37,7 @@ type relayEvidenceBrowser struct {
 	owner    *realtime.Client
 	frames   chan protocol.Message
 	done     chan struct{}
+	readErr  error // Read only after done closes.
 	once     sync.Once
 	framesMu sync.Mutex
 	seen     []protocol.Message
@@ -327,6 +328,7 @@ func newRelayEvidenceEnv(t *testing.T, n int) *relayEvidenceEnv {
 	e := &relayEvidenceEnv{t: t, db: &relayEvidenceDB{dbf, store, daemonID}, h: realtime.NewHub(), dh: daemonws.NewHub(), identities: map[string]daemonws.ClientIdentity{}, wires: map[string]chan *relayEvidenceWire{}}
 	e.auth = &relayEvidenceAuth{store: e.db.store, tokens: map[string]string{}, gates: map[string][]*relayEvidenceGate{}, late: map[string]*relayEvidenceGate{}, stop: make(chan struct{})}
 	e.bridge = &relayEvidenceBridge{h: e.h, delayed: make(chan *relayEvidenceDelivery, 16), stop: make(chan struct{})}
+	e.h.SetMembershipChecker(e.auth)
 	e.h.ConfigureWorkspaceFiles(true, true, e.auth, e.dh)
 	e.dh.SetWorkspaceFilesBridge(e.bridge)
 	// Freeze only expiry time while thousands of real requests populate the
@@ -532,7 +534,8 @@ func (e *relayEvidenceEnv) open(p *relayEvidencePrincipal) *relayEvidenceBrowser
 		defer close(b.done)
 		for {
 			var m protocol.Message
-			if c.ReadJSON(&m) != nil {
+			if err := c.ReadJSON(&m); err != nil {
+				b.readErr = err
 				return
 			}
 			b.framesMu.Lock()
