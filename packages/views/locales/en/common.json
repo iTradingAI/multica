@@ -165,7 +165,7 @@
     },
     "title": "Workbench",
     "diagnostics": "Directory status",
-    "loading": "Checking directory access...",
+    "loading": "Checking directory access…",
     "no_project": "This issue has no project.",
     "no_resources": "No local directories are attached to this project.",
     "forbidden": "You do not have access to this directory.",
