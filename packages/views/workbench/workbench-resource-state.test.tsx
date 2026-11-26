@@ -22,7 +22,7 @@ describe("controlled directory states (no daemon or SQL claims)", () => {
   it("keeps loading separate from an empty resource list", async () => {
     state.request.mockResolvedValue({ resources: [] });
     setup();
-    expect(screen.getByText("Checking directory access…")).toBeInTheDocument();
+    expect(screen.getByText("Checking directory access...")).toBeInTheDocument();
     expect(await screen.findByText("No local directories are attached to this project.")).toBeInTheDocument();
   });
   for (const [code, message] of Object.entries({ forbidden: "You do not have access to this directory.", unavailable: "The directory channel is unavailable.", daemon_offline: "The directory daemon is offline.", daemon_upgrade_required: "Update the directory daemon to continue.", timeout: "The directory check timed out.", unknown_code: "The directory channel is unavailable." })) {
