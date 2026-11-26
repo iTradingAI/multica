@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { isRouteErrorResponse, useLocation, useRouteError } from "react-router-dom";
 import { AlertTriangle, Compass, RotateCw, Send, X } from "@multica/ui/icons";
 import { Button } from "@multica/ui/components/ui/button";
+import { useT } from "@multica/views/i18n";
 import type { DesktopRouteErrorFeedbackContext } from "@multica/core/feedback";
 import { useModalStore } from "@multica/core/modals";
 import { PageLoadError, reloadPageWindow } from "@/platform/lazy-page";
@@ -57,6 +58,7 @@ export function DesktopRouteErrorPage() {
 }
 
 function DesktopNotFoundPage() {
+  const { t } = useT("settings");
   const location = useLocation();
   const recoveryRoute = useRecoveryRoute();
 
@@ -69,9 +71,11 @@ function DesktopNotFoundPage() {
         <Compass className="h-6 w-6" aria-hidden="true" />
       </div>
       <div className="space-y-2">
-        <h2 className="text-title font-semibold">This page doesn&apos;t exist</h2>
+        <h2 className="text-title font-semibold">
+          {t(($) => $.desktop.errors.not_found_title)}
+        </h2>
         <p className="max-w-lg text-body text-muted-foreground">
-          This address is unavailable. Check the link or go back.
+          {t(($) => $.desktop.errors.not_found_description)}
         </p>
         <p className="max-w-lg truncate font-mono text-caption text-muted-foreground">
           {location.pathname}
@@ -90,7 +94,7 @@ function DesktopNotFoundPage() {
                 .navigateActiveSession(recoveryRoute, { replace: true })
             }
           >
-            Go to issues
+            {t(($) => $.desktop.errors.go_to_issues)}
           </Button>
         ) : null}
         <Button
@@ -98,7 +102,7 @@ function DesktopNotFoundPage() {
           onClick={() => useTabStore.getState().closeActiveTab()}
         >
           <X className="mr-2 h-4 w-4" aria-hidden="true" />
-          Close tab
+          {t(($) => $.desktop.errors.close_tab)}
         </Button>
       </div>
     </div>
@@ -106,6 +110,7 @@ function DesktopNotFoundPage() {
 }
 
 function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
+  const { t } = useT("settings");
   const recoveryRoute = useRecoveryRoute();
   const feedbackContext = useMemo(
     () =>
@@ -115,7 +120,11 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
       }),
     [error],
   );
-  const message = normalizeError(error).message;
+  const rawMessage = normalizeError(error).message;
+  const message =
+    rawMessage === "Unknown route error"
+      ? t(($) => $.desktop.errors.unknown_route_error)
+      : rawMessage;
   const loadFailed = error instanceof PageLoadError;
 
   return (
@@ -128,11 +137,13 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
         <AlertTriangle className="h-6 w-6" aria-hidden="true" />
       </div>
       <div className="space-y-2">
-        <h2 className="text-title font-semibold">Something went wrong in this tab</h2>
+        <h2 className="text-title font-semibold">
+          {t(($) => $.desktop.errors.tab_error_title)}
+        </h2>
         <p className="max-w-lg text-body text-muted-foreground">
           {loadFailed
             ? "Reloading will reload the entire window, including all tabs."
-            : "This tab could not load. Reload it, or send a report if the problem continues."}
+            : t(($) => $.desktop.errors.tab_error_description)}
         </p>
         <p className="max-w-lg truncate text-caption text-muted-foreground">{message}</p>
       </div>
@@ -143,7 +154,7 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
           onClick={loadFailed ? reloadPageWindow : () => useTabStore.getState().reloadActiveTab()}
         >
           <RotateCw className="mr-2 h-4 w-4" aria-hidden="true" />
-          {loadFailed ? "Reload window" : "Reload tab"}
+          {loadFailed ? "Reload window" : t(($) => $.desktop.errors.reload_tab)}
         </Button>
         {recoveryRoute ? (
           <Button
@@ -157,7 +168,7 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
                 .navigateActiveSession(recoveryRoute, { replace: true })
             }
           >
-            Go to issues
+            {t(($) => $.desktop.errors.go_to_issues)}
           </Button>
         ) : null}
         <Button
@@ -166,7 +177,7 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
           onClick={() => useTabStore.getState().closeActiveTab()}
         >
           <X className="mr-2 h-4 w-4" aria-hidden="true" />
-          Close tab
+          {t(($) => $.desktop.errors.close_tab)}
         </Button>
         <Button
           type="button"
@@ -178,7 +189,7 @@ function DesktopUnexpectedErrorPage({ error }: { error: unknown }) {
           }
         >
           <Send className="mr-2 h-4 w-4" aria-hidden="true" />
-          Report error
+          {t(($) => $.desktop.errors.report_error)}
         </Button>
       </div>
     </div>

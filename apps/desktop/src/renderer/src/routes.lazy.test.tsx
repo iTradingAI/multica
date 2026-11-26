@@ -1,10 +1,12 @@
-import { useEffect } from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { useEffect, type ReactElement } from "react";
+import { act, fireEvent, render as renderElement, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "react-router-dom";
 import { useWorkspaceSlug } from "@multica/core/paths";
 import { getCurrentSlug } from "@multica/core/platform";
+import { I18nProvider } from "@multica/core/i18n/react";
+import { RESOURCES } from "@multica/views/locales";
 
 const state = vi.hoisted(() => ({
   inboxImports: 0,
@@ -78,7 +80,10 @@ vi.mock("@multica/core/workspace", () => ({
   }),
 }));
 vi.mock("@multica/views/workspace/use-workspace-seen", () => ({ useWorkspaceSeen: () => true }));
-vi.mock("@multica/views/layout", () => ({ WorkspacePresencePrefetch: () => null }));
+vi.mock("@multica/views/layout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@multica/views/layout")>()),
+  WorkspacePresencePrefetch: () => null,
+}));
 vi.mock("@multica/views/onboarding", () => ({ SourceBackfillModal: () => null }));
 vi.mock("@multica/views/issues/components", () => ({ IssuesPage: () => <div>Issues fixture</div> }));
 vi.mock("@multica/views/inbox", async () => {
@@ -107,6 +112,12 @@ import { getActiveTab, splitTabUrl, useActiveTabUrl, useTabStore } from "./store
 import { getAppRouter } from "./platform/tab-coordinator";
 import { createAppRouter } from "./routes";
 
+function render(element: ReactElement) {
+  return renderElement(
+    <I18nProvider resources={RESOURCES} locale="en">{element}</I18nProvider>,
+  );
+}
+
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("desktop lazy routes", () => {
@@ -127,11 +138,11 @@ describe("desktop lazy routes", () => {
       inboxId = useTabStore.getState().openTab("/acme/inbox?issue=one#comment-one", "Inbox", { activate: true });
       useTabStore.getState().commitScrollMemento(inboxId, "/acme/inbox", { main: { top: 420, height: 2000 } });
     });
-    await screen.findByRole("status", { name: "Loading page" });
+    await screen.findByRole("status", { name: "Loading..." });
     expect(state.inboxImports).toBe(1);
     expect(document.title).toBe("Inbox");
     act(() => { useTabStore.getState().reloadActiveTab(); });
-    await screen.findByRole("status", { name: "Loading page" });
+    await screen.findByRole("status", { name: "Loading..." });
     expect(useTabStore.getState().byWorkspace.acme.tabs.find((tab) => tab.id === inboxId)!
       .memento.scroll["/acme/inbox::main"]?.top).toBe(420);
     act(() => { useTabStore.getState().closeTab(inboxId); });
@@ -140,7 +151,7 @@ describe("desktop lazy routes", () => {
       inboxId = useTabStore.getState().openTab("/acme/inbox?issue=one#comment-one", "Inbox", { activate: true });
       useTabStore.getState().commitScrollMemento(inboxId, "/acme/inbox", { main: { top: 420, height: 2000 } });
     });
-    await screen.findByRole("status", { name: "Loading page" });
+    await screen.findByRole("status", { name: "Loading..." });
     fireEvent.click(screen.getByRole("button", { name: "Other workspace" }));
     await screen.findByText("Issues fixture");
     const saved = useTabStore.getState().byWorkspace.acme.tabs.find((tab) => tab.id === inboxId)!;
@@ -190,7 +201,7 @@ describe("desktop lazy routes", () => {
     const view = render(<QueryClientProvider client={qc}><TabContent /></QueryClientProvider>);
     await screen.findByText("Issues fixture");
     act(() => { useTabStore.getState().navigateActiveSession("/acme/projects"); });
-    await screen.findByRole("status", { name: "Loading page" });
+    await screen.findByRole("status", { name: "Loading..." });
     act(() => { useTabStore.getState().reset(); });
     await act(async () => { state.releaseProject(); await state.projectGate; });
     expect(state.lateProjectMounts).toBe(0);
