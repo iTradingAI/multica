@@ -64,7 +64,7 @@ describe("IssueSidebarSections", () => {
     expect(within(dialog).getByRole("switch", { name: "Apps" }).closest("li")).toHaveTextContent("None on this issue");
 
     expect(within(dialog).queryByRole("switch", { name: "Details" })).toBeNull();
-    expect(within(dialog).queryByRole("switch", { name: "Sub-issues" })).toBeNull();
+    expect(within(dialog).getByRole("switch", { name: "Sub-issues" })).toBeChecked();
 
     fireEvent.click(within(dialog).getByRole("switch", { name: "Deliverables" }));
     expect(useIssueSidebarSectionsStore.getState().hidden).toEqual(["deliverables"]);

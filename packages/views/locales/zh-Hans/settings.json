@@ -1544,7 +1544,7 @@
       "spawn_failed": "无法启动 shell。",
       "target_machine": "目标机器",
       "local_machine": "本机",
-      "connecting": "正在连接 {{machine}}…",
+      "connecting": "正在连接 {{machine}}...",
       "daemon_offline": "{{machine}} 已离线，终端已关闭。",
       "err_in_use": "机器使用中",
       "err_forbidden": "无权限",

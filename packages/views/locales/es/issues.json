@@ -466,7 +466,6 @@
     "section_parent_issue": "Tarea principal",
     "section_pull_requests": "Pull requests",
     "section_metadata": "Metadatos",
-    "section_details": "Detalles",
     "section_quick_actions": "Acciones rápidas",
     "quick_actions_more": "Mostrar {{count}} más",
     "quick_action_runs_as": "Se ejecuta como {{name}}",

@@ -165,7 +165,7 @@
     },
     "title": "工作台",
     "diagnostics": "目录状态",
-    "loading": "正在检查目录访问…",
+    "loading": "正在检查目录访问...",
     "no_project": "此 Issue 尚未关联项目。",
     "no_resources": "此项目没有本地目录资源。",
     "forbidden": "你无权访问此目录。",
