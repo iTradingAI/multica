@@ -162,7 +162,7 @@
       "disk_version": "Versión actual en el disco",
       "use_disk_version": "Usar esta versión como base",
       "binding_changed": "Cambió el directorio vinculado. Copia el borrador y vuelve a abrir el archivo en el directorio vinculado actual.",
-      "read_only": "La edición no está disponible para este directorio o formato. La vista previa es de solo lectura.",
+      "read_only": "Este directorio o archivo está fuera del ámbito de escritura actual; solo se ofrece vista previa de solo lectura.",
       "edit_too_large": "El límite de edición es de 16 KiB, incluida la codificación original y los saltos de línea.",
       "edit_unavailable": "No se pudo editar ni guardar este archivo.",
       "file_busy": "El archivo está en uso o Windows denegó el permiso de escritura.",

@@ -162,7 +162,7 @@
       "disk_version": "当前磁盘版本",
       "use_disk_version": "以此版本为保存基准",
       "binding_changed": "目录绑定已变更。请复制草稿，然后在当前绑定下重新打开文件。",
-      "read_only": "此目录或文件格式仅支持只读预览。",
+      "read_only": "此目录或文件不在当前写入授权范围内，仅支持只读预览。",
       "edit_too_large": "编辑上限为 16 KiB，包含原始编码和换行符。",
       "edit_unavailable": "无法编辑或保存此文件。",
       "file_busy": "文件正被占用，或 Windows 拒绝写入。",

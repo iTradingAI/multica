@@ -162,7 +162,7 @@
       "disk_version": "Current disk version",
       "use_disk_version": "Use this version as the save base",
       "binding_changed": "The directory binding changed. Copy your draft and reopen the file in the current binding.",
-      "read_only": "Editing is unavailable for this directory or file format. The preview is read-only.",
+      "read_only": "This directory or file is outside the current write scope; only read-only preview is available.",
       "edit_too_large": "Editing is limited to 16 KiB, including the original encoding and line endings.",
       "edit_unavailable": "Unable to edit or save this file.",
       "file_busy": "The file is busy or Windows denied write access.",
