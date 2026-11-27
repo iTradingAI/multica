@@ -1596,6 +1596,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	hub.SetTerminalRelay(daemonHub)
 	daemonHub.SetTerminalBridge(hub)
 	hub.ConfigureWorkspaceFiles(os.Getenv("MULTICA_WORKSPACE_FILES_ENABLED") == "true", os.Getenv("MULTICA_WORKSPACE_FILES_SINGLE_API") == "true", realtime.WorkspaceFilesStore{DB: pool}, daemonHub)
+	editBindings, editErr := realtime.ParseWorkspaceFilesEditBindings(os.Getenv("MULTICA_WORKSPACE_FILES_EDIT_BINDINGS"))
+	if editErr != nil {
+		slog.Warn("workspace files edit bindings invalid; editing disabled")
+	}
+	hub.ConfigureWorkspaceFilesEdit(editBindings)
 	hub.ConfigureWorkspaceFilesViewer(h)
 	daemonHub.SetWorkspaceFilesBridge(hub)
 	health := newServerHealth(pool)

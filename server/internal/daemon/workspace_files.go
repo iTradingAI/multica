@@ -209,6 +209,10 @@ func (c *workspaceFilesChannel) HandleMessage(messageType string, raw json.RawMe
 	if c == nil {
 		return
 	}
+	if protocol.WorkspaceFilesIsEdit(messageType) {
+		c.handleWorkspaceFilesEdit(messageType, raw)
+		return
+	}
 	if !workspaceFilesCapabilityEnabled || c.opening == nil {
 		var id, runtimeID, resourceID string
 		switch messageType {
@@ -879,7 +883,8 @@ func workspaceFilesStableError(code string) bool {
 		protocol.WorkspaceFilesErrorTooLarge, protocol.WorkspaceFilesErrorInvalidUTF8, protocol.WorkspaceFilesErrorBinaryContent,
 		protocol.WorkspaceFilesErrorTimeout, protocol.WorkspaceFilesErrorBusy,
 		protocol.WorkspaceFilesErrorUnsupported, protocol.WorkspaceFilesErrorInvalidCursor,
-		protocol.WorkspaceFilesErrorUnavailable:
+		protocol.WorkspaceFilesErrorUnavailable, protocol.WorkspaceFilesErrorConflict,
+		protocol.WorkspaceFilesErrorReadOnly, protocol.WorkspaceFilesErrorSaveUnconfirmed:
 		return true
 	default:
 		return false

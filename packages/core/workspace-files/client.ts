@@ -13,7 +13,16 @@ export interface WorkspaceFilesTransport {
 }
 export interface WorkspaceFilesResource { resource_id: string; display_name: string; access: "read_only";
 }
+export const WORKSPACE_FILES_EDIT_MAX_BYTES = 16 * 1024;
+const WorkspaceFilesVersionSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+
+export interface WorkspaceFilesEditVersion {
+  bindingGeneration: number;
+  version: string;
+}
+
 export interface WorkspaceFilesResult {
+  editVersion?: WorkspaceFilesEditVersion;
   resources?: WorkspaceFilesResource[];
   entries?: { name: string; type: "regular" | "directory" }[];
   text?: string;
@@ -46,6 +55,12 @@ const ListSchema = z.object({ client_req_id: z.string(), resource_id: z.string()
 });
 const ReadSchema = z.object({ client_req_id: z.string(), resource_id: z.string(), seq: z.number().int().nonnegative(), data: z.string(), eof: z.boolean(),
 });
+const EditSchema = z.object({
+  client_req_id: z.string(), resource_id: z.string(),
+  binding_generation: z.number().int().positive(),
+  version: WorkspaceFilesVersionSchema,
+  data: z.string().max(4 * Math.ceil(WORKSPACE_FILES_EDIT_MAX_BYTES / 3)),
+});
 const ErrorSchema = z.object({ client_req_id: z.string(), code: z.string() });
 type Request = { context: WorkbenchContext } & (
   | { operation: "resources" }
@@ -59,6 +74,8 @@ type Request = { context: WorkbenchContext } & (
       operation: "read"; resourceId: string; path: string;
       bindingGeneration?: number;
     }
+  | { operation: "edit_open"; resourceId: string; path: string }
+  | { operation: "save"; resourceId: string; path: string; editVersion: WorkspaceFilesEditVersion; text: string }
   | {
       operation: "viewer_read";
       resourceId: string;
@@ -80,6 +97,16 @@ export function requestWorkspaceFiles(ws: WorkspaceFilesTransport, request: Requ
       request.pageSize > 200)
   )
     return Promise.reject(new WorkspaceFilesError("unavailable"));
+  let draftData: string | undefined;
+  if (request.operation === "save") {
+    const bytes = new TextEncoder().encode(request.text);
+    if (bytes.length > WORKSPACE_FILES_EDIT_MAX_BYTES)
+      return Promise.reject(new WorkspaceFilesError("too_large"));
+    // TextEncoder replaces unpaired surrogates. Do not save a lossy encoding.
+    if (new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes) !== request.text)
+      return Promise.reject(new WorkspaceFilesError("invalid_utf8"));
+    draftData = btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(""));
+  }
   const id = crypto.randomUUID();
   const event = `workspace_files.${request.operation}` as WSEventType;
   const responseEvent =
@@ -87,7 +114,9 @@ export function requestWorkspaceFiles(ws: WorkspaceFilesTransport, request: Requ
       ? "workspace_files.resources_result"
       : request.operation === "list"
         ? "workspace_files.list_result"
-        : "workspace_files.read_chunk";
+        : request.operation === "edit_open" || request.operation === "save"
+          ? "workspace_files.edit_result"
+          : "workspace_files.read_chunk";
   return new Promise((resolve, reject) => {
     const subscriptions: (() => void)[] = [];
     let finished = false;
@@ -95,7 +124,7 @@ export function requestWorkspaceFiles(ws: WorkspaceFilesTransport, request: Requ
     let text = "";
     let bytes = 0;
     const entries: NonNullable<WorkspaceFilesResult["entries"]> = [];
-    const timer = setTimeout(() => fail("timeout"), 10_000);
+    const timer = setTimeout(() => fail(request.operation === "save" ? "save_unconfirmed" : "timeout"), 10_000);
     function cleanup() {
       finished = true;
       text = "";
@@ -188,6 +217,25 @@ export function requestWorkspaceFiles(ws: WorkspaceFilesTransport, request: Requ
               nextCursor: parsed.next_cursor,
               skipped: parsed.skipped,
             });
+        } else if (request.operation === "edit_open" || request.operation === "save") {
+          const invalidResult = request.operation === "save" ? "save_unconfirmed" : "unavailable";
+          // These frames carry file contents. Keep schema errors out of any
+          // diagnostics that serialize the original payload.
+          const parsed = EditSchema.safeParse(payload);
+          if (!parsed.success || parsed.data.resource_id !== request.resourceId)
+            return fail(invalidResult);
+          const { binding_generation: bindingGeneration, version, data } = parsed.data;
+          if (request.operation === "save" && bindingGeneration !== request.editVersion.bindingGeneration)
+            return fail(invalidResult);
+          try {
+            const decoded = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
+            if (decoded.length > WORKSPACE_FILES_EDIT_MAX_BYTES) return fail(invalidResult);
+            const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(decoded);
+            if (request.operation === "save" && request.text !== text) return fail(invalidResult);
+            complete({ text, editVersion: { bindingGeneration, version } });
+          } catch {
+            fail(invalidResult);
+          }
         } else {
           const parsed = parseWithFallback(
             payload,
@@ -243,6 +291,9 @@ export function requestWorkspaceFiles(ws: WorkspaceFilesTransport, request: Requ
                       ...(request.operation === "read" &&
                       request.bindingGeneration
                         ? { binding_generation: request.bindingGeneration }
+                        : {}),
+                      ...(request.operation === "save"
+                        ? { binding_generation: request.editVersion.bindingGeneration, version: request.editVersion.version, data: draftData }
                         : {}),
                       ...(request.operation === "list"
                         ? {

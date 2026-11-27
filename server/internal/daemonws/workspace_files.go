@@ -19,9 +19,9 @@ func (h *Hub) SetWorkspaceFilesBridge(b WorkspaceFilesBridge) {
 	h.mu.Unlock()
 }
 
-func exactFilesCapability(raw string) bool {
+func exactFilesCapability(raw, capability string) bool {
 	for _, token := range strings.Split(raw, ",") {
-		if strings.TrimSpace(token) == protocol.DaemonCapabilityWorkspaceFilesV2 {
+		if strings.TrimSpace(token) == capability {
 			return true
 		}
 	}
@@ -31,6 +31,14 @@ func exactFilesCapability(raw string) bool {
 // SelectWorkspaceFilesTarget binds a single active authenticated connection.
 // Capability is never inferred from DB metadata or heartbeat timestamps.
 func (h *Hub) SelectWorkspaceFilesTarget(daemonID, workspaceID, requestID string) (*protocol.WorkspaceFilesTarget, string) {
+	return h.selectWorkspaceFilesTarget(daemonID, workspaceID, requestID, false)
+}
+
+func (h *Hub) SelectWorkspaceFilesEditTarget(daemonID, workspaceID, requestID string) (*protocol.WorkspaceFilesTarget, string) {
+	return h.selectWorkspaceFilesTarget(daemonID, workspaceID, requestID, true)
+}
+
+func (h *Hub) selectWorkspaceFilesTarget(daemonID, workspaceID, requestID string, edit bool) (*protocol.WorkspaceFilesTarget, string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var chosen *client
@@ -47,7 +55,8 @@ func (h *Hub) SelectWorkspaceFilesTarget(daemonID, workspaceID, requestID string
 				continue
 			}
 			scoped = true
-			if !exactFilesCapability(c.identity.Capabilities) {
+			if !exactFilesCapability(c.identity.Capabilities, protocol.DaemonCapabilityWorkspaceFilesV2) ||
+				(edit && !exactFilesCapability(c.identity.Capabilities, protocol.DaemonCapabilityWorkspaceFilesEdit)) {
 				continue
 			}
 			if chosen == nil || id < runtime || (id == runtime && c.filesEpoch < chosen.filesEpoch) {

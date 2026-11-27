@@ -35,7 +35,7 @@ const TEST_RESOURCES = { en: { agents: enAgents, common: enCommon, inbox: enInbo
 const mockViewport = vi.hoisted(() => ({ isMobile: false }));
 const mockWorkbench = vi.hoisted(() => vi.fn());
 vi.mock("../../workbench", () => ({
-  WorkbenchDrawer: (props: Record<string, unknown>) => { mockWorkbench(props); return <button>Workbench</button>; },
+  WorkspaceFilesSection: (props: Record<string, unknown>) => { mockWorkbench(props); return <button>Workbench</button>; },
 }));
 const mockLocalDirectoryHint = vi.hoisted(() => vi.fn());
 vi.mock("../../projects/components/local-directory-hint", () => ({
@@ -856,7 +856,7 @@ function threadRow(el: Element): Element {
 describe("IssueDetail (shared)", () => {
   it("wires the shared workbench with the actual Issue and no project field", async () => {
     renderIssueDetail();
-    await waitFor(() => expect(mockWorkbench).toHaveBeenCalledWith({ wsId: "ws-1", context: { kind: "issue", issue_id: mockIssue.id }, hasProject: Boolean(mockIssue.project_id) }));
+    await waitFor(() => expect(mockWorkbench).toHaveBeenCalledWith({ wsId: "ws-1", context: { kind: "issue", issue_id: mockIssue.id }, hasProject: Boolean(mockIssue.project_id), projectId: mockIssue.project_id ?? undefined }));
   });
   beforeEach(() => {
     vi.clearAllMocks();
@@ -5073,6 +5073,7 @@ describe("IssueDetail (shared)", () => {
     const header = (await screen.findByText("Activity")).parentElement?.parentElement;
     await waitFor(() => expect(header?.querySelector('[data-slot="avatar-group"]')).not.toBeNull());
     expect(header?.querySelector('[data-trigger="popover"]')).toBeNull();
+    expect(screen.queryByRole("button", { name: "Workbench" })).not.toBeInTheDocument();
     document.body.innerHTML = "";
   });
 

@@ -35,7 +35,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../workbench", () => ({
-  WorkbenchDrawer: (props: unknown) => { mocks.workbench(props); return <button>Workbench</button>; },
+  WorkspaceFilesSection: (props: unknown) => { mocks.workbench(props); return <button>Workbench</button>; },
 }));
 
 vi.mock("@multica/ui/lib/clipboard", () => ({
@@ -482,6 +482,7 @@ describe("ProjectDetail for a guest", () => {
     expect(screen.getByText("Ship the launch.")).toBeInTheDocument();
     expect(screen.queryByText("Agent context")).not.toBeInTheDocument();
     expect(screen.getByTestId("project-resources")).toHaveAttribute("data-read-only", "true");
+    expect(screen.queryByRole("button", { name: "Workbench" })).not.toBeInTheDocument();
   });
 
   it("locks the properties and passes read-only to the insights", () => {

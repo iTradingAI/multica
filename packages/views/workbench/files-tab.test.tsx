@@ -3,16 +3,18 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithI18n } from "../test/i18n";
 import { FilesTab } from "./files-tab";
+import { WorkspaceFilesSection } from "./workbench-drawer";
 
 const state = vi.hoisted(() => ({
   handlers: new Map<string, Set<(payload: unknown) => void>>(),
   send: vi.fn(),
-  reconnect: () => {},
   holdRead: false,
   badCursor: false,
   connected: true,
   ready: () => {},
   deepTree: false,
+  holdSave: false,
+  editText: "disk text",
 }));
 function emit(type: string, payload: unknown) {
   state.handlers.get(type)?.forEach((handler) => handler(payload));
@@ -25,19 +27,20 @@ function subscribe(type: string, handler: (payload: unknown) => void) {
     entries.delete(handler);
   };
 }
-const onReconnect = (callback: () => void) => {
-  state.reconnect = callback;
-  return () => {};
-};
-const onReady = (callback: () => void) => {
+const subscribeStatus = (callback: () => void) => {
   state.ready = callback;
   return () => { state.ready = () => {}; };
 };
+const onReady = () => () => {};
 vi.mock("@multica/core/realtime", () => ({
-  useWS: () => ({ send: state.send, subscribe, onReconnect, onReady }),
+  useWS: () => ({ send: state.send, subscribe, subscribeStatus, onReady, getStatus: () => state.connected ? "connected" : "reconnecting" }),
 }));
+vi.mock("@multica/core/projects", () => ({ projectResourcesOptions: () => ({ queryKey: ["labels"], queryFn: async () => [] }) }));
 vi.mock("@multica/core/config", () => ({ useFeatureEnabled: () => false }));
 vi.mock("../platform/local-directory", () => ({ isDesktopShell: () => false }));
+vi.mock("@multica/core/api", () => ({ api: {
+  listIssueFileTouches: async () => ({ files: [] }),
+} }));
 
 beforeEach(() => {
   state.handlers.clear();
@@ -47,6 +50,8 @@ beforeEach(() => {
   state.connected = true;
   state.ready = () => {};
   state.deepTree = false;
+  state.holdSave = false;
+  state.editText = "disk text";
   state.send.mockImplementation(
     ({ type, payload }: { type: string; payload: Record<string, unknown> }) => {
       if (!state.connected) return false;
@@ -93,6 +98,13 @@ beforeEach(() => {
             final: true,
           });
         }
+        if (type === "workspace_files.edit_open")
+          emit("workspace_files.edit_result", {
+            client_req_id: payload.client_req_id, resource_id: "resource",
+            binding_generation: 1, version: "A".repeat(43), data: btoa(state.editText),
+          });
+        if (type === "workspace_files.save" && !state.holdSave)
+          emit("workspace_files.error", { client_req_id: payload.client_req_id, code: "conflict" });
         if (type === "workspace_files.read" && !state.holdRead)
           emit("workspace_files.read_chunk", {
             client_req_id: payload.client_req_id,
@@ -125,34 +137,108 @@ const requests = (type: string) =>
     .map(([frame]) => frame)
     .filter((frame) => frame.type === type);
 
+describe("File drafts on an issue that changes project", () => {
+  it.each([false, true])("keeps a copyable draft and retires the old binding (save pending: %s)", async (savePending) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const renderEntry = (projectId: string | undefined) => (
+      <QueryClientProvider client={client}>
+        <WorkspaceFilesSection wsId="workspace" context={{ kind: "issue", issue_id: "issue-1" }}
+          hasProject={Boolean(projectId)} projectId={projectId} />
+      </QueryClientProvider>
+    );
+    const { rerender } = renderWithI18n(renderEntry("project-1"));
+    const copy = vi.fn().mockResolvedValue(undefined);
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: copy } });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "File management" }));
+      const openEditor = async () => {
+        fireEvent.doubleClick(await screen.findByRole("button", { name: "note.txt" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+        return screen.findByRole("textbox", { name: "File draft" });
+      };
+      const draft = await openEditor();
+      fireEvent.change(draft, { target: { value: "old project draft" } });
+      state.holdSave = true;
+      if (savePending) fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      const sent = requests("workspace_files.save")[0]?.payload;
+
+      rerender(renderEntry("project-2"));
+      expect(screen.getByRole("textbox", { name: "File draft" })).toHaveValue("old project draft");
+      expect(screen.getByText(/The directory binding changed/)).toBeInTheDocument();
+      if (sent) {
+        expect(screen.getByText(/Save unconfirmed/)).toBeInTheDocument();
+        expect(requests("workspace_files.cancel").map((frame) => frame.payload.client_req_id))
+          .toContain(sent.client_req_id);
+        act(() => emit("workspace_files.edit_result", {
+          client_req_id: sent.client_req_id, resource_id: "resource", binding_generation: 1,
+          version: "B".repeat(43), data: sent.data,
+        }));
+        expect(screen.getByText(/Save unconfirmed/)).toBeInTheDocument();
+        expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
+      }
+      expect(draft).toHaveValue("old project draft");
+      fireEvent.click(screen.getByRole("button", { name: "Copy draft" }));
+      expect(copy).toHaveBeenCalledWith("old project draft");
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+      rerender(renderEntry(undefined));
+      expect(draft).toHaveValue("old project draft");
+      rerender(renderEntry("project-1"));
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      expect(requests("workspace_files.save")).toHaveLength(Number(savePending));
+
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Discard draft" }));
+      rerender(renderEntry("project-2"));
+      state.editText = "fresh project text";
+      const fresh = await openEditor();
+      expect(fresh).toHaveValue("fresh project text");
+      if (sent) act(() => emit("workspace_files.edit_result", {
+        client_req_id: sent.client_req_id, resource_id: "resource", binding_generation: 1,
+        version: "B".repeat(43), data: sent.data,
+      }));
+      expect(fresh).toHaveValue("fresh project text");
+      fireEvent.change(fresh, { target: { value: "new project draft" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      expect(requests("workspace_files.save").at(-1).payload.version).toBe("A".repeat(43));
+      expect(requests("workspace_files.save")).toHaveLength(Number(savePending) + 1);
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+      client.clear();
+    }
+  });
+});
+
 describe("Files tree lifecycle (renderer A only)", () => {
   it("expands three directory levels lazily and reads the full nested path", async () => {
     state.deepTree = true;
     setup();
     await screen.findByRole("button", { name: "note.txt" });
-    fireEvent.click(screen.getByRole("button", { name: "Expand nested" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Expand level-two" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Expand level-three" }));
+    fireEvent.click(screen.getByRole("button", { name: "nested" }));
+    fireEvent.click(await screen.findByRole("button", { name: "level-two" }));
+    fireEvent.click(await screen.findByRole("button", { name: "level-three" }));
     expect(requests("workspace_files.list").map((frame) => frame.payload.path)).toEqual([
       ".", "nested", "nested/level-two", "nested/level-two/level-three",
     ]);
-    fireEvent.click(await screen.findByRole("button", { name: "child.txt" }));
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "child.txt" }));
     await screen.findByText("selected evidence");
     expect(requests("workspace_files.read").at(-1).payload.path).toBe("nested/level-two/level-three/child.txt");
-    fireEvent.click(screen.getByRole("button", { name: "Root" }));
-    await screen.findByRole("button", { name: "Expand nested" });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(await screen.findByRole("button", { name: "nested" }));
     expect(screen.queryByRole("button", { name: "child.txt" })).not.toBeInTheDocument();
   });
-  it("recovers a resource request made before the first authenticated connection without manual retry", async () => {
+  it("waits for the first authenticated connection without a speculative request", async () => {
     state.connected = false;
     setup();
-    await waitFor(() => expect(requests("workspace_files.resources")).toHaveLength(1));
+    expect(requests("workspace_files.resources")).toHaveLength(0);
     act(() => {
       state.connected = true;
       state.ready();
     });
     await screen.findByRole("button", { name: "note.txt" });
-    expect(requests("workspace_files.resources")).toHaveLength(2);
+    expect(requests("workspace_files.resources")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
   });
   it("loads only expanded nodes and pages with the returned cursor", async () => {
@@ -161,7 +247,7 @@ describe("Files tree lifecycle (renderer A only)", () => {
     expect(
       requests("workspace_files.list").map((frame) => frame.payload.path),
     ).toEqual(["."]);
-    fireEvent.click(screen.getByRole("button", { name: "Expand nested" }));
+    fireEvent.click(screen.getByRole("button", { name: "nested" }));
     await screen.findByRole("button", { name: "child.txt" });
     expect(
       requests("workspace_files.list").map((frame) => frame.payload.path),
@@ -169,7 +255,7 @@ describe("Files tree lifecycle (renderer A only)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     await screen.findByRole("button", { name: "second.txt" });
     expect(requests("workspace_files.list").at(-1).payload.cursor).toBe("next");
-    fireEvent.click(screen.getByRole("button", { name: "Collapse nested" }));
+    fireEvent.click(screen.getByRole("button", { name: "nested" }));
     expect(
       screen.queryByRole("button", { name: "child.txt" }),
     ).not.toBeInTheDocument();
@@ -189,17 +275,17 @@ describe("Files tree lifecycle (renderer A only)", () => {
       requests("workspace_files.list").at(-1).payload.cursor,
     ).toBeUndefined();
   });
-  it("binding event clears selection and rejects late read frames", async () => {
+  it("binding event invalidates the open file and rejects late read frames", async () => {
     setup();
     await screen.findByRole("button", { name: "note.txt" });
     state.holdRead = true;
-    fireEvent.click(screen.getByRole("button", { name: "note.txt" }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: "note.txt" }));
     await waitFor(() =>
       expect(requests("workspace_files.read")).toHaveLength(1),
     );
     const id = requests("workspace_files.read")[0].payload.client_req_id;
     act(() => emit("project_resource:updated", {}));
-    await screen.findByRole("button", { name: "note.txt" });
+    await screen.findByText(/The directory binding changed/);
     expect(
       requests("workspace_files.cancel").some(
         (frame) => frame.payload.client_req_id === id,
@@ -216,16 +302,15 @@ describe("Files tree lifecycle (renderer A only)", () => {
     );
     expect(screen.queryByText("late private content")).not.toBeInTheDocument();
   });
-  it("authenticated reconnection clears selection and ignores the retired preview response", async () => {
+  it("disconnect retires the pending preview response", async () => {
     setup();
     await screen.findByRole("button", { name: "note.txt" });
     state.holdRead = true;
-    fireEvent.click(screen.getByRole("button", { name: "note.txt" }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: "note.txt" }));
     await waitFor(() => expect(requests("workspace_files.read")).toHaveLength(1));
     const id = requests("workspace_files.read")[0].payload.client_req_id;
-    act(() => state.ready());
-    await screen.findByRole("button", { name: "note.txt" });
-    expect(requests("workspace_files.cancel").some(frame => frame.payload.client_req_id === id)).toBe(true);
+    act(() => { state.connected = false; state.ready(); });
+    await screen.findAllByText("Connecting to the directory channel...");
     act(() => emit("workspace_files.read_chunk", {
       client_req_id: id, resource_id: "resource", seq: 0,
       data: btoa("retired preview content"), eof: true,
@@ -233,15 +318,16 @@ describe("Files tree lifecycle (renderer A only)", () => {
     expect(screen.queryByText("retired preview content")).not.toBeInTheDocument();
     expect(requests("workspace_files.read")).toHaveLength(1);
   });
-  it("refresh retires an active preview instead of reusing its buffer", async () => {
+  it("closing the editor retires an active preview before directory refresh", async () => {
     setup();
     await screen.findByRole("button", { name: "note.txt" });
     state.holdRead = true;
-    fireEvent.click(screen.getByRole("button", { name: "note.txt" }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: "note.txt" }));
     await waitFor(() =>
       expect(requests("workspace_files.read")).toHaveLength(1),
     );
     const id = requests("workspace_files.read")[0].payload.client_req_id;
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await screen.findByRole("button", { name: "note.txt" });
     expect(
@@ -250,5 +336,71 @@ describe("Files tree lifecycle (renderer A only)", () => {
       ),
     ).toBe(true);
     expect(requests("workspace_files.read")).toHaveLength(1);
+  });
+  async function openDraft() {
+    setup();
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "note.txt" }));
+    await screen.findByRole("dialog", { name: "note.txt" });
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    return screen.findByRole("textbox", { name: "File draft" });
+  }
+
+  it("retains a conflicted draft until the user reads and accepts the current disk version", async () => {
+    const draft = await openDraft();
+    fireEvent.change(draft, { target: { value: "my edits" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText(/The file changed on disk/);
+    expect(draft).toHaveValue("my edits");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    state.editText = "external changes";
+    fireEvent.click(screen.getByRole("button", { name: "Read disk version" }));
+    await screen.findByText("external changes");
+    expect(requests("workspace_files.save")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Use this version as the save base" }));
+    expect(draft).toHaveValue("my edits");
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await screen.findByRole("button", { name: "Discard draft" });
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(draft).toHaveValue("my edits");
+  });
+
+  it("keeps the draft and ignores a late receipt after disconnection", async () => {
+    state.holdSave = true;
+    const draft = await openDraft();
+    fireEvent.change(draft, { target: { value: "my edits" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const sent = requests("workspace_files.save")[0].payload;
+    act(() => { state.connected = false; state.ready(); });
+    await screen.findByText(/Save unconfirmed/);
+    act(() => {
+      state.connected = true;
+      state.ready();
+      emit("workspace_files.edit_result", {
+        client_req_id: sent.client_req_id, resource_id: "resource", binding_generation: 1,
+        version: "B".repeat(43), data: sent.data,
+      });
+    });
+    expect(draft).toHaveValue("my edits");
+    expect(screen.getByText(/Save unconfirmed/)).toBeInTheDocument();
+    expect(requests("workspace_files.save")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("keeps typing done after the submitted draft when a matching save receipt arrives", async () => {
+    state.holdSave = true;
+    const draft = await openDraft();
+    fireEvent.change(draft, { target: { value: "submitted" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const sent = requests("workspace_files.save")[0].payload;
+    fireEvent.change(draft, { target: { value: "more edits" } });
+    act(() => emit("workspace_files.edit_result", {
+      client_req_id: sent.client_req_id, resource_id: "resource", binding_generation: 1,
+      version: "B".repeat(43), data: sent.data,
+    }));
+    await screen.findByText("Saved.");
+    expect(draft).toHaveValue("more edits");
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(requests("workspace_files.save")).toHaveLength(1);
   });
 });

@@ -131,6 +131,9 @@ export type WSEventType =
   | "workspace_files.list_result"
   | "workspace_files.read"
   | "workspace_files.read_chunk"
+  | "workspace_files.edit_open"
+  | "workspace_files.save"
+  | "workspace_files.edit_result"
   | "workspace_files.cancel"
   | "workspace_files.error"
   | "environment:changed";
@@ -809,6 +812,9 @@ export interface WSEventPayloadMap {
   "workspace_files.list_result": unknown;
   "workspace_files.read": unknown;
   "workspace_files.read_chunk": unknown;
+  "workspace_files.edit_open": unknown;
+  "workspace_files.save": unknown;
+  "workspace_files.edit_result": unknown;
   "workspace_files.cancel": unknown;
   "workspace_files.error": unknown;
   "environment:changed": { issue_id: string };

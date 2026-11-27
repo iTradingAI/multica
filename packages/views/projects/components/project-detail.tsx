@@ -54,7 +54,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@multica/ui/components/ui/tooltip";
-import { WorkbenchDrawer } from "../../workbench";
+import { WorkspaceFilesSection } from "../../workbench";
 import { IssueViewHeader } from "../../issue-views/view-header";
 import {
   AnimatedRightSidebar,
@@ -480,6 +480,9 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
           handleTabChange("activity");
         }}
       />
+      {!guest && (
+        <WorkspaceFilesSection wsId={wsId} context={{ kind: "project", project_id: project.id }} />
+      )}
     </div>
   );
 
@@ -588,13 +591,6 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     </Tooltip>
   );
 
-  const headerActions = (
-    <>
-      {!guest && <WorkbenchDrawer wsId={wsId} context={{ kind: "project", project_id: project.id }} />}
-      {sidebarToggle}
-    </>
-  );
-
   const projectTabs = (
     <ProjectTabs tab={tab} onTabChange={handleTabChange} issueCount={project.issue_count} />
   );
@@ -618,7 +614,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 tabs={projectTabs}
                 menu={projectMenu}
                 badge={archived ? <ArchivedProjectTag /> : undefined}
-                trailing={headerActions}
+                trailing={sidebarToggle}
               />
               {archived && (
                 <div className={cn("shrink-0 pt-2", PAGE_GUTTER)}>
@@ -645,7 +641,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                     hideCreate={archived}
                     afterTitle={projectTabs}
                     baseMenu={projectMenu}
-                    trailing={headerActions}
+                    trailing={sidebarToggle}
                   />
                   {archived && (
                     <div className={cn("shrink-0 pt-2", PAGE_GUTTER)}>

@@ -28,7 +28,7 @@ type Capabilities struct {
 func HostCapabilities() Capabilities {
 	return Capabilities{
 		// issue_panel mounts in PluginPanelSection; sidebar_panel mounts in
-		// the shared Web/Desktop WorkbenchDrawer; modal opens from a hook.
+		// the shared Web/Desktop file management section; modal opens from a hook.
 		SurfaceTypes: map[string]bool{
 			SurfaceIssuePanel:   true,
 			SurfaceModal:        true,

@@ -132,7 +132,7 @@ import { ExecutionLogSection } from "./execution-log-section";
 import { WakeupsSection } from "./wakeups-section";
 import { QuickActionsSection } from "./quick-actions-section";
 import { PluginPanelSection } from "../../plugins";
-import { WorkbenchDrawer } from "../../workbench";
+import { WorkspaceFilesSection } from "../../workbench";
 import { PullRequestsSection } from "./pull-requests-section";
 import { IssueEnvironmentsSection } from "./issue-environments-section";
 import { useGitHubSettings } from "@multica/core/github";
@@ -3757,19 +3757,29 @@ export function IssueDetail({ issueId, onDelete, inbox, defaultSidebarOpen = tru
   const sidebarContent = landingChromeHeld ? (
     <IssueSidebarSkeletonRows className="p-2" />
   ) : (
-    <IssueSidebarSections
-      sections={sidebarSections}
-      available={ISSUE_SIDEBAR_SECTIONS.filter(
-        (section) =>
-          guest
-            ? GUEST_SIDEBAR_SECTIONS.has(section)
-            : (section !== "pull_requests" || githubSettings.prSidebar) && (section !== "plugins" || pluginsEnabled),
+    <>
+      <IssueSidebarSections
+        sections={sidebarSections}
+        available={ISSUE_SIDEBAR_SECTIONS.filter(
+          (section) =>
+            guest
+              ? GUEST_SIDEBAR_SECTIONS.has(section)
+              : (section !== "pull_requests" || githubSettings.prSidebar) && (section !== "plugins" || pluginsEnabled),
+        )}
+        addRow={guest ? undefined : <IssueSidebarAddRow items={sidebarAddables.filter((item) => item !== sidebarReveal)} onPick={setSidebarReveal} issue={issue} />}
+        revealed={guest ? undefined : sidebarReveal ?? undefined}
+        onRevealEnd={endSidebarReveal}
+        footer={guest ? undefined : <IssueSidebarFooter issue={issue} />}
+      />
+      {!guest && (
+        <WorkspaceFilesSection
+          wsId={wsId}
+          context={{ kind: "issue", issue_id: issue.id }}
+          hasProject={Boolean(issue.project_id)}
+          projectId={issue.project_id ?? undefined}
+        />
       )}
-      addRow={guest ? undefined : <IssueSidebarAddRow items={sidebarAddables.filter((item) => item !== sidebarReveal)} onPick={setSidebarReveal} issue={issue} />}
-      revealed={guest ? undefined : sidebarReveal ?? undefined}
-      onRevealEnd={endSidebarReveal}
-      footer={guest ? undefined : <IssueSidebarFooter issue={issue} />}
-    />
+    </>
   );
 
   // Row renderer for the virtualized timeline.
@@ -3986,7 +3996,6 @@ export function IssueDetail({ issueId, onDelete, inbox, defaultSidebarOpen = tru
                 )}
                 <IssueAgentHeaderChip issueId={id} onJumpToRun={jumpToRun} handoffRound={handoffRound} />
               </div>
-                <WorkbenchDrawer key={`${wsId}:${issue.id}:${issue.project_id ?? ""}`} wsId={wsId} context={{ kind: "issue", issue_id: issue.id }} hasProject={Boolean(issue.project_id)} />
                 <IssueWakeupHeaderChip issueId={id} onOpen={openWakeups} />
               </>
             )}

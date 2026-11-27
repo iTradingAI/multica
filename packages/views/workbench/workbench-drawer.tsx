@@ -8,48 +8,45 @@ import { pluginInstallationsOptions } from "@multica/core/plugins";
 import { useWS } from "@multica/core/realtime";
 import type { WorkbenchContext } from "@multica/core/workspace-files";
 import { Button } from "@multica/ui/components/ui/button";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger,
-} from "@multica/ui/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger, TabsContent,
 } from "@multica/ui/components/ui/tabs";
-import { PanelRightOpen } from "@multica/ui/icons";
+import { ChevronRight, Folder } from "@multica/ui/icons";
 import { useT } from "../i18n";
 import { isDesktopShell } from "../platform/local-directory";
 import { SidebarPanel, sidebarPanels } from "./sidebar-panel";
 import { WorkbenchResourceState } from "./workbench-resource-state";
 import { FilesTab } from "./files-tab";
 
-interface Props { wsId: string; context: WorkbenchContext; hasProject?: boolean;
+interface Props { wsId: string; context: WorkbenchContext; hasProject?: boolean; projectId?: string;
 }
 interface WorkbenchTab { id: string; label: string;
 }
 
-export function WorkbenchDrawer(props: Props) {
+export function WorkspaceFilesSection(props: Props) {
   // Changing workspace or entry destroys the entire session, including the
   // open state, selected tab, in-flight queries, iframe and MessagePort.
-  return (
-    <WorkbenchSession key={JSON.stringify([props.wsId, props.context])} {...props} />
-  );
+  return <WorkbenchSession key={JSON.stringify([props.wsId, props.context])} {...props} />;
 }
-function WorkbenchSession({ wsId, context, hasProject = true }: Props) {
+function WorkbenchSession(props: Props) {
   const { t } = useT("common");
   const [open, setOpen] = useState(false);
+  const contentId = useId();
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
-    <SheetTrigger render={<Button variant="outline" size="sm" className="shrink-0" aria-label={t(($) => $.workbench.title)} title={t(($) => $.workbench.title)} />}>
-      <PanelRightOpen />
-      {t(($) => $.workbench.title)}
-    </SheetTrigger>
-    <SheetContent side="right" className="w-full sm:max-w-lg overflow-hidden">
-      <SheetHeader><SheetTitle>{t(($) => $.workbench.title)}</SheetTitle></SheetHeader>
-      {open && (
-          <WorkbenchBody wsId={wsId} context={context} hasProject={hasProject} />
-        )}
-    </SheetContent>
-  </Sheet>
+    <section className="border-t border-border pt-2">
+      <Button variant="ghost" size="sm" className="w-full justify-start"
+        aria-expanded={open} aria-controls={contentId} onClick={() => setOpen(!open)}>
+        <Folder />
+        {t(($) => $.workbench.files.management)}
+        <ChevronRight className={open ? "ml-auto rotate-90" : "ml-auto"} />
+      </Button>
+      <div id={contentId}>
+        {open && <WorkbenchBody {...props} />}
+      </div>
+    </section>
   );
 }
-function WorkbenchBody({ wsId, context, hasProject = true }: Props) {
+
+function WorkbenchBody({ wsId, context, hasProject = true, projectId }: Props) {
   const scope = useId();
   const { t } = useT("common");
   const enabled = useFeatureEnabled(PLUGINS_V1_FLAG, false);
@@ -79,18 +76,19 @@ function WorkbenchBody({ wsId, context, hasProject = true }: Props) {
     return () => { mounted = false; unsubscribe(); };
   }, [send, subscribe, onReady, wsId, scope, queryClient]);
   return (
-    <Tabs value={active} onValueChange={(value) => setSelected(String(value))} className="min-h-0 flex-1 px-4 pb-4">
+    <Tabs value={active} onValueChange={(value) => setSelected(String(value))} className="min-h-0 flex-1 gap-2 px-1 py-2">
     <div className="shrink-0 overflow-x-auto overflow-y-hidden">
-      <TabsList aria-label={t(($) => $.workbench.title)} className="flex w-max max-w-none justify-start">{tabs.map((tab) => (
+      <TabsList aria-label={t(($) => $.workbench.files.management)} className="flex w-max max-w-none justify-start">{tabs.map((tab) => (
           <TabsTrigger key={tab.id} value={tab.id} className="shrink-0 whitespace-nowrap">{tab.label}</TabsTrigger>))}</TabsList>
     </div>
-    <TabsContent key={active} value={active} className="min-h-0 overflow-y-auto text-muted-foreground">
+    <TabsContent key={active === "files" ? active : JSON.stringify([active, projectId, hasProject])}
+      value={active} className="min-h-0 overflow-y-auto text-muted-foreground">
       {panel ? (
           <SidebarPanel wsId={wsId} context={context} panel={panel} />
         ) : active === "files" ? (
-          <FilesTab wsId={wsId} context={context} hasProject={hasProject} />
+          <FilesTab wsId={wsId} context={context} hasProject={hasProject} projectId={projectId} />
         ) : (
-          <WorkbenchResourceState wsId={wsId} scope={scope} context={context} hasProject={hasProject} />
+          <WorkbenchResourceState wsId={wsId} scope={scope} context={context} hasProject={hasProject} projectId={projectId} />
         )}
     </TabsContent>
   </Tabs>

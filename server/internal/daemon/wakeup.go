@@ -516,7 +516,7 @@ func (d *Daemon) readTaskWakeupMessagesForConnection(conn *websocket.Conn, taskW
 			// Terminal frames (MAX-51 M2) are handled on their own goroutine:
 			// a spawn stats a filesystem, and the read pump must stay free.
 			go d.termChannel.HandleMessage(msg.Type, msg.Payload)
-		case protocol.EventWorkspaceFilesList, protocol.EventWorkspaceFilesRead, protocol.EventWorkspaceFilesCancel:
+		case protocol.EventWorkspaceFilesList, protocol.EventWorkspaceFilesRead, protocol.EventWorkspaceFilesCancel, protocol.EventWorkspaceFilesEditOpen, protocol.EventWorkspaceFilesSave:
 			// HandleMessage only validates/enqueues; all filesystem work runs in
 			// its bounded worker pool and never blocks the websocket read pump.
 			if d.workspaceFilesChannel != nil {

@@ -2,12 +2,14 @@ package realtime_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -315,6 +317,8 @@ func TestWorkspaceFilesRelayEvidenceE02(t *testing.T) {
 				t.Fatal("first native stream frame setup")
 			}
 			relayEvidenceUnchanged(t, e, r, 1, len(out.Data))
+			beforeCancel := w.count(protocol.EventWorkspaceFilesCancel)
+			beforeFrames := b.count()
 			var alternate *relayEvidenceNative
 			switch mutation {
 			case "member":
@@ -329,14 +333,38 @@ func TestWorkspaceFilesRelayEvidenceE02(t *testing.T) {
 				nextProject := e.db.f.Insert(t, "project", testutil.Cols{"workspace_id": p.workspace})
 				e.db.f.Exec(t, `UPDATE issue SET project_id=$1 WHERE id=$2`, nextProject, p.issue)
 			}
-			beforeCancel := w.count(protocol.EventWorkspaceFilesCancel)
 			next := w.take(t, r.Target.Generation)
+			if next.Type != protocol.EventWorkspaceFilesReadChunk {
+				t.Fatalf("expected a second native stream chunk, got %s", next.Type)
+			}
 			w.send(t, next)
-			e.error(b, id, "forbidden")
+			if mutation == "member" {
+				// The realtime write gate closes the socket before an error or
+				// any further file data can be delivered to a removed member.
+				relayEvidenceSignal(t, b.done)
+				var closed *websocket.CloseError
+				if !errors.As(b.readErr, &closed) {
+					t.Fatalf("expected WebSocket closure, got %v", b.readErr)
+				}
+				if got := b.count() - beforeFrames; got != 0 {
+					t.Fatalf("removed member received %d frames after the first chunk", got)
+				}
+			} else {
+				e.error(b, id, "forbidden")
+			}
 			relayEvidenceWait(t, "cancel old target", func() bool { return w.count(protocol.EventWorkspaceFilesCancel) == beforeCancel+1 })
-			relayEvidenceCancel(t, w, r)
 			w.send(t, next)
 			w.barrier(t)
+			relayEvidenceCancel(t, w, r)
+			if mutation == "member" {
+				relayEvidenceWait(t, "removed member socket and file ledger cleared", func() bool {
+					return realtime.RelayEvidenceClientGone(e.h, b.owner) && realtime.RelayEvidenceZero(e.h)
+				})
+				t.Logf("STREAM mutation=%s first_bytes=%d next_content=0 socket_closed=true old-target-cancel=1", mutation, len(out.Data))
+				e.observe("stream-" + mutation + "-retired")
+				e.close()
+				return
+			}
 			relayEvidenceTerminalOnce(t, e, b, id, 3)
 			if alternate != nil && alternate.wire.requestsCount() != 0 {
 				t.Fatal("rebound daemon received stale request")

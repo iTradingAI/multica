@@ -5,7 +5,7 @@ import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginInstallation } from "@multica/core/types";
 import { renderWithI18n } from "../test/i18n";
-import { WorkbenchDrawer } from "./workbench-drawer";
+import { WorkspaceFilesSection } from "./workbench-drawer";
 
 const state = vi.hoisted(() => ({
   enabled: true, desktop: false, plugins: [] as PluginInstallation[],
@@ -15,13 +15,13 @@ const state = vi.hoisted(() => ({
 vi.mock("@multica/core/config", () => ({ useFeatureEnabled: () => state.enabled }));
 vi.mock("../platform/local-directory", () => ({ isDesktopShell: () => state.desktop }));
 vi.mock("@multica/core/api", () => ({ api: { listPluginInstallations: (...args: unknown[]) => state.list(...args), getPluginSurfaceLaunch: (...args: unknown[]) => state.launch(...args) } }));
-vi.mock("@multica/core/realtime", () => ({ useWS: () => ({ send: state.send, subscribe: state.subscribe, onReconnect: state.onReconnect, onReady: state.onReconnect }) }));
+vi.mock("@multica/core/realtime", () => ({ useWS: () => ({ send: state.send, subscribe: state.subscribe, onReconnect: state.onReconnect, onReady: state.onReconnect, subscribeStatus: state.onReconnect, getStatus: () => "connected" }) }));
 vi.mock("../plugins/surface-bridge", () => ({ createSurfaceBridge: (options: unknown) => { state.bridgeOptions(options); return { close: state.close, connect: state.connect }; } }));
 
-function setup(context: React.ComponentProps<typeof WorkbenchDrawer>["context"] = { kind: "issue", issue_id: "issue-1" }) {
+function setup(context: React.ComponentProps<typeof WorkspaceFilesSection>["context"] = { kind: "issue", issue_id: "issue-1" }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const view = renderWithI18n(<QueryClientProvider client={client}><WorkbenchDrawer wsId="ws-1" context={context} hasProject={false} /></QueryClientProvider>);
-  return { ...view, client, rerenderEntry: (wsId: string, next: React.ComponentProps<typeof WorkbenchDrawer>["context"]) => view.rerender(<QueryClientProvider client={client}><WorkbenchDrawer wsId={wsId} context={next} hasProject={false} /></QueryClientProvider>) };
+  const view = renderWithI18n(<QueryClientProvider client={client}><WorkspaceFilesSection wsId="ws-1" context={context} hasProject={false} /></QueryClientProvider>);
+  return { ...view, client, rerenderEntry: (wsId: string, next: React.ComponentProps<typeof WorkspaceFilesSection>["context"]) => view.rerender(<QueryClientProvider client={client}><WorkspaceFilesSection wsId={wsId} context={next} hasProject={false} /></QueryClientProvider>) };
 }
 beforeEach(() => {
   vi.clearAllMocks();
@@ -38,8 +38,8 @@ describe("workbench lifecycle", () => {
         state.desktop = desktop;
         setup(context);
         const user = userEvent.setup();
-        expect(screen.getByRole("button", { name: "Workbench" })).toHaveTextContent("Workbench");
-        await user.click(screen.getByRole("button", { name: "Workbench" }));
+        expect(screen.getByRole("button", { name: "File management" })).toHaveTextContent("File management");
+        await user.click(screen.getByRole("button", { name: "File management" }));
         await user.click(await screen.findByRole("tab", { name: "Sidebar" }));
         const frame = await screen.findByTitle("Example — Sidebar");
         expect(frame.getAttribute("srcdoc")).toContain('child.setAttribute("sandbox", "allow-scripts")');
@@ -47,22 +47,24 @@ describe("workbench lifecycle", () => {
       });
     }
   }
-  it("opens with keyboard and restores focus after Escape", async () => {
+  it("is initially collapsed and opens and closes with the keyboard", async () => {
     const user = userEvent.setup();
     setup();
-    const trigger = screen.getByRole("button", { name: "Workbench" });
+    const trigger = screen.getByRole("button", { name: "File management" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(state.list).not.toHaveBeenCalled();
     trigger.focus();
     await user.keyboard("{Enter}");
-    expect(await screen.findByRole("dialog", { name: "Workbench" })).toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("This issue has no project.")).toBeInTheDocument();
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "File management" }));
+    expect(screen.queryByRole("tab", { name: "Files" })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
   });
   it("sidebar disable closes existing bridge and removes iframe", async () => {
     const user = userEvent.setup();
     const { client } = setup();
-    await user.click(screen.getByRole("button", { name: "Workbench" }));
+    await user.click(screen.getByRole("button", { name: "File management" }));
     await user.click(await screen.findByRole("tab", { name: "Sidebar" }));
     expect(await screen.findByTitle("Example — Sidebar")).toBeInTheDocument();
     state.close.mockClear();
@@ -75,7 +77,7 @@ describe("workbench lifecycle", () => {
   it("observes disable through the five-second foreground refresh", async () => {
     const user = userEvent.setup();
     setup();
-    await user.click(screen.getByRole("button", { name: "Workbench" }));
+    await user.click(screen.getByRole("button", { name: "File management" }));
     await user.click(await screen.findByRole("tab", { name: "Sidebar" }));
     await screen.findByTitle("Example — Sidebar");
     state.close.mockClear();
@@ -86,7 +88,7 @@ describe("workbench lifecycle", () => {
   it("refreshes the installed list when the client regains focus", async () => {
     const user = userEvent.setup();
     setup();
-    await user.click(screen.getByRole("button", { name: "Workbench" }));
+    await user.click(screen.getByRole("button", { name: "File management" }));
     await user.click(await screen.findByRole("tab", { name: "Sidebar" }));
     await screen.findByTitle("Example — Sidebar");
     state.close.mockClear();
@@ -100,7 +102,7 @@ describe("workbench lifecycle", () => {
   it("removes a running plugin if list refresh fails", async () => {
     const user = userEvent.setup();
     const { client } = setup();
-    await user.click(screen.getByRole("button", { name: "Workbench" }));
+    await user.click(screen.getByRole("button", { name: "File management" }));
     await user.click(await screen.findByRole("tab", { name: "Sidebar" }));
     await screen.findByTitle("Example — Sidebar");
     state.close.mockClear(); state.list.mockRejectedValue(new Error("offline"));
@@ -112,7 +114,7 @@ describe("workbench lifecycle", () => {
     const user = userEvent.setup();
     const { rerenderEntry } = setup();
     async function mount() {
-      await user.click(screen.getByRole("button", { name: "Workbench" }));
+      await user.click(screen.getByRole("button", { name: "File management" }));
       await user.click(await screen.findByRole("tab", { name: "Sidebar" }));
       await screen.findByTitle("Example — Sidebar");
       state.close.mockClear();
@@ -121,8 +123,8 @@ describe("workbench lifecycle", () => {
     await user.click(screen.getByRole("tab", { name: "Directory status" }));
     expect(state.close).toHaveBeenCalled();
     await user.click(screen.getByRole("tab", { name: "Sidebar" })); await screen.findByTitle("Example — Sidebar");
-    state.close.mockClear(); await user.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    state.close.mockClear(); await user.click(screen.getByRole("button", { name: "File management" }));
+    expect(screen.queryByRole("tab", { name: "Files" })).not.toBeInTheDocument();
     expect(state.close).toHaveBeenCalled();
     await mount(); rerenderEntry("ws-1", { kind: "project", project_id: "project-1" });
     expect(state.close).toHaveBeenCalled(); expect(screen.queryByTitle("Example — Sidebar")).not.toBeInTheDocument();
@@ -131,7 +133,7 @@ describe("workbench lifecycle", () => {
   });
   it("does not launch plugins when the feature flag is off", async () => {
     state.enabled = false;
-    setup(); await userEvent.setup().click(screen.getByRole("button", { name: "Workbench" }));
+    setup(); await userEvent.setup().click(screen.getByRole("button", { name: "File management" }));
     expect(screen.queryByRole("tab", { name: "Sidebar" })).not.toBeInTheDocument();
     expect(state.launch).not.toHaveBeenCalled();
   });
@@ -145,7 +147,7 @@ describe("workbench without the removed sub-issues slot", () => {
         state.enabled = false;
         setup(context);
         const user = userEvent.setup();
-        await user.click(screen.getByRole("button", { name: "Workbench" }));
+        await user.click(screen.getByRole("button", { name: "File management" }));
         expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
         expect(screen.queryByRole("tab", { name: "Sub-issues" })).not.toBeInTheDocument();
         await user.click(screen.getByRole("tab", { name: "Directory status" }));
@@ -157,14 +159,14 @@ describe("workbench without the removed sub-issues slot", () => {
   it("resets the selected tab and open session on real issue and workspace changes", async () => {
     const { rerenderEntry } = setup();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Workbench" }));
+    await user.click(screen.getByRole("button", { name: "File management" }));
     await user.click(screen.getByRole("tab", { name: "Directory status" }));
     rerenderEntry("ws-1", { kind: "issue", issue_id: "issue-2" });
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Workbench" }));
+    expect(screen.queryByRole("tab", { name: "Files" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "File management" }));
     expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute("aria-selected", "true");
     await user.click(screen.getByRole("tab", { name: "Directory status" }));
     rerenderEntry("ws-2", { kind: "issue", issue_id: "issue-2" });
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Files" })).not.toBeInTheDocument();
   });
 });

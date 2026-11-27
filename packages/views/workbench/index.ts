@@ -1,1 +1,1 @@
-export { WorkbenchDrawer } from "./workbench-drawer";
+export { WorkspaceFilesSection } from "./workbench-drawer";
