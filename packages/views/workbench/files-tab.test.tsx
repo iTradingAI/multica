@@ -1,6 +1,8 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { undo } from "@codemirror/commands";
+import { EditorView } from "@codemirror/view";
 import { renderWithI18n } from "../test/i18n";
 import { FilesTab } from "./files-tab";
 import { WorkspaceFilesSection } from "./workbench-drawer";
@@ -15,6 +17,8 @@ const state = vi.hoisted(() => ({
   deepTree: false,
   holdSave: false,
   editText: "disk text",
+  fileName: "note.txt",
+  previewText: "selected evidence",
 }));
 function emit(type: string, payload: unknown) {
   state.handlers.get(type)?.forEach((handler) => handler(payload));
@@ -52,6 +56,8 @@ beforeEach(() => {
   state.deepTree = false;
   state.holdSave = false;
   state.editText = "disk text";
+  state.fileName = "note.txt";
+  state.previewText = "selected evidence";
   state.send.mockImplementation(
     ({ type, payload }: { type: string; payload: Record<string, unknown> }) => {
       if (!state.connected) return false;
@@ -82,7 +88,7 @@ beforeEach(() => {
                 ? [{ name: "second.txt", type: "regular" }]
                 : [
                     { name: "nested", type: "directory" },
-                    { name: "note.txt", type: "regular" },
+                    { name: state.fileName, type: "regular" },
                   ]
               : state.deepTree && payload.path === "nested"
                 ? [{ name: "level-two", type: "directory" }]
@@ -110,7 +116,7 @@ beforeEach(() => {
             client_req_id: payload.client_req_id,
             resource_id: "resource",
             seq: 0,
-            data: btoa("selected evidence"),
+            data: btoa(state.previewText),
             eof: true,
           });
       });
@@ -137,6 +143,16 @@ const requests = (type: string) =>
     .map(([frame]) => frame)
     .filter((frame) => frame.type === type);
 
+const editorView = (element: HTMLElement) => EditorView.findFromDOM(element)!;
+const editorText = (element: HTMLElement) => editorView(element).state.sliceDoc();
+function replaceDraft(element: HTMLElement, text: string) {
+  const view = editorView(element);
+  act(() => view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: text },
+    userEvent: "input",
+  }));
+}
+
 describe("File drafts on an issue that changes project", () => {
   it.each([false, true])("keeps a copyable draft and retires the old binding (save pending: %s)", async (savePending) => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -158,13 +174,15 @@ describe("File drafts on an issue that changes project", () => {
         return screen.findByRole("textbox", { name: "File draft" });
       };
       const draft = await openEditor();
-      fireEvent.change(draft, { target: { value: "old project draft" } });
+      replaceDraft(draft, "old project draft");
       state.holdSave = true;
       if (savePending) fireEvent.click(screen.getByRole("button", { name: "Save" }));
       const sent = requests("workspace_files.save")[0]?.payload;
 
       rerender(renderEntry("project-2"));
-      expect(screen.getByRole("textbox", { name: "File draft" })).toHaveValue("old project draft");
+      expect(screen.getByRole("textbox", { name: "File draft" })).toBe(draft);
+      expect(draft).toHaveAttribute("contenteditable", "false");
+      expect(editorView(draft).state.readOnly).toBe(true);
       expect(screen.getByText(/The directory binding changed/)).toBeInTheDocument();
       if (sent) {
         expect(screen.getByText(/Save unconfirmed/)).toBeInTheDocument();
@@ -177,12 +195,12 @@ describe("File drafts on an issue that changes project", () => {
         expect(screen.getByText(/Save unconfirmed/)).toBeInTheDocument();
         expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
       }
-      expect(draft).toHaveValue("old project draft");
+      expect(editorText(draft)).toBe("old project draft");
       fireEvent.click(screen.getByRole("button", { name: "Copy draft" }));
       expect(copy).toHaveBeenCalledWith("old project draft");
       expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
       rerender(renderEntry(undefined));
-      expect(draft).toHaveValue("old project draft");
+      expect(editorText(draft)).toBe("old project draft");
       rerender(renderEntry("project-1"));
       expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -193,13 +211,13 @@ describe("File drafts on an issue that changes project", () => {
       rerender(renderEntry("project-2"));
       state.editText = "fresh project text";
       const fresh = await openEditor();
-      expect(fresh).toHaveValue("fresh project text");
+      expect(editorText(fresh)).toBe("fresh project text");
       if (sent) act(() => emit("workspace_files.edit_result", {
         client_req_id: sent.client_req_id, resource_id: "resource", binding_generation: 1,
         version: "B".repeat(43), data: sent.data,
       }));
-      expect(fresh).toHaveValue("fresh project text");
-      fireEvent.change(fresh, { target: { value: "new project draft" } });
+      expect(editorText(fresh)).toBe("fresh project text");
+      replaceDraft(fresh, "new project draft");
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
       expect(requests("workspace_files.save").at(-1).payload.version).toBe("A".repeat(43));
       expect(requests("workspace_files.save")).toHaveLength(Number(savePending) + 1);
@@ -345,30 +363,75 @@ describe("Files tree lifecycle (renderer A only)", () => {
     return screen.findByRole("textbox", { name: "File draft" });
   }
 
+  it("highlights read-only source and opens the editable draft in the same dialog", async () => {
+    state.fileName = "example.TSX";
+    state.previewText = "export const element = <span />;";
+    state.editText = state.previewText;
+    setup();
+    fireEvent.doubleClick(await screen.findByRole("button", { name: state.fileName }));
+    const dialog = await screen.findByRole("dialog", { name: state.fileName });
+    const preview = await screen.findByRole("textbox", { name: state.fileName });
+    expect(preview).toHaveAttribute("contenteditable", "false");
+    expect(preview).toHaveAttribute("aria-readonly", "true");
+    expect(editorView(preview).state.readOnly).toBe(true);
+    expect(preview).toHaveTextContent(state.previewText);
+    await waitFor(() => expect(screen.getByText("export").tagName).toBe("SPAN"));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const draft = await screen.findByRole("textbox", { name: "File draft" });
+    expect(dialog).toContainElement(draft);
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(draft).toHaveAttribute("contenteditable", "true");
+    expect(draft).toHaveAttribute("aria-readonly", "false");
+    await waitFor(() => expect(screen.getByText("export").tagName).toBe("SPAN"));
+  });
+
+  it("tracks dirty state across undo and applies the 16 KiB UTF-8 draft limit", async () => {
+    const draft = await openDraft();
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    replaceDraft(draft, "changed");
+    expect(save).toBeEnabled();
+    act(() => { undo(editorView(draft)); });
+    expect(editorText(draft)).toBe(state.editText);
+    expect(save).toBeDisabled();
+    // 4-byte Unicode code points reach the byte limit before the character limit.
+    const atLimit = "🧪".repeat(4096);
+    replaceDraft(draft, atLimit);
+    expect(save).toBeEnabled();
+    replaceDraft(draft, atLimit + "!");
+    expect(save).toBeDisabled();
+    expect(requests("workspace_files.save")).toHaveLength(0);
+    replaceDraft(draft, state.editText);
+    expect(save).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard draft" })).not.toBeInTheDocument();
+  });
+
   it("retains a conflicted draft until the user reads and accepts the current disk version", async () => {
     const draft = await openDraft();
-    fireEvent.change(draft, { target: { value: "my edits" } });
+    replaceDraft(draft, "my edits");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByText(/The file changed on disk/);
-    expect(draft).toHaveValue("my edits");
+    expect(editorText(draft)).toBe("my edits");
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     state.editText = "external changes";
     fireEvent.click(screen.getByRole("button", { name: "Read disk version" }));
     await screen.findByText("external changes");
     expect(requests("workspace_files.save")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Use this version as the save base" }));
-    expect(draft).toHaveValue("my edits");
+    expect(editorText(draft)).toBe("my edits");
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await screen.findByRole("button", { name: "Discard draft" });
     fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
-    expect(draft).toHaveValue("my edits");
+    expect(editorText(draft)).toBe("my edits");
   });
 
   it("keeps the draft and ignores a late receipt after disconnection", async () => {
     state.holdSave = true;
     const draft = await openDraft();
-    fireEvent.change(draft, { target: { value: "my edits" } });
+    replaceDraft(draft, "my edits");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     const sent = requests("workspace_files.save")[0].payload;
     act(() => { state.connected = false; state.ready(); });
@@ -381,7 +444,7 @@ describe("Files tree lifecycle (renderer A only)", () => {
         version: "B".repeat(43), data: sent.data,
       });
     });
-    expect(draft).toHaveValue("my edits");
+    expect(editorText(draft)).toBe("my edits");
     expect(screen.getByText(/Save unconfirmed/)).toBeInTheDocument();
     expect(requests("workspace_files.save")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
@@ -390,16 +453,16 @@ describe("Files tree lifecycle (renderer A only)", () => {
   it("keeps typing done after the submitted draft when a matching save receipt arrives", async () => {
     state.holdSave = true;
     const draft = await openDraft();
-    fireEvent.change(draft, { target: { value: "submitted" } });
+    replaceDraft(draft, "submitted");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     const sent = requests("workspace_files.save")[0].payload;
-    fireEvent.change(draft, { target: { value: "more edits" } });
+    replaceDraft(draft, "more edits");
     act(() => emit("workspace_files.edit_result", {
       client_req_id: sent.client_req_id, resource_id: "resource", binding_generation: 1,
       version: "B".repeat(43), data: sent.data,
     }));
     await screen.findByText("Saved.");
-    expect(draft).toHaveValue("more edits");
+    expect(editorText(draft)).toBe("more edits");
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
     expect(requests("workspace_files.save")).toHaveLength(1);
   });
