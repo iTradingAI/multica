@@ -12,6 +12,8 @@ import {
 import { Button } from "@multica/ui/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { useT } from "../i18n";
+import { fileExtension } from "./file-editor-language";
+import { FileEditorSource } from "./file-editor-source";
 import { FilePreview, FileText } from "./file-preview";
 
 interface Props {
@@ -43,6 +45,8 @@ export function WorkspaceFileEditor({ ws, context, resourceId, path, ready, bind
   const needsReload = ["conflict", "save_unconfirmed", "forbidden", "invalid_path", "daemon_offline", "unavailable"].includes(code);
   const canSend = ready && !bindingChanged;
   const additionalVersion = latest && base && latest.version.bindingGeneration !== base.version.bindingGeneration;
+  const extension = fileExtension(path);
+  const isMarkdown = extension === "md" || extension === "markdown";
 
   useLayoutEffect(() => () => request.current?.abort(), []);
   // Retire the old request during the binding change commit, before a
@@ -152,6 +156,12 @@ export function WorkspaceFileEditor({ ws, context, resourceId, path, ready, bind
   }
 
   const status = message();
+  function renderSourcePreview(text: string) {
+    return isMarkdown
+      ? <div className="p-3"><FileText text={text} path={path} /></div>
+      : <FileEditorSource className="max-h-[inherit]" path={path} label={path} text={text} readOnly />;
+  }
+
   return (
     <Dialog open onOpenChange={(open) => { if (!open) tryClose(); }}>
       <DialogContent className="sm:max-w-3xl">
@@ -160,20 +170,21 @@ export function WorkspaceFileEditor({ ws, context, resourceId, path, ready, bind
           <DialogDescription className="break-all">{path}</DialogDescription>
         </DialogHeader>
         {base ? (
-          <textarea aria-label={t(($) => $.workbench.files.draft)} spellCheck={false} value={draft} readOnly={bindingChanged}
-            onChange={(event) => setDraft(event.target.value)}
-            className="min-h-56 max-h-[45vh] w-full resize-y rounded-md border bg-background p-3 font-mono text-sm"
+          <FileEditorSource path={path} label={t(($) => $.workbench.files.draft)} text={draft}
+            readOnly={bindingChanged} onChange={setDraft}
+            className="min-h-56 max-h-[45vh] overflow-hidden rounded-md border bg-background"
           />
         ) : (
-          <div className="max-h-[55vh] overflow-auto rounded-md border bg-background p-3">
-            {canSend ? <FilePreview ws={ws} context={context} resourceId={resourceId} path={path} />
+          <div className="max-h-[55vh] overflow-auto rounded-md border bg-background [&>p]:p-3">
+            {canSend ? <FilePreview ws={ws} context={context} resourceId={resourceId} path={path}
+              renderText={renderSourcePreview} />
               : !bindingChanged && <p role="status">{t(($) => $.workbench.files.connecting)}</p>}
           </div>
         )}
         {latest && !bindingChanged && <section className="space-y-2">
           <p className="font-medium">{t(($) => $.workbench.files.disk_version)}</p>
-          <div className="max-h-32 overflow-auto rounded-md border bg-background p-2">
-            <FileText text={latest.text} path={path} />
+          <div className="max-h-32 overflow-auto rounded-md border bg-background">
+            {renderSourcePreview(latest.text)}
           </div>
           {additionalVersion
             ? <p role="status">{t(($) => $.workbench.files.binding_changed)}</p>

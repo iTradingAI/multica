@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
@@ -91,12 +91,14 @@ export function FilePreview({
   resourceId,
   path,
   bindingGeneration,
+  renderText,
 }: {
   ws: WorkspaceFilesTransport;
   context: WorkbenchContext;
   resourceId: string;
   path: string;
   bindingGeneration?: number;
+  renderText?: (text: string) => ReactNode;
 }) {
   const { t } = useT("common");
   const [result, setResult] = useState<{ text?: string; code?: string }>({});
@@ -139,5 +141,5 @@ export function FilePreview({
     );
   if (result.text === undefined)
     return <p role="status">{t(($) => $.workbench.files.loading)}</p>;
-  return <FileText text={result.text} path={path} />;
+  return renderText ? renderText(result.text) : <FileText text={result.text} path={path} />;
 }
