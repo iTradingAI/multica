@@ -162,7 +162,7 @@
       "disk_version": "目前的磁碟版本",
       "use_disk_version": "以此版本為儲存基準",
       "binding_changed": "目錄綁定已變更。請複製草稿，然後在目前的綁定下重新開啟檔案。",
-      "read_only": "此目錄或檔案格式僅支援唯讀預覽。",
+      "read_only": "此目錄或檔案不在目前寫入授權範圍內，僅支援唯讀預覽。",
       "edit_too_large": "編輯上限為 16 KiB，包含原始編碼及換行符號。",
       "edit_unavailable": "無法編輯或儲存此檔案。",
       "file_busy": "檔案正被占用，或 Windows 拒絕寫入。",

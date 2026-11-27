@@ -162,7 +162,7 @@
       "disk_version": "Version actuelle sur le disque",
       "use_disk_version": "Utiliser cette version comme base",
       "binding_changed": "Le répertoire associé a changé. Copiez votre brouillon et rouvrez le fichier dans le répertoire actuellement associé.",
-      "read_only": "La modification est indisponible pour ce répertoire ou ce format de fichier. L’aperçu est en lecture seule.",
+      "read_only": "Ce répertoire ou fichier est hors du périmètre d'écriture actuel ; seul un aperçu en lecture seule est disponible.",
       "edit_too_large": "La modification est limitée à 16 Kio, en tenant compte de l’encodage d’origine et des fins de ligne.",
       "edit_unavailable": "Impossible de modifier ou d’enregistrer ce fichier.",
       "file_busy": "Le fichier est en cours d’utilisation ou Windows a refusé l’accès en écriture.",
